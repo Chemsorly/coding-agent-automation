@@ -34,7 +34,6 @@ internal sealed record DispatchLifecycleContext(
     JobTemplate Template,
     bool IsKiro,
     List<string> AvailablePvcs,
-    Dictionary<string, int> ConcurrencyBySelector,
     string LogPrefix);
 
 /// <summary>
@@ -51,11 +50,6 @@ internal enum DispatchInterpretOutcome
     /// emits <c>RecordDispatchAttempt("dispatched","none")</c> and returns the structured success body.
     /// </summary>
     PassThrough,
-
-    /// <summary>
-    /// A 409 Conflict was rewritten to 200 DispatchPendingResponse(false,"concurrency_limit").
-    /// </summary>
-    ConcurrencyLimitRewritten,
 
     /// <summary>
     /// A 503 from the PVC exhaustion gate (empty PVC pool, kiro agent).

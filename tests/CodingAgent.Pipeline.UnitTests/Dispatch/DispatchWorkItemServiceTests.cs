@@ -12,6 +12,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Http;
@@ -41,8 +42,23 @@ public sealed class DispatchWorkItemServiceTests
     private static DispatchWorkItemService CreateService(
         string labels = "kiro,dotnet",
         int maxConcurrent = 5,
-        string providerType = "kiro") =>
-        new DispatchWorkItemService(CreateTemplateStore(labels, maxConcurrent, providerType));
+        string providerType = "kiro",
+        IAgentStartGate? gate = null) =>
+        new DispatchWorkItemService(CreateTemplateStore(labels, maxConcurrent, providerType), gate ?? AgentStartGateFakes.AllowAll());
+
+    /// <summary>
+    /// Spec 057: the real <see cref="AgentStartGate"/> over <paramref name="locks"/>, a Job client that lists no Jobs
+    /// and the UI limits of <paramref name="dbFactory"/>'s database — so the lock-handling tests below still observe
+    /// the handle the lock provider returns.
+    /// </summary>
+    private static IAgentStartGate CreateGate(IDistributedLockProvider locks, IDbContextFactory<PipelineDbContext> dbFactory) =>
+        new AgentStartGate(
+            locks,
+            Mock.Of<IKubernetesJobClient>(),
+            CreateTemplateStore(),
+            new DispatchServiceOptions { Namespace = "test" },
+            new AgentCapacityStore(dbFactory),
+            Serilog.Log.Logger);
 
     private static JobTemplateStore CreateTemplateStore(
         string labels = "kiro,dotnet",
@@ -155,325 +171,58 @@ public sealed class DispatchWorkItemServiceTests
         return new RolloutRouting(dbFactory, router, transitions);
     }
 
-    /// <summary>
-    /// Returns an <see cref="IDistributedLockProvider"/> that immediately grants the lock
-    /// with a no-op dispose. Tests that do not exercise lock-acquisition can use this.
-    /// </summary>
-    private static IDistributedLockProvider CreateNoOpLockProvider()
+    private static async Task<Guid> SeedPendingAsync(IDbContextFactory<PipelineDbContext> dbFactory, string selector)
     {
-        var mock = new Mock<IDistributedLockProvider>();
-        var handle = new Mock<IAsyncDisposable>();
-        handle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        mock.Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle.Object);
-        return mock.Object;
-    }
-
-    // ── BuildConcurrencySnapshotAsync ─────────────────────────────────────────
-
-    [Fact]
-    public async Task BuildConcurrencySnapshotAsync_EmptyDb_ReturnsEmptyDictionary()
-    {
-        var dbFactory = CreateDbFactory();
+        var id = Guid.NewGuid();
         await using var db = await dbFactory.CreateDbContextAsync();
-
-        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
-
-        result.Should().BeEmpty("no active items — concurrency map must be empty");
-    }
-
-    [Fact]
-    public async Task BuildConcurrencySnapshotAsync_WithDispatchedAndRunningItems_CountsByNormalizedSelector()
-    {
-        var dbFactory = CreateDbFactory();
-
-        // Seed: 2 Dispatched + 1 Running for "kiro,dotnet" (in various orderings)
-        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "kiro,dotnet");
-        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "dotnet,kiro"); // same normalized key
-        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Running, "kiro,dotnet");
-
-        // One Dispatched item for a different selector
-        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "opencode,python");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
-
-        // "dotnet,kiro" == "kiro,dotnet" after NormalizeLabels (sorted)
-        var normalizedKiroDotnet = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        result.Should().ContainKey(normalizedKiroDotnet);
-        result[normalizedKiroDotnet].Should().Be(3,
-            "2 Dispatched + 1 Running for the kiro,dotnet selector (both orderings normalize to the same key)");
-
-        var normalizedOpencode = JobTemplateStore.NormalizeLabels("opencode,python");
-        result.Should().ContainKey(normalizedOpencode);
-        result[normalizedOpencode].Should().Be(1);
-        // TODO [WARNING]: No assertion on the total entry count. If the implementation stored both
-        // the raw and normalized keys (a double-count bug), result[normalizedKiroDotnet] would still
-        // be 3 while phantom entries existed. Add: result.Should().HaveCount(2) to close this gap.
-    }
-
-    [Fact]
-    public async Task BuildConcurrencySnapshotAsync_IgnoresPendingAndTerminalStatuses()
-    {
-        var dbFactory = CreateDbFactory();
-
-        // Seed items in statuses that must NOT be counted
-        foreach (var status in new[] { WorkItemStatus.Pending, WorkItemStatus.Succeeded, WorkItemStatus.Failed, WorkItemStatus.Cancelled })
-            await SeedWorkItemAsync(dbFactory, status, "kiro,dotnet");
-
-        await using var db = await dbFactory.CreateDbContextAsync();
-        var result = await DispatchWorkItemService.BuildConcurrencySnapshotAsync(db, CancellationToken.None);
-
-        result.Should().BeEmpty(
-            "Pending, Succeeded, Failed, and Cancelled items must not appear in the concurrency snapshot");
-    }
-
-    // ── ApplyGates ────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void ApplyGates_ConcurrencyLimitReached_Returns409()
-    {
-        var svc = CreateService(maxConcurrent: 2);
-        var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 2));
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal)
+        db.WorkItems.Add(new WorkItemEntity
         {
-            [normalizedSelector] = 2  // at limit
-        };
-        var pvcResult = MakePvcResult(available: 2);
-
-        var result = svc.ApplyGates(
-            normalizedSelector, "kiro,dotnet",
-            concurrencyBySelector, pvcResult, template, isKiroAgent: true,
-            callerName: "Test");
-
-        result.Should().NotBeNull("concurrency limit reached must fire the gate");
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "concurrency gate must return 409 Conflict");
-        // TODO [WARNING]: The response body (Conflict<string>.Value) is not asserted here.
-        // ApplyGates encodes the selector and current/max counts in the message literal
-        // (e.g. "Concurrency limit reached for selector 'dotnet,kiro' (2/2)."). A bug that
-        // swaps sanitizedSelector with normalizedSelector, omits the counts, or returns the
-        // wrong literal would be invisible to this test. Add: conflict.Value.Should().Contain(...)
+            Id = id,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+            IssueProviderConfigId = "prov-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = selector,
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Payload = "{}"
+        });
+        await db.SaveChangesAsync();
+        return id;
     }
+
+    // ── ApplyGates (PVC gate only since spec 057) ─────────────────────────────
 
     [Fact]
     public void ApplyGates_KiroAgentNoPvc_Returns503()
     {
-        var svc = CreateService(maxConcurrent: 5);
-        var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 5));
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal); // empty — no active items
-        var pvcResult = MakePvcResult(available: 0);  // no PVCs
+        var result = CreateService().ApplyGates("kiro,dotnet", MakePvcResult(available: 0), isKiroAgent: true, callerName: "Test");
 
-        var result = svc.ApplyGates(
-            normalizedSelector, "kiro,dotnet",
-            concurrencyBySelector, pvcResult, template, isKiroAgent: true,
-            callerName: "Test");
-
-        result.Should().NotBeNull("PVC exhaustion for a kiro agent must fire the gate");
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull();
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
-            "PVC gate must return 503");
+        statusResult.Should().NotBeNull("PVC exhaustion for a kiro agent must fire the gate");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
     [Fact]
-    public void ApplyGates_AllGatesPass_ReturnsNull()
+    public void ApplyGates_KiroAgentWithAPvc_ReturnsNull()
     {
-        // TODO [WARNING]: This test uses maxConcurrent=5 with count=1, which is far from the
-        // boundary. An off-by-one error in DispatchWorkItemService.IsAtConcurrencyLimit (using >
-        // instead of >=) would not be caught here. Add a complementary test that uses
-        // maxConcurrent=2 with count=1 (exactly one below the limit) and asserts null is returned,
-        // to constrain the comparison operator and catch off-by-one regressions at the boundary.
-        var svc = CreateService(maxConcurrent: 5);
-        var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 5));
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            [normalizedSelector] = 1  // below limit
-        };
-        var pvcResult = MakePvcResult(available: 1);
-
-        var result = svc.ApplyGates(
-            normalizedSelector, "kiro,dotnet",
-            concurrencyBySelector, pvcResult, template, isKiroAgent: true,
-            callerName: "Test");
-
-        result.Should().BeNull("all gates pass — must return null (pass-through)");
+        CreateService().ApplyGates("kiro,dotnet", MakePvcResult(available: 1), isKiroAgent: true, callerName: "Test")
+            .Should().BeNull("a free PVC passes the gate");
     }
 
     [Fact]
     public void ApplyGates_NonKiroAgentNoPvc_ReturnsNull()
     {
-        var svc = CreateService(providerType: "opencode", maxConcurrent: 5);
-        var template = ResolveTemplate(CreateTemplateStore("kiro,dotnet", 5, "opencode"));
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal);
-        var pvcResult = MakePvcResult(available: 0);  // no PVCs — but irrelevant for non-kiro
-
-        var result = svc.ApplyGates(
-            normalizedSelector, "kiro,dotnet",
-            concurrencyBySelector, pvcResult, template, isKiroAgent: false,
-            callerName: "Test");
-
-        result.Should().BeNull(
-            "non-kiro agents skip the PVC gate — zero PVCs must not block dispatch");
+        CreateService(providerType: "opencode").ApplyGates("kiro,dotnet", MakePvcResult(available: 0), isKiroAgent: false, callerName: "Test")
+            .Should().BeNull("non-kiro agents skip the PVC gate — zero PVCs must not block dispatch");
     }
 
-    [Fact]
-    public void ApplyGates_MaxConcurrentZero_TreatsAsUnlimited_ReturnsNull()
-    {
-        var svc = CreateService(maxConcurrent: 0);  // 0 means unlimited
-        var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 0));
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        // Even with many active items, maxConcurrent=0 must not fire the gate
-        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            [normalizedSelector] = 100
-        };
-        var pvcResult = MakePvcResult(available: 1);
-
-        var result = svc.ApplyGates(
-            normalizedSelector, "kiro,dotnet",
-            concurrencyBySelector, pvcResult, template, isKiroAgent: true,
-            callerName: "Test");
-
-        result.Should().BeNull("maxConcurrent=0 means unlimited — must always pass the concurrency gate");
-    }
+    // ── QueryDispatchablePvcsAsync (spec 057 DD1: held PVCs from the gate's Job list) ──
 
     [Fact]
-    public void ApplyGates_ConcurrencyLimitReached_WhenPvcPoolAlsoEmpty_Returns409()
+    public async Task QueryDispatchablePvcsAsync_LeavesOutClaimedAndHeldPvcs()
     {
-        // Both conditions hold simultaneously: concurrency at limit AND zero available PVCs.
-        // ApplyGates checks concurrency first, so it must return 409 Conflict (not 503).
-        // This confirms the gate ordering is authoritative and that the concurrency gate
-        // short-circuits before the PVC gate — critical for correct PvcPoolExhaustions attribution.
-        var svc = CreateService(maxConcurrent: 2);
-        var template = ResolveTemplate(CreateTemplateStore(maxConcurrent: 2));
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        var concurrencyBySelector = new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            [normalizedSelector] = 2  // at limit
-        };
-        var pvcResult = MakePvcResult(available: 0);  // also empty
-
-        var result = svc.ApplyGates(
-            normalizedSelector, "kiro,dotnet",
-            concurrencyBySelector, pvcResult, template, isKiroAgent: true,
-            callerName: "Test");
-
-        result.Should().NotBeNull("combined condition must fire a gate");
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "concurrency gate fires first and must return 409 Conflict, not 503, even when PVC pool is also empty");
-    }
-
-    // ── IsAtConcurrencyLimit ──────────────────────────────────────────────────
-
-    [Fact]
-    public void IsAtConcurrencyLimit_MaxConcurrentZero_AlwaysReturnsFalse()
-    {
-        // maxConcurrent == 0 means "no limit configured" — always allow
-        var concurrency = new Dictionary<string, int> { ["selector-1"] = 999 };
-        DispatchWorkItemService.IsAtConcurrencyLimit("selector-1", concurrency, maxConcurrent: 0)
-            .Should().BeFalse("zero maxConcurrent disables the limit");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_NegativeMax_AlwaysReturnsFalse()
-    {
-        var concurrency = new Dictionary<string, int> { ["selector-1"] = 999 };
-        DispatchWorkItemService.IsAtConcurrencyLimit("selector-1", concurrency, maxConcurrent: -1)
-            .Should().BeFalse("negative maxConcurrent disables the limit");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_BelowLimit_ReturnsFalse()
-    {
-        var concurrency = new Dictionary<string, int> { ["sel"] = 1 };
-        DispatchWorkItemService.IsAtConcurrencyLimit("sel", concurrency, maxConcurrent: 2)
-            .Should().BeFalse("current(1) < max(2) — not at limit");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_AtLimit_ReturnsTrue()
-    {
-        var concurrency = new Dictionary<string, int> { ["sel"] = 2 };
-        DispatchWorkItemService.IsAtConcurrencyLimit("sel", concurrency, maxConcurrent: 2)
-            .Should().BeTrue("current(2) == max(2) — at limit");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_AboveLimit_ReturnsTrue()
-    {
-        var concurrency = new Dictionary<string, int> { ["sel"] = 5 };
-        DispatchWorkItemService.IsAtConcurrencyLimit("sel", concurrency, maxConcurrent: 2)
-            .Should().BeTrue("current(5) > max(2) — above limit");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_SelectorNotInMap_ReturnsFalse()
-    {
-        // Selector not in the dictionary → GetValueOrDefault returns 0
-        var concurrency = new Dictionary<string, int>();
-        DispatchWorkItemService.IsAtConcurrencyLimit("new-selector", concurrency, maxConcurrent: 1)
-            .Should().BeFalse("no active items for selector → current=0 < max=1");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_NullSelector_FallsBackToEmpty_ReturnsFalse()
-    {
-        // Null agentSelector → "" key, nothing in map → 0 active
-        var concurrency = new Dictionary<string, int>();
-        DispatchWorkItemService.IsAtConcurrencyLimit(null, concurrency, maxConcurrent: 1)
-            .Should().BeFalse("null selector uses empty key, not in map → 0 active");
-    }
-
-    [Fact]
-    public void IsAtConcurrencyLimit_NullSelector_AtLimit_ReturnsTrue()
-    {
-        // Null agentSelector → "" key; "" key has count == maxConcurrent → at limit.
-        // This covers the combination of the null-effective-selector path AND the
-        // max-concurrency-exactly-reached boundary: neither of the companion tests covers
-        // both simultaneously (IsAtConcurrencyLimit_AtLimit_ReturnsTrue uses a non-null
-        // selector; IsAtConcurrencyLimit_NullSelector_FallsBackToEmpty_ReturnsFalse uses
-        // null but count=0, well below the limit).
-        var concurrency = new Dictionary<string, int> { [""] = 2 };
-        DispatchWorkItemService.IsAtConcurrencyLimit(null, concurrency, maxConcurrent: 2)
-            .Should().BeTrue("null selector maps to '' key; current(2) == max(2) — at limit");
-    }
-
-    // ── HandleUniqueViolationFallback ─────────────────────────────────────────
-
-    [Fact]
-    public void HandleUniqueViolationFallback_ReturnsConflictWithExpectedMessage()
-    {
-        var result = DispatchWorkItemService.HandleUniqueViolationFallback();
-
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "the fallback must produce a 409 Conflict");
-
-        var conflict = (Microsoft.AspNetCore.Http.HttpResults.Conflict<string>)result;
-        conflict.Value.Should().Be("A live work item already exists for this issue.",
-            "the exact literal must match what callers previously inlined");
-    }
-
-    // ── BuildDispatchPreambleAsync ────────────────────────────────────────────
-
-    /// <summary>
-    /// Verifies that <see cref="DispatchWorkItemService.BuildDispatchPreambleAsync"/> returns
-    /// a concurrency dictionary with the correct active-item counts and a PVC result that
-    /// correctly reflects availability, using the same <see cref="PipelineDbContext"/> for both
-    /// inner calls.
-    /// </summary>
-    [Fact]
-    public async Task BuildDispatchPreambleAsync_ReturnsConcurrencySnapshotAndPvcResult()
-    {
-        // Arrange: seed 2 active items for "kiro,dotnet" and one active item claiming "pvc-0"
         var dbFactory = CreateDbFactory();
-        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, "kiro,dotnet");
-        await SeedWorkItemAsync(dbFactory, WorkItemStatus.Running, "kiro,dotnet");
-        // This active item claims "pvc-0", leaving only "pvc-1" available from the pool ["pvc-0","pvc-1"]
         await using (var seedDb = await dbFactory.CreateDbContextAsync())
         {
             seedDb.WorkItems.Add(new WorkItemEntity
@@ -491,50 +240,96 @@ public sealed class DispatchWorkItemServiceTests
             });
             await seedDb.SaveChangesAsync();
         }
-
-        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"]);
-
+        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1", "pvc-2"]);
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        // Act
-        var (concurrencyBySelector, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+        var pvcResult = await lifecycle.QueryDispatchablePvcsAsync(db, new HashSet<string> { "pvc-1" }, CancellationToken.None);
 
-        // Assert — concurrency snapshot
-        var normalizedSelector = JobTemplateStore.NormalizeLabels("kiro,dotnet");
-        concurrencyBySelector.Should().ContainKey(normalizedSelector);
-        // 2 seeded + 1 pvc-holder = 3 active items for "kiro,dotnet"
-        // TODO [WARNING]: "2 unseeded" in the original comment was a typo — the items are seeded
-        // (via SeedWorkItemAsync). Additionally, there is no assertion on the total number of keys
-        // in concurrencyBySelector. If the implementation accidentally emits both raw and normalized
-        // keys (a double-count bug), this assertion would still pass while a phantom extra key existed.
-        // Add: concurrencyBySelector.Should().HaveCount(1) to close the gap.
-        concurrencyBySelector[normalizedSelector].Should().Be(3,
-            "3 Dispatched/Running items exist for kiro,dotnet");
-
-        // Assert — PVC result: "pvc-0" is claimed, "pvc-1" is available
-        // TODO [WARNING]: No complementary test exists for the fully-claimed case (all PVCs have
-        // active ClaimedPvcName entries). A regression in QueryAvailablePvcsAsync returning a
-        // non-empty list when all PVCs are claimed would flow silently past this test.
-        // TODO [WARNING]: There is no assertion that both inner queries (BuildConcurrencySnapshotAsync
-        // and QueryAvailablePvcsAsync) execute on the same PipelineDbContext instance that was passed
-        // in. The XML doc on BuildDispatchPreambleAsync states "must be the same context used for any
-        // subsequent calls on this request" — this guarantee is untested.
-        pvcResult.AvailablePvcs.Should().HaveCount(1,
-            "pvc-0 is claimed; only pvc-1 is available");
-        pvcResult.AvailablePvcs.Should().Contain("pvc-1");
-        pvcResult.ClaimedCount.Should().Be(1, "one PVC (pvc-0) is claimed");
+        pvcResult.AvailablePvcs.Should().Equal(["pvc-2"], "pvc-0 is claimed by a work item and pvc-1 mounted by a running Job (e.g. a chat)");
+        pvcResult.ClaimedCount.Should().Be(1);
     }
 
-    /// <summary>
-    /// A chat has no WorkItem, so the WorkItem claims miss its PVC. A pipeline pod that mounts it while the chat
-    /// runs stays Pending (the PVC is ReadWriteOnce), so the preamble leaves out what agent Jobs mount too.
-    /// </summary>
-    [Fact]
-    public async Task BuildDispatchPreambleAsync_LeavesOutThePvcARunningChatJobMounts()
+    // ── DispatchPendingWorkItemAsync with the agent start gate (spec 057) ─────
+
+    // req 3.1, 3.2
+    [Theory]
+    [InlineData(LimitScope.Global, "global_concurrency_limit")]
+    [InlineData(LimitScope.Template, "concurrency_limit")]
+    public async Task DispatchPendingWorkItemAsync_WhenALimitIsReached_HoldsTheItemWithTheReason_AndCreatesNoJob(
+        LimitScope scope, string reason)
     {
+        var dbFactory = CreateDbFactory();
+        var id = await SeedPendingAsync(dbFactory, "kiro,dotnet");
+        var kube = new Mock<IKubernetesJobClient>();
+        var gate = AgentStartGateFakes.Deny(new AgentStartDecision(false, scope, LimitSource.Ui, 3, 3));
+        var svc = CreateService(gate: gate);
+
+        var result = await svc.DispatchPendingWorkItemAsync(
+            id, dbFactory, CreateLifecycleService(kubeClient: kube.Object), CreateRolloutRouting(dbFactory, CreateTemplateStore()), CancellationToken.None);
+
+        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        ok.Should().NotBeNull();
+        ok!.Value.Should().Be(new DispatchPendingResponse(false, reason));
+        kube.Verify(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never());
+        await using var db = await dbFactory.CreateDbContextAsync();
+        (await db.WorkItems.SingleAsync(w => w.Id == id)).Status.Should().Be(WorkItemStatus.Pending, "a held item stays Pending");
+        gate.Disposed.Should().Be(gate.Entered, "the start lock is released on the hold path");
+    }
+
+    // req 2.4
+    [Fact]
+    public async Task DispatchPendingWorkItemAsync_WhenRunningAgentsCannotBeCounted_Returns503_AndCreatesNoJob()
+    {
+        var dbFactory = CreateDbFactory();
+        var id = await SeedPendingAsync(dbFactory, "kiro,dotnet");
+        var kube = new Mock<IKubernetesJobClient>();
+        var svc = CreateService(gate: AgentStartGateFakes.Unavailable());
+
+        var result = await svc.DispatchPendingWorkItemAsync(
+            id, dbFactory, CreateLifecycleService(kubeClient: kube.Object), CreateRolloutRouting(dbFactory, CreateTemplateStore()), CancellationToken.None);
+
+        (result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult)!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        kube.Verify(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never());
+    }
+
+    [Fact]
+    public async Task DispatchPendingWorkItemAsync_WhenTheLockTimesOut_Returns503()
+    {
+        var dbFactory = CreateDbFactory();
+        var id = await SeedPendingAsync(dbFactory, "kiro,dotnet");
+        var svc = CreateService(gate: AgentStartGateFakes.LockTimeout());
+
+        var result = await svc.DispatchPendingWorkItemAsync(
+            id, dbFactory, CreateLifecycleService(), CreateRolloutRouting(dbFactory, CreateTemplateStore()), CancellationToken.None);
+
+        (result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult)!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    // req 3.1: a missing template is answered before the limit check (and the lease is released).
+    [Fact]
+    public async Task DispatchPendingWorkItemAsync_NoTemplate_IsAnsweredBeforeTheLimitCheck()
+    {
+        var dbFactory = CreateDbFactory();
+        var id = await SeedPendingAsync(dbFactory, "python,unknown");
+        var gate = AgentStartGateFakes.Deny(new AgentStartDecision(false, LimitScope.Global, LimitSource.Helm, 1, 1));
+        var svc = CreateService(gate: gate);
+
+        var result = await svc.DispatchPendingWorkItemAsync(
+            id, dbFactory, CreateLifecycleService(), CreateRolloutRouting(dbFactory, CreateTemplateStore()), CancellationToken.None);
+
+        (result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)!.Value!.Reason.Should().Be("no_template");
+        gate.Disposed.Should().Be(gate.Entered);
+    }
+
+    // DD1: the PVC a running chat Job mounts is not offered to the work item.
+    [Fact]
+    public async Task DispatchPendingWorkItemAsync_PvcGate_UsesTheLeasesHeldPvcs()
+    {
+        var dbFactory = CreateDbFactory();
+        var id = await SeedPendingAsync(dbFactory, "kiro,dotnet");
         var chatJob = new k8s.Models.V1Job
         {
-            Metadata = new k8s.Models.V1ObjectMeta { Name = "caa-chat-1a2b3c4d" },
+            Metadata = new k8s.Models.V1ObjectMeta { Name = "caa-chat-1a2b3c4d", Labels = new Dictionary<string, string>() },
             Spec = new k8s.Models.V1JobSpec
             {
                 Template = new k8s.Models.V1PodTemplateSpec
@@ -542,39 +337,37 @@ public sealed class DispatchWorkItemServiceTests
                     Spec = new k8s.Models.V1PodSpec
                     {
                         Containers = [],
-                        Volumes = [new k8s.Models.V1Volume
-                        {
-                            Name = "kiro-cli-data",
-                            PersistentVolumeClaim = new k8s.Models.V1PersistentVolumeClaimVolumeSource { ClaimName = "pvc-0" }
-                        }]
+                        Volumes = [new k8s.Models.V1Volume { Name = "kiro-cli-data", PersistentVolumeClaim = new k8s.Models.V1PersistentVolumeClaimVolumeSource { ClaimName = "pvc-0" } }]
                     }
                 }
             },
             Status = new k8s.Models.V1JobStatus()
         };
-        var kube = new Mock<IKubernetesJobClient>();
-        kube.Setup(k => k.ListJobsAsync("test", AgentJobPvcs.AgentJobSelector, It.IsAny<CancellationToken>()))
+        var listing = new Mock<IKubernetesJobClient>();
+        listing.Setup(k => k.ListJobsAsync("test", AgentJobPvcs.AgentJobSelector, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new k8s.Models.V1JobList { Items = [chatJob] });
-        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
-        await using var db = await CreateDbFactory().CreateDbContextAsync();
+        var svc = CreateService(gate: AgentStartGateFakes.AllowAll(listing.Object, "test"));
 
-        var (_, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+        // The pool has only pvc-0, which the chat mounts → no PVC for the kiro item → 503 pvc_unavailable.
+        var result = await svc.DispatchPendingWorkItemAsync(
+            id, dbFactory, CreateLifecycleService(pvcPool: ["pvc-0"]), CreateRolloutRouting(dbFactory, CreateTemplateStore()), CancellationToken.None);
 
-        pvcResult.AvailablePvcs.Should().Equal(["pvc-1"], "a running chat Job mounts pvc-0");
+        (result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult)!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
+    // ── HandleUniqueViolationFallback ─────────────────────────────────────────
+
     [Fact]
-    public async Task BuildDispatchPreambleAsync_JobsCannotBeRead_UsesTheWorkItemClaims()
+    public void HandleUniqueViolationFallback_ReturnsConflictWithExpectedMessage()
     {
-        var kube = new Mock<IKubernetesJobClient>();
-        kube.Setup(k => k.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("API server unreachable"));
-        var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"], kubeClient: kube.Object);
-        await using var db = await CreateDbFactory().CreateDbContextAsync();
+        var result = DispatchWorkItemService.HandleUniqueViolationFallback();
 
-        var (_, pvcResult) = await DispatchWorkItemService.BuildDispatchPreambleAsync(db, lifecycle, CancellationToken.None);
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+            "the fallback must produce a 409 Conflict");
 
-        pvcResult.AvailablePvcs.Should().Equal(["pvc-0", "pvc-1"]);
+        var conflict = (Microsoft.AspNetCore.Http.HttpResults.Conflict<string>)result;
+        conflict.Value.Should().Be("A live work item already exists for this issue.",
+            "the exact literal must match what callers previously inlined");
     }
 
     // ── BuildProjectionFromQuickCheck ─────────────────────────────────────────
@@ -625,7 +418,7 @@ public sealed class DispatchWorkItemServiceTests
         projection.PriorityWeight.Should().Be(priorityWeight);
     }
 
-    // ── TryEnterSelectorDispatchAsync ─────────────────────────────────────────
+    // ── TryEnterDispatchAsync ─────────────────────────────────────────
 
     /// <summary>
     /// AC4 (issue #3795) — Regression test for the double-dispose risk on the non-Pending branch.
@@ -640,7 +433,7 @@ public sealed class DispatchWorkItemServiceTests
     /// </para>
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatchAsync_NonPendingBranchDisposeThrows_CatchDoesNotDisposeAgainAndRethrows()
+    public async Task TryEnterDispatchAsync_NonPendingBranchDisposeThrows_CatchDoesNotDisposeAgainAndRethrows()
     {
         // Arrange — lock handle whose DisposeAsync() throws (simulates a DB connection drop
         // at the moment of advisory-lock release on the non-Pending early-return path).
@@ -677,8 +470,8 @@ public sealed class DispatchWorkItemServiceTests
 
         // Act & Assert — original exception from the in-try DisposeAsync() propagates unchanged.
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-                lockProvider.Object, "dotnet,kiro", db, workItemId, CancellationToken.None));
+            DispatchWorkItemService.TryEnterDispatchAsync(
+                CreateGate(lockProvider.Object, dbFactory), db, workItemId, CancellationToken.None));
         ex.Message.Should().Be("simulated disposal failure",
             "the original exception must propagate via 'throw;', not be replaced by a new throw");
 
@@ -706,7 +499,7 @@ public sealed class DispatchWorkItemServiceTests
     /// </para>
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatchAsync_PostLockQueryThrows_DisposesLockExactlyOnce()
+    public async Task TryEnterDispatchAsync_PostLockQueryThrows_DisposesLockExactlyOnce()
     {
         // Arrange — trackable lock handle
         var lockHandle = new Mock<IAsyncDisposable>();
@@ -730,8 +523,8 @@ public sealed class DispatchWorkItemServiceTests
 
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-                lockProvider.Object, "dotnet,kiro", db, Guid.NewGuid(), cts.Token));
+            DispatchWorkItemService.TryEnterDispatchAsync(
+                CreateGate(lockProvider.Object, dbFactory), db, Guid.NewGuid(), cts.Token));
 
         lockHandle.Verify(h => h.DisposeAsync(), Times.Once(),
             "lock must be disposed exactly once on the exception path");
@@ -739,11 +532,11 @@ public sealed class DispatchWorkItemServiceTests
 
     /// <summary>
     /// AC2 — Caller-ownership path.
-    /// When the item is Pending, TryEnterSelectorDispatchAsync must return (lockHandle, null)
+    /// When the item is Pending, TryEnterDispatchAsync must return (lockHandle, null)
     /// without calling DisposeAsync inside the method — the caller holds dispose responsibility.
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatchAsync_ItemIsPending_ReturnsLockWithoutDisposing()
+    public async Task TryEnterDispatchAsync_ItemIsPending_ReturnsLockWithoutDisposing()
     {
         // Arrange
         var lockHandle = new Mock<IAsyncDisposable>();
@@ -776,27 +569,27 @@ public sealed class DispatchWorkItemServiceTests
         await using var db = await dbFactory.CreateDbContextAsync();
 
         // Act
-        var (returnedLock, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-            lockProvider.Object, "dotnet,kiro", db, workItemId, CancellationToken.None);
+        var (returnedLock, earlyReturn) = await DispatchWorkItemService.TryEnterDispatchAsync(
+            CreateGate(lockProvider.Object, dbFactory), db, workItemId, CancellationToken.None);
 
         // Assert — caller receives the lock handle; DisposeAsync is NOT called inside the method
-        returnedLock.Should().BeSameAs(lockHandle.Object,
+        returnedLock.Should().NotBeNull(
             "the lock handle must be returned to the caller, not kept internally");
         earlyReturn.Should().BeNull(
             "a Pending item has no early-return reason — the caller proceeds to dispatch");
         lockHandle.Verify(h => h.DisposeAsync(), Times.Never(),
-            "caller owns the lock on the Pending success path — DisposeAsync must not be called inside TryEnterSelectorDispatchAsync");
+            "caller owns the lock on the Pending success path — DisposeAsync must not be called inside TryEnterDispatchAsync");
     }
 
     /// <summary>
     /// Happy-path non-Pending: when the post-lock re-read finds a work item that is no longer
     /// <c>Pending</c> (e.g. already <c>Dispatched</c> by a concurrent caller) and
-    /// <c>DisposeAsync()</c> succeeds, <see cref="DispatchWorkItemService.TryEnterSelectorDispatchAsync"/>
+    /// <c>DisposeAsync()</c> succeeds, <see cref="DispatchWorkItemService.TryEnterDispatchAsync"/>
     /// must dispose the acquired lock and return <c>(null, 200/deferred)</c>.
     ///
     /// <para>
     /// This is the normal-disposal complement to
-    /// <see cref="TryEnterSelectorDispatchAsync_NonPendingBranchDisposeThrows_CatchDoesNotDisposeAgainAndRethrows"/>:
+    /// <see cref="TryEnterDispatchAsync_NonPendingBranchDisposeThrows_CatchDoesNotDisposeAgainAndRethrows"/>:
     /// both tests enter the non-Pending if-block, but here <c>DisposeAsync()</c> returns
     /// <c>ValueTask.CompletedTask</c> so execution reaches the
     /// <c>return (null, TypedResults.Ok(...))</c> statement — the lines that are unreachable
@@ -804,7 +597,7 @@ public sealed class DispatchWorkItemServiceTests
     /// </para>
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatchAsync_NonPendingAfterLockAcquisition_ReturnsDeferredResultAndDisposesLock()
+    public async Task TryEnterDispatchAsync_NonPendingAfterLockAcquisition_ReturnsDeferredResultAndDisposesLock()
     {
         // Arrange — lock handle whose DisposeAsync() succeeds (no throw on the normal path).
         var lockHandle = new Mock<IAsyncDisposable>();
@@ -840,8 +633,8 @@ public sealed class DispatchWorkItemServiceTests
         await using var db = await dbFactory.CreateDbContextAsync();
 
         // Act
-        var (returnedLock, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-            lockProvider.Object, "dotnet,kiro", db, workItemId, CancellationToken.None);
+        var (returnedLock, earlyReturn) = await DispatchWorkItemService.TryEnterDispatchAsync(
+            CreateGate(lockProvider.Object, dbFactory), db, workItemId, CancellationToken.None);
 
         // Assert — the lock must be disposed inside the method (not transferred to the caller).
         returnedLock.Should().BeNull(
@@ -1006,7 +799,7 @@ public sealed class DispatchWorkItemServiceTests
     /// wrap the TimeoutException.
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatchAsync_LockAcquisitionTimesOut_Returns503WithoutDispose()
+    public async Task TryEnterDispatchAsync_LockAcquisitionTimesOut_Returns503WithoutDispose()
     {
         // Arrange
         var lockProvider = new Mock<IDistributedLockProvider>();
@@ -1018,8 +811,8 @@ public sealed class DispatchWorkItemServiceTests
         await using var db = await dbFactory.CreateDbContextAsync();
 
         // Act
-        var (lockHandleResult, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-            lockProvider.Object, "dotnet,kiro", db, Guid.NewGuid(), CancellationToken.None);
+        var (lockHandleResult, earlyReturn) = await DispatchWorkItemService.TryEnterDispatchAsync(
+            CreateGate(lockProvider.Object, dbFactory), db, Guid.NewGuid(), CancellationToken.None);
 
         // Assert
         lockHandleResult.Should().BeNull("no lock was acquired — nothing to dispose");
@@ -1111,7 +904,6 @@ public sealed class DispatchWorkItemServiceTests
             template,
             IsKiro: false,
             AvailablePvcs: [],
-            ConcurrencyBySelector: new Dictionary<string, int>(),
             LogPrefix: "test-");
 
         var lifecycle = CreateLifecycleService();
@@ -1213,12 +1005,11 @@ public sealed class DispatchWorkItemServiceTests
 
         var k8sMock = new Mock<IKubernetesJobClient>();
         var lifecycle = CreateLifecycleService(kubeClient: k8sMock.Object);
-        var lockProvider = CreateNoOpLockProvider();
         var svc = CreateService("kiro,dotnet");
 
         // Act
         var result = await svc.DispatchPendingWorkItemAsync(
-            workItemId, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+            workItemId, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert 1: the early result from RouteAsync is returned directly
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -1316,12 +1107,11 @@ public sealed class DispatchWorkItemServiceTests
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
         var lifecycle = CreateLifecycleService();
-        var lockProvider = CreateNoOpLockProvider();
         var svc = CreateService("kiro,dotnet");
 
         // Act
         var result = await svc.DispatchPendingWorkItemAsync(
-            workItemId, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+            workItemId, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert: no template for the empty selector → 200 no_template deferred response.
         var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;

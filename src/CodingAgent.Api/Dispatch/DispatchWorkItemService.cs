@@ -1,14 +1,13 @@
 using System.Diagnostics;
-using System.Text.Json;
 using CodingAgent.Api;
 using CodingAgent.Infrastructure.Common;
-using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -25,17 +24,19 @@ namespace CodingAgent.Api.Dispatch;
 ///
 /// <para>
 /// Extracted from <c>WorkItemDispatchEndpoints.cs</c> (issue #2743).
-/// <see cref="BuildDispatchPreambleAsync"/> composes the snapshot + PVC queries into one call
-/// (issue #2988), and <see cref="BuildProjectionFromQuickCheck"/> builds the
+/// <see cref="BuildProjectionFromQuickCheck"/> builds the
 /// <see cref="CodingAgent.Orchestration.Dispatch.PendingWorkItemProjection"/>.
 /// </para>
 ///
 /// <para>
+/// Spec 057: every start takes the <see cref="IAgentStartGate"/> (one lock for work items and chats), which counts
+/// the running agent Jobs and answers the four optional concurrency limits; the gate's Job list also gives the PVCs
+/// running agents hold.
+/// </para>
+///
+/// <para>
 /// Registered in DI as <c>AddSingleton</c>. The service is stateless and depends only on
-/// <see cref="JobTemplateStore"/> (also a singleton). It does NOT hold a
-/// <see cref="IDbContextFactory{TContext}"/> — callers pass the already-open
-/// <see cref="PipelineDbContext"/> into <see cref="BuildConcurrencySnapshotAsync"/> so that
-/// the advisory-lock context used by <c>DispatchPendingWorkItem</c> is reused correctly.
+/// <see cref="JobTemplateStore"/> and <see cref="IAgentStartGate"/> (both singletons).
 /// </para>
 /// </summary>
 internal sealed class DispatchWorkItemService
@@ -44,118 +45,26 @@ internal sealed class DispatchWorkItemService
     private const string NotPendingReason = "not_pending";
 
     private readonly JobTemplateStore _templateStore;
+    private readonly IAgentStartGate _gate;
 
-    public DispatchWorkItemService(JobTemplateStore templateStore)
+    public DispatchWorkItemService(JobTemplateStore templateStore, IAgentStartGate gate)
     {
         ArgumentNullException.ThrowIfNull(templateStore);
+        ArgumentNullException.ThrowIfNull(gate);
         _templateStore = templateStore;
-    }
-
-    // ── Concurrency snapshot ─────────────────────────────────────────────────
-
-    /// <summary>
-    /// Builds the Dispatched||Running concurrency map keyed on the normalized AgentSelector of each active item: the
-    /// job template key the API pinned when it routed the item (spec 053 req 4.9).
-    ///
-    /// <para>
-    /// Replaces the 8-line LINQ block that <c>DispatchPendingWorkItem</c> held inline.
-    /// </para>
-    ///
-    /// <para>
-    /// <strong>Important:</strong> callers must pass their own open
-    /// <see cref="PipelineDbContext"/>. Do NOT open a new context inside this method — for
-    /// <c>DispatchPendingWorkItem</c> the supplied context is the advisory-locked one, and
-    /// opening a fresh context here would bypass that lock, re-introducing the TOCTOU window
-    /// the lock was added to close.
-    /// </para>
-    /// </summary>
-    /// <param name="db">An open, caller-owned <see cref="PipelineDbContext"/>.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>
-    /// Dictionary mapping template selector → active-item count.
-    /// Empty dictionary when no active items exist.
-    /// </returns>
-    internal static async Task<Dictionary<string, int>> BuildConcurrencySnapshotAsync(
-        PipelineDbContext db,
-        CancellationToken ct)
-    {
-        var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        // Aggregate by normalized key — multiple raw selectors may normalize to the same key
-        // (e.g. "kiro,dotnet" and "dotnet,kiro" both normalize to "dotnet,kiro"). Sum their counts
-        // so that all active items contribute to the correct concurrency-gate lookup.
-        // TODO [WARNING]: The previous implementation used ToDictionary() which would throw
-        // ArgumentException if the GroupBy result contained two rows with the same raw selector
-        // (should be impossible under EF/Postgres GroupBy semantics, but would surface as a
-        // crash-detectable invariant violation). This foreach silently merges such rows instead,
-        // which is arguably more correct but hides the data-consistency anomaly. If a duplicate
-        // raw-selector anomaly occurs in production it will be silently absorbed rather than logged.
-        var result = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var item in activeCounts)
-        {
-            var templateKey = JobTemplateStore.NormalizeLabels(item.Selector);
-            result[templateKey] = result.GetValueOrDefault(templateKey, 0) + item.Count;
-        }
-        return result;
+        _gate = gate;
     }
 
     /// <summary>
     /// Resolves the <see cref="JobTemplate"/> an item stored with <paramref name="agentSelector"/> is dispatched under:
     /// a direct lookup of the normalized selector, the job template key the API pinned when it routed the item
-    /// (spec 053 req 4.9). The concurrency snapshot, the gate and the selector lock all key on that selector.
+    /// (spec 053 req 4.9). The limit check and the Job label key on that selector.
     /// </summary>
     /// <returns>The template, or <c>null</c> when the Helm values have none; and the normalized selector.</returns>
     internal (JobTemplate? Template, string EffectiveSelector) ResolveTemplate(string agentSelector)
     {
         var normalizedSelector = JobTemplateStore.NormalizeLabels(agentSelector);
         return (_templateStore.Resolve(normalizedSelector), normalizedSelector);
-    }
-
-    // ── Dispatch preamble ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Builds the dispatch preamble of <c>DispatchPendingWorkItem</c>: the concurrency snapshot and
-    /// the PVC availability result (issue #2988).
-    ///
-    /// <para>
-    /// Composes <see cref="BuildConcurrencySnapshotAsync"/> with
-    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/> into a single call,
-    /// eliminating the three-line preamble that was duplicated in both handlers.
-    /// </para>
-    ///
-    /// <para>
-    /// <strong>Caller responsibilities (not absorbed here):</strong>
-    /// <list type="bullet">
-    ///   <item>
-    ///     <c>DispatchPendingWorkItem</c>: call this method <em>inside</em> the advisory lock,
-    ///     after the post-lock status re-check. The lock-ordering constraint cannot be enforced
-    ///     by this method — it is the caller's responsibility.
-    ///   </item>
-    /// </list>
-    /// </para>
-    /// </summary>
-    /// <param name="db">Caller-owned open <see cref="PipelineDbContext"/>. Must be the same
-    /// context used for any subsequent calls on this request (e.g. the advisory-locked context
-    /// in <c>DispatchPendingWorkItem</c>).</param>
-    /// <param name="lifecycle">The <see cref="DispatchLifecycleService"/> singleton that owns
-    /// the PVC pool configuration.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>
-    /// A tuple of the concurrency snapshot (from <see cref="BuildConcurrencySnapshotAsync"/>)
-    /// and the PVC availability result (from
-    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/>).
-    /// </returns>
-    internal static async Task<(Dictionary<string, int> concurrencyBySelector, PvcAvailabilityResult pvcResult)>
-        BuildDispatchPreambleAsync(
-            PipelineDbContext db, DispatchLifecycleService lifecycle, CancellationToken ct)
-    {
-        var concurrencyBySelector = await BuildConcurrencySnapshotAsync(db, ct);
-        var pvcResult = await lifecycle.QueryDispatchablePvcsAsync(db, ct);
-        return (concurrencyBySelector, pvcResult);
     }
 
     // ── Projection factories ─────────────────────────────────────────────────
@@ -189,11 +98,10 @@ internal sealed class DispatchWorkItemService
     // ── Gate block ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Applies the concurrency gate and PVC gate.
+    /// Applies the PVC gate (the concurrency limits are answered by the agent start gate before, spec 057).
     ///
     /// <para>
-    /// Returns a non-null <see cref="IResult"/> (409 or 503) when any gate fires;
-    /// returns <c>null</c> when all gates pass.
+    /// Returns a non-null <see cref="IResult"/> (503) when the gate fires; returns <c>null</c> when it passes.
     /// </para>
     ///
     /// <para>
@@ -203,36 +111,19 @@ internal sealed class DispatchWorkItemService
     /// remain in the respective handler, outside this method. The credential-pool gauges are
     /// not emitted from the API at all — the Scheduler leader owns them.
     /// </para>
-    ///
-    /// <para>
-    /// The concurrency check delegates to
-    /// <see cref="IsAtConcurrencyLimit"/> which already normalises the
-    /// zero/unlimited semantics — no further normalization is needed.
-    /// </para>
     /// </summary>
-    /// <param name="normalizedSelector">
-    /// Normalized agent-selector key (output of <see cref="JobTemplateStore.NormalizeLabels"/>).
-    /// Used as the concurrency-map lookup key and in the 409 response body.
-    /// </param>
     /// <param name="sanitizedSelector">
-    /// Log-safe (CRLF-stripped) form of the selector, for embedding in response bodies and log messages.
-    /// </param>
-    /// <param name="concurrencyBySelector">
-    /// Concurrency snapshot produced by <see cref="BuildConcurrencySnapshotAsync"/>.
+    /// Log-safe (CRLF-stripped) form of the selector, for log messages.
     /// </param>
     /// <param name="pvcResult">PVC availability snapshot.</param>
-    /// <param name="template">Resolved <see cref="JobTemplate"/> for this selector.</param>
     /// <param name="isKiroAgent"><c>true</c> when the template targets a kiro provider.</param>
     /// <param name="callerName">Short name used in log messages (e.g. <c>"DispatchPendingWorkItem"</c>).</param>
     /// <returns>
-    /// A non-null <see cref="IResult"/> if a gate fires; <c>null</c> when all gates pass.
+    /// A non-null <see cref="IResult"/> if the gate fires; <c>null</c> when it passes.
     /// </returns>
     internal IResult? ApplyGates( // NOSONAR S2325 — instance API: callers and tests use an instance
-        string normalizedSelector,
         string sanitizedSelector,
-        Dictionary<string, int> concurrencyBySelector,
         PvcAvailabilityResult pvcResult,
-        JobTemplate template,
         bool isKiroAgent,
         string callerName)
     {
@@ -243,29 +134,6 @@ internal sealed class DispatchWorkItemService
         // verbatim in log output. Serilog's structured API prevents format-string injection, but
         // CRLF characters could smuggle extra log lines into text sinks. Fix: restrict to an enum
         // or validate/truncate to alphanumeric-only at the entry point.
-
-        // TODO [WARNING]: `sanitizedSelector` is embedded into the Conflict response body
-        // ($"Concurrency limit reached for selector '{sanitizedSelector}' ..."). The parameter
-        // name implies CRLF-stripping has already been applied by the caller (via
-        // LogSanitizer.SanitizeForLog), and both current call sites do apply sanitization before
-        // passing it. The contract is implicit — this method accepts a plain `string` with no
-        // enforcement that sanitization was performed. A future caller passing a raw, unsanitized
-        // selector sourced from user input would reflect that input into the HTTP response body,
-        // enabling response-splitting (raw HTTP/1.1) or stored XSS if the body is rendered
-        // unescaped in a frontend. Fix: add an internal debug-mode assertion or rename to
-        // a sanitized-string wrapper type to make the contract explicit.
-
-        // Concurrency gate — delegates to IsAtConcurrencyLimit
-        // which already handles maxConcurrent <= 0 as "no limit".
-        if (IsAtConcurrencyLimit(normalizedSelector, concurrencyBySelector, template.MaxConcurrent))
-        {
-            var currentCount = concurrencyBySelector.GetValueOrDefault(normalizedSelector, 0);
-            Log.Information(
-                "{CallerName}: concurrency limit reached for selector {Selector} ({Current}/{Max}) — returning 409",
-                callerName, sanitizedSelector, currentCount, template.MaxConcurrent);
-            return TypedResults.Conflict(
-                $"Concurrency limit reached for selector '{sanitizedSelector}' ({currentCount}/{template.MaxConcurrent}).");
-        }
 
         // PVC gate — only fires for kiro agents.
         // NOTE: PvcPoolExhaustions.Add(1) is NOT called here — it belongs exclusively to the
@@ -279,21 +147,6 @@ internal sealed class DispatchWorkItemService
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Returns true if the given selector group is at or above its concurrency limit.
-    /// A limit of 0 means no limit is configured — always returns false.
-    /// </summary>
-    internal static bool IsAtConcurrencyLimit(
-        string? agentSelector,
-        Dictionary<string, int> concurrencyBySelector,
-        int maxConcurrent)
-    {
-        if (maxConcurrent <= 0)
-            return false;
-        var current = concurrencyBySelector.GetValueOrDefault(agentSelector ?? "", 0);
-        return current >= maxConcurrent;
     }
 
     // ── Unique-violation fallback ────────────────────────────────────────────
@@ -383,13 +236,8 @@ internal sealed class DispatchWorkItemService
     /// <strong>Caller responsibilities (not absorbed here):</strong>
     /// <list type="bullet">
     ///   <item>
-    ///     Call <see cref="BuildConcurrencySnapshotAsync"/> while holding the advisory lock and pass
-    ///     the result as <see cref="ResolvedDispatchRequest.ConcurrencyBySelector"/> — the lock
-    ///     ordering cannot be replicated inside this method.
-    ///   </item>
-    ///   <item>
-    ///     Call <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/> and pass the
-    ///     result as <see cref="ResolvedDispatchRequest.PvcResult"/>.
+    ///     Hold the agent start lease (spec 057) and pass the PVC availability computed from its held PVCs as
+    ///     <see cref="ResolvedDispatchRequest.PvcResult"/> — the lock ordering cannot be replicated inside this method.
     ///   </item>
     ///   <item>
     ///     After this method returns, <c>DispatchPendingWorkItem</c> checks whether the result
@@ -406,7 +254,7 @@ internal sealed class DispatchWorkItemService
     /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
-    /// A non-null <see cref="IResult"/> from <see cref="ApplyGates"/> if a gate fires;
+    /// A non-null <see cref="IResult"/> from <see cref="ApplyGates"/> if the PVC gate fires;
     /// the result from <see cref="ResolvedDispatchRequest.OnSuccess"/> on dispatch success;
     /// 503 Service Unavailable on lifecycle failure.
     /// </returns>
@@ -417,19 +265,16 @@ internal sealed class DispatchWorkItemService
     {
         ArgumentNullException.ThrowIfNull(request);
         var template = request.Template;
-        var concurrencyBySelector = request.ConcurrencyBySelector;
         var pvcResult = request.PvcResult;
         var callerName = request.CallerName;
 
         // Compute isKiroAgent exactly once via JobTemplateProviderType.IsKiro — the "kiro" literal lives there only (AC3).
         var isKiroAgent = JobTemplateProviderType.IsKiro(template.ProviderType);
 
-        // Concurrency gate + PVC gate.
+        // PVC gate.
         // NOTE: PvcPoolExhaustions is NOT emitted here —
         // that telemetry call belongs exclusively to the DispatchPendingWorkItem handler.
-        var gateResult = ApplyGates(
-            request.NormalizedSelector, request.SanitizedSelector, concurrencyBySelector,
-            pvcResult, template, isKiroAgent, callerName);
+        var gateResult = ApplyGates(request.SanitizedSelector, pvcResult, isKiroAgent, callerName);
         if (gateResult is not null)
             return gateResult;
 
@@ -439,7 +284,6 @@ internal sealed class DispatchWorkItemService
             template,
             isKiroAgent,
             pvcResult.AvailablePvcs,
-            concurrencyBySelector,
             request.LogPrefix);
 
         return await RunDispatchLifecycleAsync(
@@ -461,7 +305,7 @@ internal sealed class DispatchWorkItemService
     ///
     /// <para>
     /// The endpoint handler becomes a one-line delegator after this extraction; all selector
-    /// normalization, lock acquisition, template resolution, concurrency gating, and result
+    /// normalization, the agent start gate, template resolution, limit and PVC checks, and result
     /// interpretation live here.
     /// </para>
     ///
@@ -475,25 +319,24 @@ internal sealed class DispatchWorkItemService
     /// <param name="id">The GUID of the Pending WorkItem to dispatch.</param>
     /// <param name="dbFactory">Factory for opening the caller-owned <see cref="PipelineDbContext"/>.</param>
     /// <param name="lifecycle">The shared singleton <see cref="DispatchLifecycleService"/>.</param>
-    /// <param name="lockProvider">Distributed lock provider for the per-selector advisory lock.</param>
     /// <param name="rollout">Routes an item a previous-release API stored without a selector (spec 053 DD10).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// <list type="bullet">
     ///   <item>200 <c>DispatchPendingResponse(true,"none")</c> — dispatch succeeded.</item>
-    ///   <item>200 <c>DispatchPendingResponse(false,"not_pending"|"no_template"|"concurrency_limit")</c>
+    ///   <item>200 <c>DispatchPendingResponse(false,"not_pending"|"no_template"|"concurrency_limit"|"global_concurrency_limit")</c>
     ///     — expected backpressure outcome.</item>
     ///   <item>200 <c>DispatchPendingResponse(false,"no_route")</c> — the item had no route and none resolves; it was
     ///     failed with the reason.</item>
     ///   <item>404 Not Found — no WorkItem with this ID.</item>
-    ///   <item>503 Service Unavailable — no PVC available, advisory lock timeout, K8s failure, or a routing error.</item>
+    ///   <item>503 Service Unavailable — no PVC available, lock timeout, running agents not countable, K8s failure,
+    ///     or a routing error.</item>
     /// </list>
     /// </returns>
     internal async Task<IResult> DispatchPendingWorkItemAsync(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
-        IDistributedLockProvider lockProvider,
         RolloutRouting rollout,
         CancellationToken ct)
     {
@@ -535,7 +378,7 @@ internal sealed class DispatchWorkItemService
         if (string.IsNullOrEmpty(agentSelector))
         {
             // Spec 053 DD10: a previous-release API replica stored the request of a current-release caller without
-            // a selector or route. Route it now, before the selector lock; a refusal fails it.
+            // a selector or route. Route it now, before the start gate; a refusal fails it.
             var (routedSelector, early) = await rollout.RouteAsync(id, ct);
             if (early is not null)
                 return early;
@@ -544,31 +387,23 @@ internal sealed class DispatchWorkItemService
 
         // Sanitize agentSelector before embedding it in any log message or HTTP response body.
         // agentSelector originates from a database column set by POST /api/work-items callers;
-        // a crafted value containing \r\n can inject fake log lines (log forging). All log and
-        // Conflict call sites below use sanitizedSelector / sanitizedEffectiveSelector instead
+        // a crafted value containing \r\n can inject fake log lines (log forging). All log
+        // call sites below use sanitizedSelector / sanitizedEffectiveSelector instead
         // of the raw values. See also: LogSanitizer in CodingAgent.Infrastructure.Common.
         var sanitizedSelector = LogSanitizer.SanitizeForLog(agentSelector);
 
-        // Template: the job template key the API pinned when it routed the item (spec 053 req 4.9). The lock, the
-        // concurrency snapshot and the gate all key on it. A missing template is reported after the lock and the
-        // post-lock re-check.
+        // Template: the job template key the API pinned when it routed the item (spec 053 req 4.9). The limit check
+        // and the Job label key on it. A missing template is reported after the gate and the post-lock re-check.
         var (template, effectiveSelector) = ResolveTemplate(agentSelector);
         var sanitizedEffectiveSelector = LogSanitizer.SanitizeForLog(effectiveSelector);
 
-        // Acquire advisory lock keyed on the effective selector and perform the post-lock
-        // TOCTOU re-read. Both are encapsulated in TryEnterSelectorDispatchAsync (issue #3235):
-        // - Lock scope: snapshot → gate → CAS (inside ExecuteDispatchLifecycleAsync).
-        // - Note: this lock only protects concurrent calls to THIS endpoint. WorkItemDispatchLoop
-        //   (Scheduler background loop) does NOT acquire this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
-        var (lockHandle, lockEarlyReturn) = await TryEnterSelectorDispatchAsync(lockProvider, effectiveSelector, db, id, ct);
+        // Enter the agent start gate (spec 057) and perform the post-lock TOCTOU re-read. Both are encapsulated in
+        // TryEnterDispatchAsync (issue #3235). Lock scope: count → limit checks → PVC gate → CAS → Job creation. The
+        // same lock serializes chat launches, so a chat and a dispatch cannot both pass a limit only one may pass.
+        var (enteredLease, lockEarlyReturn) = await TryEnterDispatchAsync(_gate, db, id, ct);
         if (lockEarlyReturn is not null)
             return lockEarlyReturn;
-        await using var _ = lockHandle!;
-
-        // Build the concurrency snapshot and PVC availability result via the shared preamble.
-        // IMPORTANT: this call must remain inside the advisory lock, after the post-lock status
-        // re-check. The lock-ordering constraint is: acquire lock → re-check status → preamble.
-        var (concurrencyBySelector, pvcResult) = await BuildDispatchPreambleAsync(db, lifecycle, ct);
+        await using var lease = enteredLease!;
 
         if (template is null)
         {
@@ -576,6 +411,14 @@ internal sealed class DispatchWorkItemService
             WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, "no_template");
             return TypedResults.Ok(new DispatchPendingResponse(false, "no_template"));
         }
+
+        // Spec 057 req 3.1: the limit for all agents first, then the template's limit (lowest of Helm and UI each).
+        var decision = lease.CheckWorkItem(effectiveSelector);
+        if (!decision.Allowed)
+            return HoldForLimit(decision, sanitizedEffectiveSelector);
+
+        // Spec 057 DD1: the PVCs running agent Jobs (chats included) hold come from the gate's one Job list.
+        var pvcResult = await lifecycle.QueryDispatchablePvcsAsync(db, lease.Jobs.HeldPvcs, ct);
 
         // Build the projection for the shared dispatch helper (issue #2988). Its AgentSelector is the
         // canonical effectiveSelector, which the Job label and the dispatch metrics carry (#2777).
@@ -590,9 +433,7 @@ internal sealed class DispatchWorkItemService
                 Db = db,
                 Template = template,
                 Projection = projection,
-                NormalizedSelector = effectiveSelector,
                 SanitizedSelector = sanitizedEffectiveSelector,
-                ConcurrencyBySelector = concurrencyBySelector,
                 PvcResult = pvcResult,
                 LogPrefix = "pending-dispatch ",
                 OnSuccess = _ => TypedResults.Ok(id),
@@ -604,7 +445,6 @@ internal sealed class DispatchWorkItemService
 
         // ── Result interception: delegate to shared helper (issue #3235, #3260) ──
         // InterpretDispatchResult returns an explicit DispatchInterpretOutcome alongside the IResult.
-        //   ConcurrencyLimitRewritten → 409 was rewritten to 200+DispatchPendingResponse
         //   PvcExhausted503           → 503 from PVC gate; caller emits PvcPoolExhaustions.Add(1)
         //   K8sError503               → 503 from K8s failure; return as-is
         //   PassThrough               → success; emit RecordDispatchAttempt("dispatched","none")
@@ -614,6 +454,26 @@ internal sealed class DispatchWorkItemService
         // Branch exclusively on the explicit outcome discriminator (issue #3260).
         // No reference-equality or re-matched status-code checks remain here.
         return ApplyDispatchOutcomeSwitch(outcome, interpretedResult);
+    }
+
+    /// <summary>
+    /// Spec 057 req 3.1, 3.2, 7.1, 7.4, 7.5: the answer for a Pending item a concurrency limit holds. The item stays
+    /// Pending; the Scheduler stops the selector for the cycle (<c>concurrency_limit</c>) or ends the cycle
+    /// (<c>global_concurrency_limit</c>).
+    /// </summary>
+    private static IResult HoldForLimit(AgentStartDecision decision, string sanitizedSelector)
+    {
+        var scope = AgentCapacityRules.TagValue(decision.Scope!.Value);
+        var source = AgentCapacityRules.TagValue(decision.Source!.Value);
+        Activity.Current?.SetTag("workdistribution.agents.running", decision.Running);
+        Activity.Current?.SetTag("workdistribution.agents.limit", decision.Limit);
+        Activity.Current?.SetTag("workdistribution.limit_scope", scope);
+        Activity.Current?.SetTag("workdistribution.limit_source", source);
+        Log.Information(
+            "{CallerName}: {Scope} concurrency limit reached for selector {Selector} ({Current}/{Max}, {LimitSource}) — deferred",
+            "DispatchPendingWorkItem", scope, sanitizedSelector, decision.Running, decision.Limit, source);
+        WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, decision.Reason!);
+        return TypedResults.Ok(new DispatchPendingResponse(false, decision.Reason!));
     }
 
     /// <summary>
@@ -632,7 +492,6 @@ internal sealed class DispatchWorkItemService
     internal static IResult ApplyDispatchOutcomeSwitch(DispatchInterpretOutcome outcome, IResult interpretedResult) =>
         outcome switch
         {
-            DispatchInterpretOutcome.ConcurrencyLimitRewritten => interpretedResult,
             DispatchInterpretOutcome.PvcExhausted503 => EmitPvcExhaustionAndReturn(interpretedResult),
             DispatchInterpretOutcome.K8sError503 => interpretedResult,
             DispatchInterpretOutcome.PassThrough => DispatchSuccessFallThrough(),
@@ -654,79 +513,82 @@ internal sealed class DispatchWorkItemService
     // ── Moved helpers (from WorkItemDispatchEndpoints, issue #3286) ──────────────
 
     /// <summary>
-    /// Acquires the per-selector advisory lock and performs the post-lock TOCTOU status re-read.
-    /// Moved from <see cref="CodingAgent.Api.WorkItemDispatchEndpoints"/> (issue #3286).
+    /// Enters the agent start gate (spec 057; before: a per-selector advisory lock) and performs the post-lock
+    /// TOCTOU status re-read. Moved from <see cref="CodingAgent.Api.WorkItemDispatchEndpoints"/> (issue #3286).
     ///
     /// <para>
-    /// Returns <c>(null, earlyReturn)</c> when the lock timed out (503) or the item is no longer
-    /// <c>Pending</c> after lock acquisition (200/deferred). The caller must return
+    /// Returns <c>(null, earlyReturn)</c> when the lock timed out (503), the running agents could not be counted
+    /// (503), or the item is no longer <c>Pending</c> after the lock was taken (200/deferred). The caller must return
     /// <c>earlyReturn</c> immediately without proceeding to the dispatch lifecycle.
     /// </para>
     /// <para>
-    /// Returns <c>(lockHandle, null)</c> when the item is <c>Pending</c> and the lock was acquired.
-    /// The caller <b>must</b> <c>await using</c> the returned <paramref name="lockHandle"/> to hold
-    /// the lock for the full dispatch lifecycle scope:
+    /// Returns <c>(lease, null)</c> when the item is <c>Pending</c> and the lease was entered.
+    /// The caller <b>must</b> <c>await using</c> the returned lease to hold the lock for the full dispatch
+    /// lifecycle scope:
     /// <code>
-    /// var (lockHandle, earlyReturn) = await TryEnterSelectorDispatchAsync(...);
+    /// var (lease, earlyReturn) = await TryEnterDispatchAsync(...);
     /// if (earlyReturn is not null) return earlyReturn;
-    /// await using var _ = lockHandle!;
+    /// await using var _ = lease!;
     /// </code>
     /// </para>
     /// </summary>
-    /// <param name="lockProvider">The distributed lock provider.</param>
-    /// <param name="normalizedSelector">Normalized (not raw) selector of the item's template — the key the
-    /// concurrency gate checks — used as the lock key.</param>
+    /// <param name="gate">The agent start gate; its lease holds the <c>dispatch-agents</c> lock.</param>
     /// <param name="db">Caller-owned open <see cref="PipelineDbContext"/> for the post-lock re-read.
     /// Must use <c>AsNoTracking()</c> internally — see Risk 6 in the issue analysis.</param>
-    /// <param name="id">Work-item GUID to re-read after lock acquisition.</param>
+    /// <param name="id">Work-item GUID to re-read after the lock was taken.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
-    /// <c>(lockHandle, null)</c> on success (item is Pending, lock held);
-    /// <c>(null, earlyReturn)</c> on lock timeout (503) or post-lock non-Pending (200/deferred).
+    /// <c>(lease, null)</c> on success (item is Pending, lock held);
+    /// <c>(null, earlyReturn)</c> on lock timeout or count failure (503), or post-lock non-Pending (200/deferred).
     /// </returns>
-    internal static async Task<(IAsyncDisposable? lockHandle, IResult? earlyReturn)> TryEnterSelectorDispatchAsync(
-        IDistributedLockProvider lockProvider,
-        string normalizedSelector,
+    internal static async Task<(IAgentStartLease? lease, IResult? earlyReturn)> TryEnterDispatchAsync(
+        IAgentStartGate gate,
         PipelineDbContext db,
         Guid id,
         CancellationToken ct)
     {
-        IAsyncDisposable acquiredLock;
+        IAgentStartLease acquiredLease;
         try
         {
-            acquiredLock = await lockProvider.AcquireAsync($"dispatch-selector:{normalizedSelector}", ct);
+            acquiredLease = await gate.EnterAsync(ct);
         }
         catch (TimeoutException)
         {
             // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
-            // A timeout means another call has held the lock for that entire window (e.g. a slow
+            // A timeout means another start has held the lock for that entire window (e.g. a slow
             // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
             Log.Warning( // NOSONAR S6667 — expected lock timeout; the message says so
-                "DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503",
-                LogSanitizer.SanitizeForLog(normalizedSelector));
+                "DispatchPendingWorkItem: agent start lock acquisition timed out for WorkItem {WorkItemId} — returning 503",
+                id);
             WorkDistributionTelemetry.RecordDispatchAttempt("transient", "lock_timeout");
+            return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
+        }
+        catch (AgentCountUnavailableException)
+        {
+            // Spec 057 req 2.4: without a count no agent starts. The gate logged the cause; retried next cycle.
+            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "agent_count_unavailable");
             return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
         }
 
         // Wrap the post-lock body in try/catch so that any transient exception (e.g. a
-        // NpgsqlException on the re-read query) disposes the advisory lock before propagating.
+        // NpgsqlException on the re-read query) disposes the lease before propagating.
         // Without this guard the lock is held until the underlying connection is recycled,
-        // blocking all concurrent dispatch callers for the same selector (issue #3701).
+        // blocking all concurrent agent starts (issue #3701).
         //
         // The TimeoutException catch above is intentionally outside this scope — it fires before
-        // acquiredLock is assigned and is unaffected by this change.
+        // acquiredLease is assigned and is unaffected by this change.
         //
-        // lockTransferred guards against double-dispose: the non-Pending path calls
-        // acquiredLock.DisposeAsync() inside the try block and then returns. If that disposal
+        // leaseTransferred guards against double-dispose: the non-Pending path calls
+        // acquiredLease.DisposeAsync() inside the try block and then returns. If that disposal
         // throws, the catch fires. Without the flag the catch would call DisposeAsync() a second
         // time, violating the IAsyncDisposable contract (issue #3795).
-        bool lockTransferred = false;
+        bool leaseTransferred = false;
         try
         {
             // Post-lock status re-read: close the TOCTOU window.
             // Another dispatch path (WorkItemDispatchLoop, or a concurrent call
             // to this endpoint) may have transitioned the item from Pending → Dispatched between
-            // the fast-path check and lock acquisition. The advisory lock serialises concurrent
+            // the fast-path check and lock acquisition. The lock serialises concurrent
             // callers on this endpoint; without this re-read, the loser would enter
             // ExecuteDispatchLifecycleAsync, find the item no longer Pending, exit early
             // (dispatched = false), and the endpoint would return 503. The Scheduler interprets
@@ -749,34 +611,30 @@ internal sealed class DispatchWorkItemService
                     "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
                     id, postLockCheck?.Status);
                 WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
-                // Set lockTransferred before calling DisposeAsync: if the disposal throws the
-                // catch block will see lockTransferred = true and will not attempt a second
+                // Set leaseTransferred before calling DisposeAsync: if the disposal throws the
+                // catch block will see leaseTransferred = true and will not attempt a second
                 // disposal, preventing the double-dispose SonarQube S3966 flagged (issue #3795).
-                lockTransferred = true;
-                await acquiredLock.DisposeAsync();
+                leaseTransferred = true;
+                await acquiredLease.DisposeAsync();
                 return (null, TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason)));
             }
 
-            lockTransferred = true;
-            return (acquiredLock, null);
+            leaseTransferred = true;
+            return (acquiredLease, null);
         }
         catch
         {
-            if (!lockTransferred)
-                await acquiredLock.DisposeAsync();
+            if (!leaseTransferred)
+                await acquiredLease.DisposeAsync();
             throw;
         }
     }
 
     /// <summary>
     /// Interprets the raw <see cref="IResult"/> returned by
-    /// <see cref="DispatchResolvedWorkItemAsync"/> and applies path-specific result rewriting
-    /// and telemetry (issue #3235, moved from <see cref="CodingAgent.Api.WorkItemDispatchEndpoints"/>
-    /// by issue #3286).
-    ///
-    /// <para>
-    /// A 409 (concurrency limit) is rewritten to <c>200 DispatchPendingResponse(false,"concurrency_limit")</c>.
-    /// </para>
+    /// <see cref="DispatchResolvedWorkItemAsync"/> and applies path-specific telemetry (issue #3235, moved from
+    /// <see cref="CodingAgent.Api.WorkItemDispatchEndpoints"/> by issue #3286). Concurrency limits never reach this
+    /// method: the agent start gate answers them before the lifecycle runs (spec 057).
     ///
     /// <para>
     /// <strong>Telemetry boundary — NOT emitted inside this helper:</strong>
@@ -786,22 +644,21 @@ internal sealed class DispatchWorkItemService
     ///     checking the returned result.</item>
     ///   <item><c>WorkDistributionTelemetry.RecordDispatchAttempt("dispatched","none")</c> — belongs
     ///     exclusively to the <see cref="DispatchPendingWorkItemAsync"/> success fall-through; the
-    ///     caller emits it when the returned result is not a 409/503.</item>
+    ///     caller emits it when the returned result is not a 503.</item>
     /// </list>
     /// </para>
     ///
     /// <para>
-    /// <strong>503 disambiguation note:</strong> <paramref name="pvcResult"/> was captured before
-    /// the advisory lock was acquired and before <c>DispatchResolvedWorkItemAsync</c> ran. The
-    /// heuristic relies on gate-ordering (PVC gate before K8s lifecycle) being a structural
-    /// invariant — see the TODO [WARNING] in the original result-interception block.
+    /// <strong>503 disambiguation note:</strong> <paramref name="pvcResult"/> was computed inside the agent start
+    /// lease, before <c>DispatchResolvedWorkItemAsync</c> ran. The heuristic relies on gate-ordering (PVC gate before
+    /// K8s lifecycle) being a structural invariant.
     /// </para>
     /// </summary>
     /// <param name="rawResult">The result returned by <c>DispatchResolvedWorkItemAsync</c>.</param>
     /// <param name="pvcResult">PVC availability snapshot taken before dispatch. Used for 503 disambiguation.</param>
     /// <param name="isKiroAgent"><c>true</c> when the resolved template targets a kiro provider.</param>
     /// <returns>
-    /// A tuple of the (possibly rewritten) result and an explicit <see cref="DispatchInterpretOutcome"/>
+    /// A tuple of the result and an explicit <see cref="DispatchInterpretOutcome"/>
     /// discriminator. The caller uses the outcome to branch without reference-equality or re-matched
     /// status-code checks (issue #3260).
     /// </returns>
@@ -810,26 +667,13 @@ internal sealed class DispatchWorkItemService
         PvcAvailabilityResult pvcResult,
         bool isKiroAgent)
     {
-        // ── 409: concurrency limit ────────────────────────────────────────────
-        // Use IStatusCodeHttpResult (the interface) rather than StatusCodeHttpResult (concrete class)
-        // because ApplyGates returns TypedResults.Conflict(...) which is Conflict<string>,
-        // NOT StatusCodeHttpResult. Both implement IStatusCodeHttpResult.
-        if (rawResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 409 })
-        {
-            WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, "concurrency_limit");
-            return (TypedResults.Ok(new DispatchPendingResponse(false, "concurrency_limit")), DispatchInterpretOutcome.ConcurrencyLimitRewritten);
-        }
-
         // ── 503: PVC exhaustion or K8s failure ───────────────────────────────
         if (rawResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 503 })
         {
             // Gate ordering: ApplyGates runs the PVC gate before the K8s lifecycle.
             // The PVC gate fires if AvailablePvcs is empty — same condition PvcPoolExhaustions
             // has always checked. Use PVC availability to distinguish the two sub-cases.
-            // TODO [WARNING]: pvcResult was captured before the advisory lock was acquired and
-            // before DispatchResolvedWorkItemAsync ran. If a PVC becomes available between
-            // snapshot and execution, pvcResult.AvailablePvcs may not reflect the state at the
-            // time of the 503. The disambiguation relies on the gate-ordering guarantee (PVC gate
+            // TODO [WARNING]: The disambiguation relies on the gate-ordering guarantee (PVC gate
             // before K8s lifecycle) being a structural invariant — if that ordering ever changes,
             // this heuristic may misclassify k8s_error as pvc_unavailable or vice versa.
             if (!pvcResult.AvailablePvcs.Any() && isKiroAgent)
@@ -850,7 +694,7 @@ internal sealed class DispatchWorkItemService
 }
 
 /// <summary>
-/// The fields <c>DispatchPendingWorkItem</c>'s fast-path query reads before taking the selector lock
+/// The fields <c>DispatchPendingWorkItem</c>'s fast-path query reads before entering the agent start gate
 /// (no Payload loaded). See <see cref="DispatchWorkItemService.BuildProjectionFromQuickCheck"/>.
 /// </summary>
 internal sealed record DispatchQuickCheck
@@ -885,26 +729,12 @@ internal sealed record ResolvedDispatchRequest
     /// </summary>
     public required PendingWorkItemProjection Projection { get; init; }
 
-    /// <summary>Normalized agent-selector key for the concurrency gate and context.</summary>
-    public required string NormalizedSelector { get; init; }
-
-    /// <summary>CRLF-stripped form of the selector for log messages and response bodies.</summary>
+    /// <summary>CRLF-stripped form of the selector for log messages.</summary>
     public required string SanitizedSelector { get; init; }
 
     /// <summary>
-    /// Snapshot produced by <see cref="DispatchWorkItemService.BuildConcurrencySnapshotAsync"/> in the caller.
-    /// </summary>
-    // TODO [WARNING]: This property should be typed as IReadOnlyDictionary<string, int> to make the
-    // no-mutation contract explicit. The caller's snapshot must remain stable for the lifetime of the
-    // dispatch call; FinalizeDispatchAsync mutates a copy inside DispatchLifecycleContext, not this value
-    // directly — but the contract is implicit. Changing to IReadOnlyDictionary would catch future
-    // regressions at compile time and surface the intent clearly.
-    // (DotNetSpecialist review [WARNING])
-    public required Dictionary<string, int> ConcurrencyBySelector { get; init; }
-
-    /// <summary>
     /// PVC availability snapshot produced by the caller via
-    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/>.
+    /// <see cref="DispatchLifecycleService.QueryDispatchablePvcsAsync"/> inside the agent start lease.
     /// </summary>
     public required PvcAvailabilityResult PvcResult { get; init; }
 

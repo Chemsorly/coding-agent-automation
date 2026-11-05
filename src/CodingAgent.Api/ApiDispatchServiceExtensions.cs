@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
@@ -137,12 +138,24 @@ public static class ApiDispatchServiceExtensions
         // Spec 053 DD10: routes a Pending item a previous-release API stored without a selector.
         services.AddSingleton<CodingAgent.Api.Dispatch.RolloutRouting>();
 
+        // ── Agent start gate (spec 057) ──────────────────────────────────────────────────────
+        // One lock for every agent start (work-item dispatch and chat launch), the running-agent count from the
+        // Kubernetes Jobs, and the four optional limits (Helm and UI, per job template and for all agents).
+        services.AddSingleton<IAgentStartGate>(sp => new CodingAgent.Api.Dispatch.AgentStartGate(
+            sp.GetRequiredService<IDistributedLockProvider>(),
+            sp.GetRequiredService<IKubernetesJobClient>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            sp.GetRequiredService<DispatchServiceOptions>(),
+            sp.GetRequiredService<AgentCapacityStore>(),
+            Log.Logger));
+
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
-        // The dispatch of a Pending item (DispatchPendingWorkItem): concurrency-snapshot query,
-        // gate block and lifecycle. Singleton — stateless, depends only on JobTemplateStore.
+        // The dispatch of a Pending item (DispatchPendingWorkItem): the agent start gate, the PVC gate and the
+        // lifecycle. Singleton — stateless.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchWorkItemService>(sp =>
             new CodingAgent.Api.Dispatch.DispatchWorkItemService(
-                sp.GetRequiredService<JobTemplateStore>()));
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<IAgentStartGate>()));
 
         return services;
     }
