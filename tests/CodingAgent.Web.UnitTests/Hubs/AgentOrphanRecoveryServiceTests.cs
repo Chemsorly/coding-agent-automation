@@ -57,6 +57,95 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId.Should().Be(runId);
     }
 
+    // ── Active job restoration: run record missing → restored run is reported as first pickup ─────
+
+    [Fact]
+    public async Task ActiveJob_RunRecordMissing_ReportsRestoredRunAsFirstPickup()
+    {
+        const string agentId = "agent-1";
+        const string runId = "run-record-missing";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? added = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => added = r);
+
+        var message = CreateMessage(agentId, CreateActiveJob(runId));
+
+        var result = await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        result.FirstPickupRun.Should().NotBeNull(
+            "a restored run can no longer be told from a first pickup, so the hub moves its label to in-progress");
+        result.FirstPickupRun!.RunId.Should().Be(runId);
+        result.FirstPickupRun.Should().BeSameAs(added, "the hub swaps the label of the run that was added");
+    }
+
+    // ── Active job restoration: run record missing, consolidation job → no first pickup ─────
+
+    [Fact]
+    public async Task ActiveJob_RunRecordMissing_ConsolidationJob_ReportsNoFirstPickup()
+    {
+        const string agentId = "agent-1";
+        const string runId = "consol-run-record-missing";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        var activeJob = new ActiveJobState
+        {
+            RunId = runId,
+            IssueIdentifier = "consolidation",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            AgentProviderConfigId = "ap-1",
+            InitiatedBy = "consolidation",
+            CurrentStep = PipelineStep.AnalyzingCode,
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
+        };
+
+        var result = await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob), agentId);
+
+        result.FirstPickupRun.Should().BeNull(
+            "a consolidation run has no pipeline run and no issue label to move");
+    }
+
+    // ── Active job restoration: run record missing, already in history → no first pickup ─────
+
+    [Fact]
+    public async Task ActiveJob_RunRecordMissing_AlreadyInHistory_ReportsNoFirstPickup()
+    {
+        const string agentId = "agent-1";
+        const string runId = "run-record-missing-completed";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync(entry);
+        _mockFacade.Setup(f => f.GetRunSummaryAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunSummary
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#42",
+                IssueTitle = "Test",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1)
+            });
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        var result = await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        result.FirstPickupRun.Should().BeNull(
+            "a stale state for a run already in history is ignored, so there is nothing to pick up");
+    }
+
     // ── Active job restoration: run in history (Completed) → ignore ─────
 
     [Fact]
@@ -113,10 +202,12 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
 
-        await _service.RecoverOrphanedStateAsync(message, agentId);
+        var result = await _service.RecoverOrphanedStateAsync(message, agentId);
 
         _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == runId)), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        result.FirstPickupRun.Should().NotBeNull("a cancelled run is not treated as in history, so the restored run is reported");
+        result.FirstPickupRun!.RunId.Should().Be(runId);
     }
 
     // ── Active job restoration: run in history (Failed) → restore ───────
@@ -143,10 +234,12 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
 
-        await _service.RecoverOrphanedStateAsync(message, agentId);
+        var result = await _service.RecoverOrphanedStateAsync(message, agentId);
 
         _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == runId)), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        result.FirstPickupRun.Should().NotBeNull("a failed run is not treated as in history, so the restored run is reported");
+        result.FirstPickupRun!.RunId.Should().Be(runId);
     }
 
     // ── Active consolidation job → marks busy without run restoration ───
@@ -649,9 +742,11 @@ public sealed class AgentOrphanRecoveryServiceTests
             ProjectId = Guid.NewGuid().ToString()
         };
 
-        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, claim), agentId);
+        var result = await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, claim), agentId);
 
         restored.Should().NotBeNull();
+        result.FirstPickupRun.Should().BeSameAs(restored,
+            "the hub swaps the label of the run restored from the database identity");
         ((string)restored!.IssueIdentifier).Should().Be("org/repo#7");
         restored.IssueProviderConfigId.Should().Be("ip-db");
         restored.RepoProviderConfigId.Should().Be("rp-db");

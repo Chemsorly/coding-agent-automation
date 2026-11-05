@@ -37,9 +37,9 @@ public sealed partial class AgentHub
         // First pickup: the agent has now actually picked up the dispatched run, so this is the
         // moment to move the issue (or PR, for reviews) agent:next → agent:in-progress. Until now it
         // stayed agent:next while the WorkItem sat Pending in the queue (DistributionResult.Queued
-        // contract). Recovery reports only a first pickup, so a pod-replacement reconnect does not
-        // re-swap. Best-effort: a label-swap failure must not break registration or force-disconnect
-        // the agent.
+        // contract). Recovery reports a first pickup or a restored run, so a pod-replacement
+        // reconnect with its run record intact does not re-swap. Best-effort: a label-swap failure
+        // must not break registration or force-disconnect the agent.
         if (recovery.FirstPickupRun is { } pickedUpRun && Guid.TryParse(pickedUpRun.RunId, out _))
         {
             _logger.Debug("RegisterAgent: agent {AgentId} picked up run {RunId}", message.AgentId, pickedUpRun.RunId);
