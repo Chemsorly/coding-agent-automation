@@ -275,6 +275,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
             testJobClient,
             hubContext,
             templateStore,
+            CodingAgent.Web.TestUtilities.AgentStartGateFakes.AllowAll(testJobClient, "test"),
             registry,
             shortOptions,
             Serilog.Log.Logger);

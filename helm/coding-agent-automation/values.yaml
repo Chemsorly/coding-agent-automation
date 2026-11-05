@@ -363,6 +363,9 @@ workDistribution:
   reconciliation:
     intervalSeconds: 30
     staleRetentionDays: 7
+  # Spec 057: infrastructure ceiling for all agent pods together (pipeline runs, consolidation, triage and chats).
+  # Settings → Agents → Capacity can set a lower limit, never a higher one. 0 = no limit.
+  maxConcurrentAgents: 0
 
 # ── Credential Pools ─────────────────────────────────────────────────────────
 
@@ -383,6 +386,10 @@ credentialPools:
 # Job templates define the K8s Job pod spec for each agent label set.
 # Each entry becomes a template in the job-templates ConfigMap that DispatchService
 # uses to create K8s Job pods per WorkItem.
+#
+# maxConcurrent (spec 057): infrastructure ceiling for this template's agent pods, chats included (for example the
+# number of Kiro credential PVCs). Settings → Agents → Capacity can set a lower limit, never a higher one.
+# 0 or no value = no limit. A change to jobTemplates restarts the API and the Job Controller (checksum annotation).
 jobTemplates: []
   # Example:
   # - labels: "kiro,dotnet,dotnet10"

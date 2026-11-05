@@ -62,6 +62,33 @@ public sealed class UiClientContractTests(ApiWebApplicationFactory factory)
         (await act.Should().ThrowAsync<HttpRequestException>()).Which.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden);
     }
 
+    // Spec 057 req 6.1, 6.3: the web client's capacity calls; a key with a comma round-trips unchanged.
+    [Fact]
+    public async Task AgentCapacity_SavesAndReads_AndARefusalCarriesTheReason()
+    {
+        var settings = Settings();
+        try
+        {
+            await settings.SaveAgentCapacityAsync(new AgentCapacityLimits
+            {
+                MaxConcurrentAgents = 5,
+                MaxConcurrentByJobTemplate = new Dictionary<string, int> { [AgentRoutingTestData.DefaultJobTemplate] = 2 },
+            });
+
+            var page = await settings.GetAgentCapacityAsync();
+            page.All.UiLimit.Should().Be(5);
+            page.Templates.Single(r => r.TemplateKey == AgentRoutingTestData.DefaultJobTemplate).UiLimit.Should().Be(2);
+
+            var refused = () => settings.SaveAgentCapacityAsync(new AgentCapacityLimits { MaxConcurrentAgents = 101 });
+            (await refused.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should()
+                .Contain("The limit for all agents must be between 0 and 100 (was 101).");
+        }
+        finally
+        {
+            await settings.SaveAgentCapacityAsync(AgentCapacityLimits.Empty);
+        }
+    }
+
     [Fact]
     public async Task AgentProfiles_SaveListAndDelete_KeepingTheMaskedSecret()
     {

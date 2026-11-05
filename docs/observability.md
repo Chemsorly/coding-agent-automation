@@ -50,9 +50,11 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | Metric | Type | Unit | Tags | Recorded by | Description |
 |--------|------|------|------|-------------|-------------|
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | API | WorkItem creation (or original enqueue) → dispatched |
-| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `no_route`, `pvc_unavailable`, `lock_timeout`, `k8s_error`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)). `no_route` is a work item a previous release queued without an agent route whose route is refused now; the dispatcher fails it |
+| `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `global_concurrency_limit`, `not_pending`, `no_template`, `no_route`, `pvc_unavailable`, `lock_timeout`, `agent_count_unavailable`, `k8s_error`. `concurrency_limit` (the job template's limit) and `global_concurrency_limit` (the all-agents limit) are `deferred`; `agent_count_unavailable` (the agent Jobs could not be listed, so no agent starts) is `transient`. `no_template` drives `WorkItemNoJobTemplate` (see [Alerts](#alerts)). `no_route` is a work item a previous release queued without an agent route whose route is refused now; the dispatcher fails it |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
 | `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | Scheduler leader | Kiro credential PVCs, polled every 10 s by the Scheduler leader. Emits nothing before the first successful poll and on non-leaders |
+| `workdistribution.agents.running` | ObservableGauge | `{agent}` | `agent_selector`, `kind` | Scheduler leader | Running agents: agent Jobs that have not ended, from `GET /api/agents/capacity` every 10 s. `agent_selector` is the job template key, or `none` for Jobs of a template that is not deployed; `kind` is `run` or `chat`. Every deployed template and both kinds are emitted, zeros included; `none` only when above 0. Emits nothing before the first successful poll, after a failed poll, when the API cannot list the Jobs, and on non-leaders |
+| `workdistribution.agents.limit` | ObservableGauge | `{agent}` | `agent_selector`, `source` | Scheduler leader | The agent limit that applies (the lowest set; see [Configuration — Agent Capacity](configuration.md#agent-capacity)). `agent_selector` is the job template key, or `all` for the all-agents limit; `source` is `helm` or `ui`. Only where a limit applies. Same poll as `agents.running`; emits nothing before the first successful poll, after a failed poll, and on non-leaders |
 | `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
 | `workdistribution.progress_write_failures` | Counter | `{failure}` | — | API | Failed `LastProgressAt` writes; sustained failures risk false-positive timeouts |
 | `workdistribution.dispatcher_polls` | Counter | `{poll}` | — | Scheduler | Dispatch poll cycles |
@@ -63,6 +65,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `workdistribution.timeout_canary_violations` | Counter | `{violation}` | `agent_selector` | Job Controller | Timeouts skipped by the canary invariant; any non-zero value is a timestamp bug |
 | `workdistribution.agent_timeouts` | Counter | `{job}` | `agent_selector` | Job Controller | Agent jobs killed by the session timeout |
 | `workdistribution.chat.*` | Histogram / UpDownCounter / Counter | — | `agent_selector`, `pool` | API | Chat pods: `dispatch_latency_seconds`, `sessions_active`, `session_duration_seconds`, `pod_connect_timeouts`, `pod_force_terminations`, `pvc_utilization`. Note: `session_duration_seconds` carries `agent_selector` and `outcome` (values: `completed`, `shutdown`, `faulted`, `force_deleted`); `pvc_utilization` carries only `pool`. |
+| `workdistribution.chat.launch_refusals` | Counter | `{launch}` | `agent_selector`, `reason` | API | Chat launches refused before a Job was created. `reason`: `helm_template_limit`, `helm_global_limit` (a Helm agent limit is reached; the launch answers `409`), `agent_count_unavailable` (the agent Jobs could not be listed; `502`). `agent_selector` is underscore-encoded, as on every chat instrument. UI limits never refuse a chat |
 | `pipeline.db_retention.pipeline_runs_deleted` / `.work_items_deleted` | Counter | `{row}` | — | API | Rows removed by the per-project retention sweep |
 
 ### Scheduler loop, housekeeping and GitHub
@@ -117,12 +120,13 @@ A refused git credentials callback is a log line, since agents record no metrics
 | `provider` | `kiro`, `opencode`, `claude`, `unknown` | Agent provider; anything else is recorded as `unknown`. On `pipeline.run.outcomes` it is the tool of the pinned route |
 | `model` | model name, or `auto` | On `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_time` and `pipeline.run.agent_sessions`: the phase's own model when set, otherwise the run's pinned route model (`unknown` for work created before agent routing); on `pipeline.run.outcomes` the pinned route's model (`unknown` for work created before agent routing) |
 | `task_type` | `Implementation`, `Review`, `Decomposition`, `Triage`, `Consolidation` | Only on `pipeline.routing.refusals` |
-| `reason` | `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision` | On `pipeline.routing.refusals`. `workdistribution.dispatch.attempts` has its own `reason` set |
+| `reason` | `no_route`, `profile_unavailable`, `no_tool`, `template_missing`, `template_changed`, `config_collision` | On `pipeline.routing.refusals`. `workdistribution.dispatch.attempts` and `workdistribution.chat.launch_refusals` have their own `reason` sets |
 | `token_type` | `input`, `output`, `reasoning`, `cache_read`, `cache_write` | Only on `pipeline.run.token_usage` |
 | `billing` | `api`, `subscription`, `unknown` | Only on `pipeline.run.billing_cost_usd` |
 | `gate` / `infrastructure_failure` | `compilation`, `tests`, `external_ci` / `true`, `false` | Only on `pipeline.run.quality_gate.results`; an infrastructure failure is an OOM or container kill rather than a code failure |
 | `stage` | `pre_pr`, `post_pr` / `create`, `dispatch`, `claim` | `pre_pr`, `post_pr` on `pipeline.run.ci.wait`; `create`, `dispatch`, `claim` on `pipeline.routing.refusals` |
-| `kind` | `stall_kill`, `process_death`, `process_timeout` | Only on `pipeline.run.agent_stalls` |
+| `kind` | `stall_kill`, `process_death`, `process_timeout` / `run`, `chat` | `stall_kill`, `process_death`, `process_timeout` on `pipeline.run.agent_stalls`; `run`, `chat` on `workdistribution.agents.running` |
+| `source` | `helm`, `ui` | Only on `workdistribution.agents.limit`: where the limit that applies is set |
 | `repo_provider_id` | provider config UUID | Only on `pipeline.housekeeping.*` |
 
 #### Outcome mapping
@@ -311,7 +315,7 @@ The Helm chart defines its alert rules in `helm/coding-agent-automation/template
 
 The counter has no selector label. The API logs `DispatchPendingWorkItem: no job template for selector <selector>` with the selector. To fix it, add a `jobTemplates[]` entry for that selector and redeploy. Pointing the agent profile at an existing job template (Settings → Agents → Agent Profiles) or routing the work to another profile (Settings → Agents → Routing) helps only work created afterwards: queued work keeps the route it was created with, so cancel the waiting items and queue them again. The Agent Profiles page and the repository pages flag a profile whose job template the Helm values do not define.
 
-**`WorkItemsPendingTooLong` only sees items that dispatch.** It is a quantile of `workdistribution_dispatch_latency_seconds`, which the API records when an item moves from Pending to Dispatched. An item that never dispatches never enters that histogram, so the alert cannot fire for it.
+**`WorkItemsPendingTooLong` only sees items that dispatch.** It is a quantile of `workdistribution_dispatch_latency_seconds`, which the API records when an item moves from Pending to Dispatched. An item that never dispatches never enters that histogram, so the alert cannot fire for it. The time an item waits behind an [agent limit](configuration.md#agent-capacity) counts once it dispatches, so lower limits and open chats make it and `DispatchLatencyHigh` fire more often.
 
 **There is no pending-age alert.** A threshold on `workdistribution.pending.oldest_age_seconds` would fire on waits that are not a fault: the lowest dispatch tier can wait many hours and then dispatch. The `no_template` counter is the signal for the permanent case.
 
@@ -427,7 +431,7 @@ The Scheduler emits spans only when actual work occurs — idle ticks produce no
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result` | `WorkItemDispatchLoop.DispatchItemAsync` (called from `PollAndDispatchAsync`) — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, `Transient`, plus `Cancelled` (shutdown) and `Exception` (unexpected client error) |
+| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result` | `WorkItemDispatchLoop.DispatchItemAsync` (called from `PollAndDispatchAsync`) — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, `Transient`, `GlobalLimitReached` (the all-agents limit is reached; the loop ends its cycle), plus `Cancelled` (shutdown) and `Exception` (unexpected client error) |
 | `Loop.Enqueue` | `issue_identifier`, `template_name` | `DispatchScheduler.DispatchIssueRoundAsync` — one span per issue the closed loop enqueues |
 | `Housekeeping.BranchUpdate` | `pr_number`, `repo_provider_id` | `HousekeepingService.UpdateAsync` — one span per PR branch update triggered |
 | `Housekeeping.ConflictRework` | `issue_id`, `pr_number` | `IssueReworkService.TrySwapIssueToNextAsync` — one span per issue re-queued for rework due to merge conflict |
@@ -450,8 +454,21 @@ The Scheduler emits spans only when actual work occurs — idle ticks produce no
 |-----------|------|---------|
 | `Hub.ReportJobCompleted` | `job_id`, `success` | `AgentJobLifecycleService.HandleJobCompletedAsync` — the agent's completion report |
 | `TokenVending.GenerateToken` | — | `TokenVendingService` — GitHub App installation token minted for an agent |
-| `Chat.Dispatch` | `agent_selector` | `ChatJobDispatcher.DispatchChatPodAsync` — chat pod start |
+| `Chat.Dispatch` | `agent_selector`, `dispatch_id`, `job_name`, `model`, `effort`, `provider_type`; the agent limit attributes below when refused | `ChatJobDispatcher.DispatchChatPodAsync` — chat pod start. Status Error `Agent limit reached` or `Agent count unavailable` when the launch is refused |
 | `Chat.Terminate` | `agent_id` | `ChatJobDispatcher.TerminateChatSessionAsync` — chat pod stop |
+
+The API has no span of its own around dispatch. When a work item is held by an agent limit, the ASP.NET Core server span of `POST /api/work-items/{id}/dispatch` gets these attributes; `Chat.Dispatch` gets them when a chat is refused by a Helm limit:
+
+| Attribute | Value |
+|-----------|-------|
+| `workdistribution.agents.running` | The running agents the limit counted: the job template's for a template limit, all agents for the global limit |
+| `workdistribution.agents.limit` | The limit that held the work item or refused the chat |
+| `workdistribution.limit_scope` | `template`, `global` |
+| `workdistribution.limit_source` | `helm`, `ui` (always `helm` on `Chat.Dispatch`) |
+
+`workdistribution.agents.running` and `workdistribution.agents.limit` are also the names of the Scheduler's gauges. The gauges are emitted every 10 s for every template; the span attributes are set only on the one dispatch or chat launch that a limit stopped.
+
+The API logs one Information line per held dispatch, `{CallerName}: {Scope} concurrency limit reached for selector {Selector} ({Current}/{Max}, {LimitSource}) — deferred`, and one per refused chat, ending `— chat refused`. `Scope` and `LimitSource` are lowercase, as on the spans, so `| Scope="global"` and `| LimitSource="ui"` filter them in Loki. A failed Job list logs the Warning `AgentStartGate: could not list the agent Jobs — no agent started`, and each saved change of a UI limit logs `Agent capacity limit {Key} changed from {Old} to {New} by {User}` (`Key` is `all` for the all-agents limit).
 
 The API creates no span for the run itself; the run's trace is the agent's `WorkItemAgent.Execute` → `ExecutePipeline` tree, parented to the API request that created the WorkItem. The request spans of `POST /api/work-items` and `GET /api/work-items/{id}/assignment` carry the route attributes (`pipeline.agent_profile`, `pipeline.model`, `pipeline.effort`, `pipeline.route_source`, or `pipeline.route_refusal`): see [Routing](#routing).
 

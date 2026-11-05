@@ -30,6 +30,9 @@ spec:
       app.kubernetes.io/component: api
   template:
     metadata:
+      annotations:
+        # Spec 057: the job templates (and their maxConcurrent limits) are read at startup; a change restarts the pods.
+        checksum/job-templates: {{ .Values.jobTemplates | toJson | sha256sum }}
       labels:
         {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api

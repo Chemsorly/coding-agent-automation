@@ -161,11 +161,42 @@ public static class WorkDistributionTelemetry
             description: "Number of WorkItems rows deleted by the retention sweep.");
 
     /// <summary>
+    /// Spec 057 gauge: running agents (agent Jobs that have not ended). Tags: <c>agent_selector</c> (job template key,
+    /// or <c>none</c> for Jobs of a template that is not deployed) and <c>kind</c> (<c>run</c>, <c>chat</c>). Emitted by
+    /// the Scheduler leader via <c>WorkItemCountsService</c>; emits nothing until <see cref="RegisterAgentCapacityCallbacks"/>.
+    /// </summary>
+    public static readonly ObservableGauge<int> AgentsRunning =
+        Meter.CreateObservableGauge<int>(
+            "workdistribution.agents.running",
+            observeValues: () =>
+            {
+                var cb = Volatile.Read(ref _agentsRunningCallback);
+                return cb is null ? [] : cb();
+            },
+            unit: "{agent}",
+            description: "Running agent Jobs (runs and chats) per job template");
+
+    /// <summary>
+    /// Spec 057 gauge: the concurrency limit that applies. Tags: <c>agent_selector</c> (job template key, or <c>all</c>)
+    /// and <c>source</c> (<c>helm</c>, <c>ui</c>). Only where a limit applies. Emitted by the Scheduler leader.
+    /// </summary>
+    public static readonly ObservableGauge<int> AgentsLimit =
+        Meter.CreateObservableGauge<int>(
+            "workdistribution.agents.limit",
+            observeValues: () =>
+            {
+                var cb = Volatile.Read(ref _agentsLimitCallback);
+                return cb is null ? [] : cb();
+            },
+            unit: "{agent}",
+            description: "Agent concurrency limit that applies, per job template and for all agents");
+
+    /// <summary>
     /// Counter: dispatch attempts for <c>POST /api/work-items/{id}/dispatch</c>.
     /// Recorded at every outcome of <c>DispatchPendingWorkItem</c>.
     /// Tags: <c>result</c> (dispatched | deferred | transient),
-    ///       <c>reason</c> (none | concurrency_limit | not_pending | no_template |
-    ///                      pvc_unavailable | lock_timeout | k8s_error).
+    ///       <c>reason</c> (none | concurrency_limit | global_concurrency_limit | not_pending | no_template |
+    ///                      no_route | pvc_unavailable | lock_timeout | agent_count_unavailable | k8s_error).
     /// </summary>
     public static readonly Counter<long> DispatchAttempts =
         Meter.CreateCounter<long>("workdistribution.dispatch.attempts", "{attempt}",
@@ -199,6 +230,8 @@ public static class WorkDistributionTelemetry
     // null = no callback registered yet → gauge emits nothing.
     private static Func<IEnumerable<Measurement<int>>>? _credentialPoolAvailableCallback;
     private static Func<IEnumerable<Measurement<int>>>? _credentialPoolClaimedCallback;
+    private static Func<IEnumerable<Measurement<int>>>? _agentsRunningCallback;
+    private static Func<IEnumerable<Measurement<int>>>? _agentsLimitCallback;
 
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
 
@@ -271,6 +304,21 @@ public static class WorkDistributionTelemetry
 
         Volatile.Write(ref _credentialPoolAvailableCallback, availableCallback);
         Volatile.Write(ref _credentialPoolClaimedCallback, claimedCallback);
+    }
+
+    /// <summary>
+    /// Spec 057: registers the callbacks of <see cref="AgentsRunning"/> and <see cref="AgentsLimit"/>. Called once at
+    /// startup by <c>WorkItemCountsService</c> on the Scheduler; the callbacks return nothing when the replica is not
+    /// the leader or has no data. Last registration wins, like <see cref="RegisterCredentialPoolGaugeCallbacks"/>.
+    /// </summary>
+    public static void RegisterAgentCapacityCallbacks(
+        Func<IEnumerable<Measurement<int>>> runningCallback,
+        Func<IEnumerable<Measurement<int>>> limitCallback)
+    {
+        ArgumentNullException.ThrowIfNull(runningCallback);
+        ArgumentNullException.ThrowIfNull(limitCallback);
+        Volatile.Write(ref _agentsRunningCallback, runningCallback);
+        Volatile.Write(ref _agentsLimitCallback, limitCallback);
     }
 
     /// <summary>

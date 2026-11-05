@@ -75,6 +75,7 @@ public static class ApiChatDispatchServiceExtensions
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
                 sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<IAgentStartGate>(), // spec 057: one gate for chats and work items
                 sp.GetRequiredService<IAgentRegistryService>(),
                 options,
                 Log.Logger,

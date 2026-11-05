@@ -34,45 +34,54 @@ internal sealed class PostgresDistributedLockProvider : IDistributedLockProvider
 
         var db = await _factory.CreateDbContextAsync(ct);
         var conn = db.Database.GetDbConnection();
-        await conn.OpenAsync(ct);
-
-        var deadline = DateTimeOffset.UtcNow + AcquisitionTimeout;
-        var attempt = 0;
-
-        while (true)
+        try
         {
-            ct.ThrowIfCancellationRequested();
+            await conn.OpenAsync(ct);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT pg_try_advisory_lock(hashtext(@lockName))";
-            var param = cmd.CreateParameter();
-            param.ParameterName = "lockName";
-            param.Value = lockName;
-            cmd.Parameters.Add(param);
+            var deadline = DateTimeOffset.UtcNow + AcquisitionTimeout;
+            var attempt = 0;
 
-            var result = await cmd.ExecuteScalarAsync(ct);
-            var acquired = result is true;
-
-            if (acquired)
+            while (true)
             {
-                Logger.Debug("Advisory lock '{LockName}' acquired on attempt {Attempt}", lockName, attempt + 1);
-                return new AdvisoryLockHandle(conn, lockName, db);
+                ct.ThrowIfCancellationRequested();
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT pg_try_advisory_lock(hashtext(@lockName))";
+                var param = cmd.CreateParameter();
+                param.ParameterName = "lockName";
+                param.Value = lockName;
+                cmd.Parameters.Add(param);
+
+                var result = await cmd.ExecuteScalarAsync(ct);
+                var acquired = result is true;
+
+                if (acquired)
+                {
+                    Logger.Debug("Advisory lock '{LockName}' acquired on attempt {Attempt}", lockName, attempt + 1);
+                    return new AdvisoryLockHandle(conn, lockName, db);
+                }
+
+                attempt++;
+                if (DateTimeOffset.UtcNow >= deadline)
+                {
+                    throw new TimeoutException(
+                        $"Failed to acquire distributed lock '{lockName}' within {AcquisitionTimeout.TotalSeconds}s " +
+                        $"after {attempt} attempts. Another holder may be stuck.");
+                }
+
+                Logger.Debug("Advisory lock '{LockName}' not available, retrying in {Delay}s (attempt {Attempt})",
+                    lockName, RetryDelay.TotalSeconds, attempt);
+
+                await Task.Delay(RetryDelay, ct);
             }
-
-            attempt++;
-            if (DateTimeOffset.UtcNow >= deadline)
-            {
-                await conn.CloseAsync();
-                await db.DisposeAsync();
-                throw new TimeoutException(
-                    $"Failed to acquire distributed lock '{lockName}' within {AcquisitionTimeout.TotalSeconds}s " +
-                    $"after {attempt} attempts. Another holder may be stuck.");
-            }
-
-            Logger.Debug("Advisory lock '{LockName}' not available, retrying in {Delay}s (attempt {Attempt})",
-                lockName, RetryDelay.TotalSeconds, attempt);
-
-            await Task.Delay(RetryDelay, ct);
+        }
+        catch
+        {
+            // Spec 057: chat launches take this lock with the request's abort token, so a cancelled or failed acquire
+            // must give its pooled connection back instead of leaking it (only the timeout did before).
+            await conn.CloseAsync();
+            await db.DisposeAsync();
+            throw;
         }
     }
 

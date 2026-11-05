@@ -75,6 +75,17 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
         _apiKey = apiKey;
         _sharedRedisStore = sharedRedisStore;
         _uiSettings = uiSettings;
+
+        // Spec 057: the API counts running agents from the Job list. A real Job ends when its pod exits; the fake's
+        // Jobs never do, so report the Job of an ended work item as Complete (see FakeKubernetesJobClient).
+        var db = E2EInMemoryDatabase.Factory(dbName);
+        fakeK8sClient.IsWorkItemActive = id =>
+        {
+            using var ctx = db.CreateDbContext();
+            return ctx.WorkItems.AsNoTracking().Any(w => w.Id == id
+                && (w.Status == WorkItemStatus.Pending || w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running));
+        };
+
         UseKestrel(0);
     }
 

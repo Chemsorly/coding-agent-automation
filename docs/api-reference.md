@@ -133,9 +133,9 @@ Start a `Pending` work item on a Kubernetes Job. The Scheduler's dispatch loop c
 
 | Status | Description |
 |--------|-------------|
-| 200 | `{ "dispatched": true }`, or `{ "dispatched": false, "reason": ... }` with `not_pending`, `no_template`, `concurrency_limit` or `no_route`. `no_route` is a work item queued by a previous release without an agent route whose route is refused now; it is failed with the reason |
+| 200 | `{ "dispatched": true, "reason": "none" }`, or `{ "dispatched": false, "reason": ... }` with `not_pending`, `no_template`, `concurrency_limit`, `global_concurrency_limit` or `no_route`. `concurrency_limit`: the item's job template is at its limit; the Scheduler stops that template for the cycle. `global_concurrency_limit`: the limit for all agents is reached; the Scheduler ends its cycle. A held item stays `Pending`. `no_route` is a work item queued by a previous release without an agent route whose route is refused now; it is failed with the reason |
 | 404 | Work item not found |
-| 503 | No PVC available, advisory lock timeout, or Kubernetes Job creation failed |
+| 503 | No PVC available, advisory lock timeout, running agents could not be counted (the Kubernetes Jobs could not be listed; dispatch attempt reason `agent_count_unavailable`), or Kubernetes Job creation failed. The item stays `Pending` and is retried next cycle |
 
 ---
 
@@ -407,11 +407,14 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
       "configuration": "{\"repoProviderId\":\"a1b2c3d4-...\",\"issueProviderId\":\"...\",\"requiredLabels\":[\"dotnet\"]}"
     }
   ],
-  "agentRouting": "{\"default\":{\"profileId\":\"b2c3d4e5-f6a7-8901-bcde-f12345678901\",\"model\":\"auto\",\"effort\":\"auto\"},\"byTaskType\":{}}"
+  "agentRouting": "{\"default\":{\"profileId\":\"b2c3d4e5-f6a7-8901-bcde-f12345678901\",\"model\":\"auto\",\"effort\":\"auto\"},\"byTaskType\":{}}",
+  "agentCapacity": "{\"maxConcurrentAgents\":4,\"maxConcurrentByJobTemplate\":{\"dotnet,kiro\":3}}"
 }
 ```
 
-The `pipelineConfig`, `configuration`, `settings` and `agentRouting` fields contain serialized JSON strings (double-encoded). This preserves the exact format used internally.
+The `pipelineConfig`, `configuration`, `settings`, `agentRouting` and `agentCapacity` fields contain serialized JSON strings (double-encoded). This preserves the exact format used internally.
+
+`agentCapacity` holds the UI agent limits (Settings → Agents → Capacity; see [Configuration — Agent Capacity](configuration.md#agent-capacity)). Invalid limits are rejected before anything is cleared, with `Invalid agent capacity:` and the reasons. A limit for a job template this cluster does not define is kept and ignored. A bundle without `agentCapacity` (from an older release) imports with no UI limits.
 
 `agentRouting` is the global routing table; a repository's own rows are `agentRoutes` in its job template's configuration. A bundle from a release before agent routing has no `agentRouting` and carries agent provider configs and label-matched profiles: the import converts them in the same transaction, as the upgrade does (see the agent routing upgrade note in [Deployment](deployment.md)). A bundle whose routing or whose templates' rows name a profile it does not contain, an unknown task type, an invalid model, or an effort the profile's tool does not accept is rejected before anything is cleared. A job template this cluster does not define is not refused, so a bundle from another cluster imports; the Agent Profiles page flags those profiles.
 
@@ -660,12 +663,12 @@ The answer is `200` with the message to show, as a JSON string. The work item is
 
 ### Agent Chat (operator)
 
-Every path needs an operator role. A chat runs with the MCP servers, secrets and steering of the project it is launched for, so launching it needs operator on that project, and a chat without a project needs global operator. The API records who launched each chat. Only that user can prompt it, keep it alive or end it, as long as they can still operate on its project; an admin can use any chat. Anyone else gets `404`, as for a chat that does not exist, and so does any agent that was not launched here: pipeline agents cannot be prompted. Refusals carry the reason as a JSON string: `400` for a profile, model or effort that cannot be launched, `409` for a request that cannot be served, and `502` when the pod cannot be started.
+Every path needs an operator role. A chat runs with the MCP servers, secrets and steering of the project it is launched for, so launching it needs operator on that project, and a chat without a project needs global operator. The API records who launched each chat. Only that user can prompt it, keep it alive or end it, as long as they can still operate on its project; an admin can use any chat. Anyone else gets `404`, as for a chat that does not exist, and so does any agent that was not launched here: pipeline agents cannot be prompted. Refusals carry the reason as a JSON string: `400` for a profile, model or effort that cannot be launched, `409` for a request that cannot be served or an agent limit set in the Helm chart, and `502` when the pod cannot be started.
 
 | Path | Does |
 |---|---|
 | `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the enabled agent profiles whose job template exists and has a tool, as `{ id, displayName, tool, models, efforts, defaultModel, defaultEffort }`. `models` is `auto`, the models routes name for the profile and the tool's built-in list; `efforts` are the efforts the tool accepts. The defaults are the global default route's model and effort when that route names the profile, otherwise `auto`. |
-| `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId, model, effort }` on the profile's job template, then waits until the pod connects (up to `connectTimeoutSeconds`). Without `model` or `effort` the profile's defaults are used. Returns `{ agentId, model }`. A disabled profile or one whose job template is gone, a model the options do not offer for the profile, or an effort its tool does not accept is refused with `400` and the reason. |
+| `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId, model, effort }` on the profile's job template, then waits until the pod connects (up to `connectTimeoutSeconds`). Without `model` or `effort` the profile's defaults are used. Returns `{ agentId, model }`. A disabled profile or one whose job template is gone, a model the options do not offer for the profile, or an effort its tool does not accept is refused with `400` and the reason. A chat counts toward the [agent limits](configuration.md#agent-capacity); a Helm limit that is reached refuses it with `409`, for example `4 of 4 agents are running for dotnet,kiro (limit set in the Helm chart). Try again when one finishes.` (for the all-agents limit: `4 of 4 agents are running (limit set in the Helm chart). …`). UI limits never refuse a chat. `502` when the running agents cannot be counted (`Could not check how many agents are running. Try again.`), when another agent start holds the lock for longer than a minute (`Another agent is starting. Try again.`), when no Kiro credential PVC is free (`No agent credentials available. Try again later.`), or when the pod does not connect in time. |
 | `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the chat's group on the [UI hub](#ui-hub-hubsui), tagged with the `sessionId`. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/keepalive` | Resets the idle clock of the chat's pod. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/terminate` | Ends the chat and stops its pod. Returns `204`. |
@@ -706,9 +709,9 @@ A refused subscription fails with a `HubException` that reads the same whether t
 
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role, except for four routes the project page and the repository page's Behaviour card use: `GET /pipeline`, `GET /projects/{id}`, `PUT /projects` and `PUT /projects/{projectId}/templates`. These need `admin` on the project. For a project admin, `PUT /projects` keeps the stored enabled flag, epic tracker and brain switches, and `PUT /projects/{projectId}/templates` takes only the Behaviour fields of a template already in that project; a new project or template, or another project's, is `404` (see [Projects](projects.md#project-page)). The settings API covers the pipeline configuration, agent profiles, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both. Agent profiles are read only here: `/api/config/**` has no profile read, and its `GET /provider-configs?kind=Agent` is refused with `400`.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role, except for four routes the project page and the repository page's Behaviour card use: `GET /pipeline`, `GET /projects/{id}`, `PUT /projects` and `PUT /projects/{projectId}/templates`. These need `admin` on the project. For a project admin, `PUT /projects` keeps the stored enabled flag, epic tracker and brain switches, and `PUT /projects/{projectId}/templates` takes only the Behaviour fields of a template already in that project; a new project or template, or another project's, is `404` (see [Projects](projects.md#project-page)). The settings API covers the pipeline configuration, agent profiles, routing and capacity, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both. Agent profiles are read only here: `/api/config/**` has no profile read, and its `GET /provider-configs?kind=Agent` is refused with `400`.
 
-Agent profiles and routing:
+Agent profiles, routing and capacity:
 
 | Path | Does |
 |---|---|
@@ -717,6 +720,8 @@ Agent profiles and routing:
 | `DELETE /agent-profiles/{id}` | Deletes a profile. A profile that routes name is refused with `400`, naming each row. |
 | `GET /agent-routing` | `{ routing, profiles, jobTemplates }`: the global table as `{ default, byTaskType }`, each route `{ profileId, model, effort }`; the profiles a route can name as `{ id, name, tool, jobTemplateKey, enabled }`; and the job templates. Repository rows are on the templates (`agentRoutes`). |
 | `PUT /agent-routing` | Replaces the global table. Every row is checked: the default row is required once a profile exists, the profile must exist and be enabled on a job template with a tool, the model must be set (`auto` lets the tool choose) and the effort one the tool accepts. An invalid table is refused with `400` and one line per invalid row. A body that names a task type twice is refused with `400`. |
+| `GET /agent-capacity` | `{ all, templates, unknownTemplateRuns, unknownTemplateChats, countsAvailable }`: one row for all agents (`templateKey` null) and one per deployed job template, each `{ templateKey, tool, runningRuns, runningChats, helmLimit, uiLimit, effectiveLimit, effectiveSource }`. A limit of `0` means none; `effectiveSource` is `helm`, `ui` or null. When the agent Jobs cannot be listed, `countsAvailable` is `false` and the counts are `0`. See [Configuration — Agent Capacity](configuration.md#agent-capacity). |
+| `PUT /agent-capacity` | Replaces the UI limits from `{ maxConcurrentAgents, maxConcurrentByJobTemplate }`, each 0–100 (0 = no limit). Returns `204`. A value out of range, an invalid or repeated template key, or more than 100 entries is refused with `400` and one line per problem. Limits for templates that are not deployed and `0` values are dropped. Each changed value is logged with the user. |
 
 A template save checks its `agentRoutes` the same way. A save without `agentRoutes` keeps the stored rows; an empty object removes them. A project admin's template save keeps the stored rows whatever it sends.
 
@@ -826,6 +831,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
 | GET | `/api/ui/agents` | User token | Agents (all for global readers; those running their projects' work for scoped users) |
 | GET | `/api/ui/agents/credential-pool` | User token, global read | Kiro credential pool usage |
+| GET | `/api/agents/capacity` | OperatorApiKey | Running agents and the limits that apply, in total and per job template; the Scheduler's agent gauges read it |
 | GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
 | POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
 | GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |

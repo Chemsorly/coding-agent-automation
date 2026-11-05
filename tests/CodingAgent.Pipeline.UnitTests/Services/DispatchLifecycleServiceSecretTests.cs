@@ -148,7 +148,6 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
             template,
             IsKiro: true,
             AvailablePvcs: ["pvc-0"],
-            ConcurrencyBySelector: new Dictionary<string, int>(),
             LogPrefix: "test ");
 
         await service.ExecuteDispatchLifecycleAsync(

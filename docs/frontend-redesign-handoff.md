@@ -99,7 +99,7 @@ Four sections, each from a real source; every row links to the provider:
 
 ### Agent Chat  ·  *kept, demoted to Tools*
 Launch-a-pod interactive chat — **not** a run debugger.
-- **Launch** — `IPipelineApiChatClient.DispatchChatPodAsync(agentSelector, model, effort)` → `agentId` (blocks until pod connects; 409 already active, 503 no PVC, 504 timeout). Selector = a Job Template's labels; model/effort resolved via `ProfileResolver` over `AgentProfile[]`.
+- **Launch** — `IPipelineApiChatClient.DispatchChatPodAsync(agentSelector, model, effort)` → `agentId` (blocks until pod connects; 400 a profile, model or effort that cannot be launched, 409 an agent limit set in the Helm chart, 502 no free credential PVC, running agents not countable, another agent starting, or pod connect timeout; see [API Reference — Agent Chat](api-reference.md#agent-chat-operator)). Selector = a Job Template's labels; model/effort resolved via `ProfileResolver` over `AgentProfile[]`.
 - **Send prompt** — build with `IChatPromptBuilder`, deliver via `IPipelineApiAgentClient.AssignChatPromptAsync(agentId, ChatPromptMessage)`.
 - **Streaming** — `IUiHubConnection` (SignalR UI hub): `SubscribeToChat(agentId)`, `HubMethodNames.OnChatResponse` / `OnChatCompleted` (each carries the prompt's session ID). Roles: `ChatRole` {User, Agent, System}.
 - **Lifecycle** — `TerminateChatSessionAsync`, `SendKeepaliveAsync` (30s heartbeat).

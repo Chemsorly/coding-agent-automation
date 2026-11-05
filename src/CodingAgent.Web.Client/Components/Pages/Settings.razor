@@ -116,6 +116,11 @@
                         ProviderClient="ProviderClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.AgentCapacity:
+                    <AgentCapacitySection
+                        SettingsClient="SettingsClient"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
                 case SettingsNodes.QualityGateConfigs:
                     <QualityGateConfigSection
                         ConfigClient="SettingsClient"
@@ -188,6 +193,7 @@
         section == SettingsNodes.PipelineAdvanced ||
         section == SettingsNodes.AgentProfiles ||
         section == SettingsNodes.AgentRouting ||
+        section == SettingsNodes.AgentCapacity ||
         section == SettingsNodes.QualityGateConfigs ||
         section == SettingsNodes.ReviewerConfigs ||
         section == SettingsNodes.Projects ||

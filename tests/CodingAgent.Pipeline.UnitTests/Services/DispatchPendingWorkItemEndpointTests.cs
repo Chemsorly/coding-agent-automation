@@ -180,8 +180,22 @@ public sealed class DispatchPendingWorkItemEndpointTests
         return new RolloutRouting(dbFactory, router, transitions);
     }
 
-    private static DispatchWorkItemService CreateDispatchService(JobTemplateStore templateStore) =>
-        new DispatchWorkItemService(templateStore);
+    /// <summary>
+    /// The service over the real <see cref="AgentStartGate"/> (spec 057). Its Job list is backed by this test's
+    /// database: every Dispatched or Running work item is a running agent Job (as on a cluster), so the concurrency
+    /// and PVC tests that seed active items keep their meaning.
+    /// </summary>
+    private DispatchWorkItemService CreateDispatchService(
+        JobTemplateStore templateStore, IDistributedLockProvider? lockProvider = null) =>
+        new DispatchWorkItemService(templateStore, CreateGate(lockProvider ?? CreateNoOpLockProvider(), templateStore));
+
+    private AgentStartGate CreateGate(IDistributedLockProvider lockProvider, JobTemplateStore? templateStore = null) =>
+        new(lockProvider,
+            new DbBackedAgentJobs(CreateDbFactory()),
+            templateStore ?? CreateTemplateStore(),
+            new DispatchServiceOptions { Namespace = "test" },
+            new AgentCapacityStore(CreateDbFactory()),
+            Serilog.Log.Logger);
 
     /// <summary>
     /// Returns a Mock&lt;IDistributedLockProvider&gt; that immediately grants the lock.
@@ -266,8 +280,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert: 200 returned with dispatched:true
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -298,8 +312,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
         var missingId = Guid.NewGuid();
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            missingId, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            missingId, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>();
     }
@@ -328,8 +342,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Callback(() => lockAcquired = true)
             .ReturnsAsync(handle.Object);
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            existingId, dbFactory, lifecycle, mockLock.Object, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, mockLock.Object).DispatchPendingWorkItemAsync(
+            existingId, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "a non-Pending item must return 200 with dispatched:false (issue #2976)");
@@ -351,8 +365,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>("no template → 200/deferred");
         var deferredResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
@@ -381,8 +395,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>("concurrency limit → 200/deferred");
         var deferredResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
@@ -410,8 +424,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull();
@@ -466,8 +480,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .GetField("_credentialPoolClaimedCallback", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetValue(null);
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "successful dispatch returns 200");
@@ -526,8 +540,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .GetField("_credentialPoolClaimedCallback", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetValue(null);
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
@@ -588,11 +602,11 @@ public sealed class DispatchPendingWorkItemEndpointTests
         // Real in-process lock provider — serialises concurrent calls
         var lockProvider = new InProcessDistributedLockProvider();
 
-        var svc = CreateDispatchService(templateStore);
+        var svc = CreateDispatchService(templateStore, lockProvider);
         var task1 = svc.DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
         var task2 = svc.DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         var results = await Task.WhenAll(task1, task2);
 
@@ -700,8 +714,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
                 return (IAsyncDisposable)handle.Object;
             });
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, racingLockMock.Object, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, racingLockMock.Object).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // The post-lock re-read must detect the non-Pending status and return 200/deferred (not_pending).
         // Without the fix this would return 503 (lifecycle early-return → dispatched=false).
@@ -749,8 +763,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         // Act — first call with K8s failing
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert: 503
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -771,8 +785,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Returns(Task.CompletedTask);
         var lifecycle2 = CreateLifecycleService(k8sMock2.Object, ["pvc-0"]);
         var entity2 = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
-        var result2 = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity2.Id, dbFactory, lifecycle2, lockProvider, rollout, CancellationToken.None);
+        var result2 = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity2.Id, dbFactory, lifecycle2, rollout, CancellationToken.None);
         result2.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "PVC must be released after K8s failure — Failed item no longer holds the credential slot");
         var ok2 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result2;
@@ -811,8 +825,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull("K8s failure must return 503");
@@ -915,8 +929,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         {
             // Act — use the working dbFactory for the endpoint's own DB operations, but the
             // faulted lifecycle so that FailWorkItemAsync throws inside CreateK8sJobAsync.
-            result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-                entity.Id, dbFactory, faultedLifecycle, lockProvider, rollout, CancellationToken.None);
+            result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+                entity.Id, dbFactory, faultedLifecycle, rollout, CancellationToken.None);
         }
         finally
         {
@@ -974,8 +988,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "non-kiro dispatch must succeed without a PVC");
@@ -1007,8 +1021,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             var ts = CreateTemplateStore("kiro,dotnet");
             var lc = CreateLifecycleService();
             var rollout = CreateRolloutRouting(dbFactory, ts);
-            result = await CreateDispatchService(ts).DispatchPendingWorkItemAsync(
-                itemId, dbFactory, lc, CreateNoOpLockProvider(), rollout, CancellationToken.None);
+            result = await CreateDispatchService(ts, CreateNoOpLockProvider()).DispatchPendingWorkItemAsync(
+                itemId, dbFactory, lc, rollout, CancellationToken.None);
         }
         else if (scenario == "concurrency")
         {
@@ -1019,8 +1033,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             var ts = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
             var lc = CreateLifecycleService();
             var rollout = CreateRolloutRouting(dbFactory, ts);
-            result = await CreateDispatchService(ts).DispatchPendingWorkItemAsync(
-                itemId, dbFactory, lc, CreateNoOpLockProvider(), rollout, CancellationToken.None);
+            result = await CreateDispatchService(ts, CreateNoOpLockProvider()).DispatchPendingWorkItemAsync(
+                itemId, dbFactory, lc, rollout, CancellationToken.None);
         }
         else // pvc-gate
         {
@@ -1030,8 +1044,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             var ts = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
             var lc = CreateLifecycleService(pvcPool: ["pvc-0"]);
             var rollout = CreateRolloutRouting(dbFactory, ts);
-            result = await CreateDispatchService(ts).DispatchPendingWorkItemAsync(
-                itemId, dbFactory, lc, CreateNoOpLockProvider(), rollout, CancellationToken.None);
+            result = await CreateDispatchService(ts, CreateNoOpLockProvider()).DispatchPendingWorkItemAsync(
+                itemId, dbFactory, lc, rollout, CancellationToken.None);
         }
 
         // All gate rejections must not be dispatched (either 200/deferred or 503)
@@ -1064,8 +1078,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("Advisory lock acquisition timed out"));
 
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, timeoutLockMock.Object, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, timeoutLockMock.Object).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Must return 503, not throw
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -1100,8 +1114,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert: result is a 200/deferred with no_template reason (issue #2976)
         var deferredResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -1166,8 +1180,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert: result is a 200/deferred with concurrency_limit reason (issue #2976)
         var deferredResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -1257,8 +1271,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         // InstrumentPublished during Start() handles already-published instruments correctly.
 
         counting = true;
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
         counting = false;
 
         // Gate result: concurrency limit fires first → 200/deferred(concurrency_limit), not 503.
@@ -1320,8 +1334,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         listener.Start();
 
         counting = true;
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
         counting = false;
 
         // PVC gate fires → 503.
@@ -1377,8 +1391,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         listener.Start();
 
         counting = true;
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
         counting = false;
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
@@ -1468,8 +1482,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
 
         // Act
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entity.Id, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert 1: endpoint returns 503 (lifecycle exited without dispatching)
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -1550,8 +1564,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
-        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
-            entityId, dbFactory, lifecycle, lockProvider, rollout, CancellationToken.None);
+        var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
+            entityId, dbFactory, lifecycle, rollout, CancellationToken.None);
 
         // Assert 1: dispatch succeeded
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
@@ -1595,7 +1609,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act — call through the static endpoint handler (not the service method directly)
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, lockProvider, dispatchService, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         // Assert: 200 with dispatched:true
         var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -1621,7 +1635,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var missingId = Guid.NewGuid();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            missingId, dbFactory, lifecycle, lockProvider, dispatchService, rollout, CancellationToken.None);
+            missingId, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>(
             "endpoint wrapper must return 404 for a missing work item ID");
@@ -1665,7 +1679,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, lockProvider, dispatchService, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         // Fast-path check: item is not Pending → return 200/deferred(not_pending) without acquiring lock
         var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -1687,7 +1701,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, lockProvider, dispatchService, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         deferred.Should().NotBeNull("no-template path must return 200/deferred");
@@ -1712,7 +1726,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, lockProvider, dispatchService, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         deferred.Should().NotBeNull("concurrency limit must return 200/deferred via endpoint wrapper");
@@ -1734,7 +1748,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, lockProvider, dispatchService, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull("PVC exhaustion must return 503 via endpoint wrapper");
@@ -1749,7 +1763,6 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore();
         var lifecycle = CreateLifecycleService();
-        var dispatchService = CreateDispatchService(templateStore);
         var rollout = CreateRolloutRouting(dbFactory, templateStore);
 
         // Lock provider that throws TimeoutException
@@ -1757,9 +1770,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
         timeoutLock
             .Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("Lock acquisition timed out"));
+        var dispatchService = CreateDispatchService(templateStore, timeoutLock.Object);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, timeoutLock.Object, dispatchService, rollout, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull("lock timeout must return 503 via endpoint wrapper");
@@ -1918,7 +1932,7 @@ public sealed class UniqueViolationIdempotentRetryTests
 // ── Isolation tests for extracted helpers (issue #3235) ──────────────────────
 
 /// <summary>
-/// Isolation tests for <see cref="CodingAgent.Api.Dispatch.DispatchWorkItemService.TryEnterSelectorDispatchAsync"/>
+/// Isolation tests for <see cref="CodingAgent.Api.Dispatch.DispatchWorkItemService.TryEnterDispatchAsync"/>
 /// and <see cref="CodingAgent.Api.Dispatch.DispatchWorkItemService.InterpretDispatchResult"/>, moved from
 /// <c>WorkItemDispatchEndpoints</c> to <c>DispatchWorkItemService</c> by issue #3286.
 ///
@@ -1971,6 +1985,15 @@ public sealed class ExtractedHelperIsolationTests
     private static JobTemplate ResolveTemplate(JobTemplateStore store, string selector = "kiro,dotnet") =>
         store.Resolve(JobTemplateStore.NormalizeLabels(selector))!;
 
+    /// <summary>Spec 057: the real agent start gate over <paramref name="lockProvider"/>, so the lock handle is observable.</summary>
+    private AgentStartGate CreateGate(IDistributedLockProvider lockProvider) =>
+        new(lockProvider,
+            new DbBackedAgentJobs(CreateDbFactory()),
+            CreateTemplateStore(),
+            new DispatchServiceOptions { Namespace = "test" },
+            new AgentCapacityStore(CreateDbFactory()),
+            Serilog.Log.Logger);
+
     private async Task<WorkItemEntity> SeedPendingItemAsync(IDbContextFactory<PipelineDbContext> dbFactory)
     {
         var entity = new WorkItemEntity
@@ -1991,14 +2014,14 @@ public sealed class ExtractedHelperIsolationTests
         return entity;
     }
 
-    // ── TryEnterSelectorDispatchAsync ─────────────────────────────────────────
+    // ── TryEnterDispatchAsync ─────────────────────────────────────────
 
     /// <summary>
     /// When the lock provider throws <see cref="TimeoutException"/>, the helper must return
     /// <c>(null, 503)</c>. The earlyReturn must be a 503 Status Code result.
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatch_LockTimeout_ReturnsNull_And_503EarlyReturn()
+    public async Task TryEnterDispatch_LockTimeout_ReturnsNull_And_503EarlyReturn()
     {
         var dbFactory = CreateDbFactory();
         var entity = await SeedPendingItemAsync(dbFactory);
@@ -2009,8 +2032,8 @@ public sealed class ExtractedHelperIsolationTests
 
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        var (lockHandle, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-            lockMock.Object, "kiro,dotnet", db, entity.Id, CancellationToken.None);
+        var (lockHandle, earlyReturn) = await DispatchWorkItemService.TryEnterDispatchAsync(
+            CreateGate(lockMock.Object), db, entity.Id, CancellationToken.None);
 
         lockHandle.Should().BeNull("on lock timeout the handle must be null");
         earlyReturn.Should().NotBeNull("on lock timeout an earlyReturn result must be provided");
@@ -2033,7 +2056,7 @@ public sealed class ExtractedHelperIsolationTests
     /// </list>
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatch_PostLockItemNotPending_DisposesLock_And_ReturnsDeferredEarlyReturn()
+    public async Task TryEnterDispatch_PostLockItemNotPending_DisposesLock_And_ReturnsDeferredEarlyReturn()
     {
         var dbFactory = CreateDbFactory();
         var entity = await SeedPendingItemAsync(dbFactory);
@@ -2063,8 +2086,8 @@ public sealed class ExtractedHelperIsolationTests
 
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        var (lockHandle, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-            lockMock.Object, "kiro,dotnet", db, entity.Id, CancellationToken.None);
+        var (lockHandle, earlyReturn) = await DispatchWorkItemService.TryEnterDispatchAsync(
+            CreateGate(lockMock.Object), db, entity.Id, CancellationToken.None);
 
         lockHandle.Should().BeNull("lock must be released (disposed) and null returned when item is no longer Pending");
         earlyReturn.Should().NotBeNull("a non-Pending post-lock item must produce an earlyReturn");
@@ -2078,7 +2101,7 @@ public sealed class ExtractedHelperIsolationTests
         // TODO [WARNING]: Does not assert that RecordDispatchAttempt("deferred","not_pending") was
         // emitted. A regression dropping that telemetry call would not be caught here. Additionally,
         // only the Dispatched status is simulated — the null-row path (postLockCheck is null) is not
-        // tested. A regression changing `is null ||` to `is null &&` in TryEnterSelectorDispatchAsync
+        // tested. A regression changing `is null ||` to `is null &&` in TryEnterDispatchAsync
         // would not be caught. Add a companion test seeding no matching row, and add telemetry
         // assertion for the deferred/not_pending emit. See review finding: TestQualityReviewer @ line 2676.
     }
@@ -2088,15 +2111,15 @@ public sealed class ExtractedHelperIsolationTests
     /// a non-null lock handle and a null earlyReturn so the caller can proceed to dispatch.
     /// </summary>
     [Fact]
-    public async Task TryEnterSelectorDispatch_PostLockItemStillPending_ReturnsLockHandle_And_NullEarlyReturn()
+    public async Task TryEnterDispatch_PostLockItemStillPending_ReturnsLockHandle_And_NullEarlyReturn()
     {
         var dbFactory = CreateDbFactory();
         var entity = await SeedPendingItemAsync(dbFactory);
 
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        var (lockHandle, earlyReturn) = await DispatchWorkItemService.TryEnterSelectorDispatchAsync(
-            CreateNoOpLockProvider(), "kiro,dotnet", db, entity.Id, CancellationToken.None);
+        var (lockHandle, earlyReturn) = await DispatchWorkItemService.TryEnterDispatchAsync(
+            CreateGate(CreateNoOpLockProvider()), db, entity.Id, CancellationToken.None);
 
         lockHandle.Should().NotBeNull("when item is still Pending the lock handle must be returned");
         earlyReturn.Should().BeNull("when item is still Pending there must be no earlyReturn");
@@ -2106,31 +2129,6 @@ public sealed class ExtractedHelperIsolationTests
     }
 
     // ── InterpretDispatchResult ────────────────────────────────────────────────
-
-    /// <summary>
-    /// A 409 input must
-    /// be rewritten to 200 DispatchPendingResponse(false, "concurrency_limit") with outcome
-    /// <see cref="DispatchInterpretOutcome.ConcurrencyLimitRewritten"/>.
-    /// </summary>
-    [Fact]
-    public void InterpretDispatchResult_409Input_PendingPath_Returns200Deferred()
-    {
-        var rawResult = TypedResults.Conflict("limit reached");
-        var pvcResult = MakePvcResult(available: 1);
-
-        var (result, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true);
-
-        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
-        ok.Should().NotBeNull("409 on the pending path must be rewritten to 200 Ok<DispatchPendingResponse>");
-        ok!.Value!.Dispatched.Should().BeFalse();
-        ok.Value.Reason.Should().Be("concurrency_limit");
-        outcome.Should().Be(DispatchInterpretOutcome.ConcurrencyLimitRewritten,
-            "a rewritten 409→200 must carry the ConcurrencyLimitRewritten outcome");
-        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("deferred","concurrency_limit")
-        // was emitted. If that call is removed from InterpretDispatchResult this test still passes.
-        // Add telemetry assertion to verify the side effect. See review finding: TestQualityReviewer @ line 2660.
-    }
 
     /// <summary>
     /// A 503 input with an empty PVC pool and isKiroAgent=true must cause the helper to
@@ -2278,24 +2276,6 @@ public sealed class ExtractedHelperIsolationTests
     // See review finding: TestQualityReviewer @ line 2893.
 
     // ── Outcome-discriminator characterization tests (issue #3260 Prerequisites) ──────
-
-    /// <summary>
-    /// Characterization: a 409 on the pending path must return outcome
-    /// <see cref="DispatchInterpretOutcome.ConcurrencyLimitRewritten"/>.
-    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
-    /// </summary>
-    [Fact]
-    public void InterpretDispatchResult_409Input_PendingPath_ReturnsOutcomeConcurrencyLimitRewritten()
-    {
-        var rawResult = TypedResults.Conflict("limit reached");
-        var pvcResult = MakePvcResult(available: 1);
-
-        var (_, outcome) = DispatchWorkItemService.InterpretDispatchResult(
-            rawResult, pvcResult, isKiroAgent: true);
-
-        outcome.Should().Be(DispatchInterpretOutcome.ConcurrencyLimitRewritten,
-            "a 409 must produce ConcurrencyLimitRewritten");
-    }
 
     /// <summary>
     /// Characterization: a 503 with empty PVC pool and kiro agent must return outcome
@@ -2557,4 +2537,67 @@ file sealed class CountingDbContextFactory(IDbContextFactory<PipelineDbContext> 
         Interlocked.Increment(ref _createDbContextAsyncCallCount);
         return inner.CreateDbContextAsync(ct);
     }
+}
+
+/// <summary>
+/// Spec 057: an <see cref="IKubernetesJobClient"/> whose agent-Job list mirrors the test database — one running Job per
+/// Dispatched or Running work item, labelled with its selector and mounting its claimed PVC — as a cluster would show.
+/// Only <see cref="ListJobsAsync"/> is used (by the agent start gate).
+/// </summary>
+file sealed class DbBackedAgentJobs(IDbContextFactory<PipelineDbContext> dbFactory) : IKubernetesJobClient
+{
+    public async Task<k8s.Models.V1JobList> ListJobsAsync(string ns, string labelSelector, CancellationToken ct = default)
+    {
+        if (labelSelector != AgentJobPvcs.AgentJobSelector)
+            return new k8s.Models.V1JobList { Items = [] };
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var active = await db.WorkItems.AsNoTracking()
+            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .Select(w => new { w.Id, w.AgentSelector, w.ClaimedPvcName })
+            .ToListAsync(ct);
+        return new k8s.Models.V1JobList
+        {
+            Items = active.Select(w => new k8s.Models.V1Job
+            {
+                Metadata = new k8s.Models.V1ObjectMeta
+                {
+                    Name = $"caa-{w.Id:N}"[..12],
+                    Labels = new Dictionary<string, string>
+                    {
+                        ["app.kubernetes.io/component"] = "agent-job",
+                        ["caa/agent-selector"] = JobTemplateStore.NormalizeLabels(w.AgentSelector).Replace(',', '.'),
+                        ["caa/work-item-id"] = w.Id.ToString(),
+                    },
+                },
+                Spec = new k8s.Models.V1JobSpec
+                {
+                    Template = new k8s.Models.V1PodTemplateSpec
+                    {
+                        Spec = new k8s.Models.V1PodSpec
+                        {
+                            Containers = [],
+                            Volumes = w.ClaimedPvcName is null ? [] :
+                            [
+                                new k8s.Models.V1Volume
+                                {
+                                    Name = "kiro-cli-data",
+                                    PersistentVolumeClaim = new k8s.Models.V1PersistentVolumeClaimVolumeSource { ClaimName = w.ClaimedPvcName },
+                                },
+                            ],
+                        },
+                    },
+                },
+                Status = new k8s.Models.V1JobStatus(),
+            }).ToList(),
+        };
+    }
+
+    public Task CreateJobAsync(k8s.Models.V1Job job, string ns, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task DeleteJobAsync(string name, string ns, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<k8s.Models.V1Job> ReadJobAsync(string name, string ns, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task CreateSecretAsync(k8s.Models.V1Secret secret, string ns, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task DeleteSecretAsync(string name, string ns, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<k8s.Models.V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<string> ReadPodLogTailAsync(string podName, string ns, string container, int tailLines, CancellationToken ct = default) => throw new NotSupportedException();
 }

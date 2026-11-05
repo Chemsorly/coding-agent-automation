@@ -105,10 +105,11 @@ The export bundle is a flat JSON object with arrays for each entity type:
   "reviewerConfigs": [ ... ],
   "projects": [ ... ],
   "jobTemplates": [ ... ],
-  "agentRouting": "{...}"
+  "agentRouting": "{...}",
+  "agentCapacity": "{...}"
 }
 ```
 
-The `pipelineConfig`, per-entity `configuration`, project `settings` and `agentRouting` fields contain serialized JSON strings (double-encoded). This is the format the system uses internally and is preserved in the export.
+The `pipelineConfig`, per-entity `configuration`, project `settings`, `agentRouting` and `agentCapacity` fields contain serialized JSON strings (double-encoded). This is the format the system uses internally and is preserved in the export. `agentCapacity` holds the UI agent limits of Settings → Agents → Capacity; a bundle without it imports with no UI limits.
 
 For a full example response see [HTTP API Reference — GET /api/config/export](api-reference.md#get-apiconfigexport).

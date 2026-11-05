@@ -225,6 +225,12 @@ public sealed class WorkItemDispatchLoop : BackgroundService
                     "WorkItemDispatchLoop: transient failure for {WorkItemId} — aborting cycle, will retry next interval",
                     item.Id);
                 return false;
+
+            case DispatchPendingResult.GlobalLimitReached:
+                // Spec 057 req 3.5: the limit for all agents is reached, so no other item can start this cycle.
+                // Expected backpressure, not a failure: Debug, and the next tick tries again.
+                _logger.Debug("WorkItemDispatchLoop: all-agents limit reached — ending cycle");
+                return false;
         }
 
         return true;
