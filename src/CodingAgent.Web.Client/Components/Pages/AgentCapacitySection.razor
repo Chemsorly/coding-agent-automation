@@ -149,12 +149,18 @@
         $"{row.RunningRuns} {(row.RunningRuns == 1 ? "run" : "runs")} · {row.RunningChats} {(row.RunningChats == 1 ? "chat" : "chats")}";
 
     private static string AppliesText(UiAgentCapacityRow row) => row.EffectiveLimit is { } limit
-        ? $"{limit} ({(row.EffectiveSource == "ui" ? "UI" : "Helm")})"
+        ? $"{limit} ({SourceText(row.EffectiveSource)})"
         : "none";
 
+    private static string SourceText(string? source) => source == "ui" ? "UI" : "Helm";
+
     // An empty field is 0 (no limit); text that is not a number is sent as -1 so the API refuses it with its reason.
-    private static int Parse(string? text) =>
-        string.IsNullOrWhiteSpace(text) ? 0 : int.TryParse(text, out var value) ? value : -1;
+    private static int Parse(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+        return int.TryParse(text, out var value) ? value : -1;
+    }
 
     private async Task SaveAsync()
     {
@@ -164,11 +170,11 @@
         try
         {
             var byTemplate = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var row in _page.Templates)
+            foreach (var templateKey in _page.Templates.Select(row => row.TemplateKey))
             {
-                var value = Parse(InputValue(row.TemplateKey));
+                var value = Parse(InputValue(templateKey));
                 if (value != 0)
-                    byTemplate[row.TemplateKey!] = value;
+                    byTemplate[templateKey!] = value;
             }
             var limits = new AgentCapacityLimits { MaxConcurrentAgents = Parse(InputValue(null)), MaxConcurrentByJobTemplate = byTemplate };
             await SettingsClient.SaveAgentCapacityAsync(limits, _cts.Token);

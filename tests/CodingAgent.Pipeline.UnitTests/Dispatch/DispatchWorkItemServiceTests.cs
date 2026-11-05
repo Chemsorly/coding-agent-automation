@@ -51,7 +51,7 @@ public sealed class DispatchWorkItemServiceTests
     /// and the UI limits of <paramref name="dbFactory"/>'s database — so the lock-handling tests below still observe
     /// the handle the lock provider returns.
     /// </summary>
-    private static IAgentStartGate CreateGate(IDistributedLockProvider locks, IDbContextFactory<PipelineDbContext> dbFactory) =>
+    private static AgentStartGate CreateGate(IDistributedLockProvider locks, IDbContextFactory<PipelineDbContext> dbFactory) =>
         new AgentStartGate(
             locks,
             Mock.Of<IKubernetesJobClient>(),

@@ -42,6 +42,7 @@ namespace CodingAgent.Api.Dispatch;
 internal sealed class DispatchWorkItemService
 {
     private const string DeferredResult = "deferred";
+    private const string TransientResult = "transient";
     private const string NotPendingReason = "not_pending";
 
     private readonly JobTemplateStore _templateStore;
@@ -461,7 +462,7 @@ internal sealed class DispatchWorkItemService
     /// Pending; the Scheduler stops the selector for the cycle (<c>concurrency_limit</c>) or ends the cycle
     /// (<c>global_concurrency_limit</c>).
     /// </summary>
-    private static IResult HoldForLimit(AgentStartDecision decision, string sanitizedSelector)
+    private static Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse> HoldForLimit(AgentStartDecision decision, string sanitizedSelector)
     {
         var scope = AgentCapacityRules.TagValue(decision.Scope!.Value);
         var source = AgentCapacityRules.TagValue(decision.Source!.Value);
@@ -560,13 +561,13 @@ internal sealed class DispatchWorkItemService
             Log.Warning( // NOSONAR S6667 — expected lock timeout; the message says so
                 "DispatchPendingWorkItem: agent start lock acquisition timed out for WorkItem {WorkItemId} — returning 503",
                 id);
-            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "lock_timeout");
+            WorkDistributionTelemetry.RecordDispatchAttempt(TransientResult, "lock_timeout");
             return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
         }
         catch (AgentCountUnavailableException)
         {
             // Spec 057 req 2.4: without a count no agent starts. The gate logged the cause; retried next cycle.
-            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "agent_count_unavailable");
+            WorkDistributionTelemetry.RecordDispatchAttempt(TransientResult, "agent_count_unavailable");
             return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
         }
 
@@ -673,16 +674,16 @@ internal sealed class DispatchWorkItemService
             // Gate ordering: ApplyGates runs the PVC gate before the K8s lifecycle.
             // The PVC gate fires if AvailablePvcs is empty — same condition PvcPoolExhaustions
             // has always checked. Use PVC availability to distinguish the two sub-cases.
-            // TODO [WARNING]: The disambiguation relies on the gate-ordering guarantee (PVC gate
+            // Note: the disambiguation relies on the gate-ordering guarantee (PVC gate
             // before K8s lifecycle) being a structural invariant — if that ordering ever changes,
             // this heuristic may misclassify k8s_error as pvc_unavailable or vice versa.
             if (!pvcResult.AvailablePvcs.Any() && isKiroAgent)
             {
-                WorkDistributionTelemetry.RecordDispatchAttempt("transient", "pvc_unavailable");
+                WorkDistributionTelemetry.RecordDispatchAttempt(TransientResult, "pvc_unavailable");
                 return (rawResult, DispatchInterpretOutcome.PvcExhausted503);
             }
 
-            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "k8s_error");
+            WorkDistributionTelemetry.RecordDispatchAttempt(TransientResult, "k8s_error");
             return (rawResult, DispatchInterpretOutcome.K8sError503);
         }
 

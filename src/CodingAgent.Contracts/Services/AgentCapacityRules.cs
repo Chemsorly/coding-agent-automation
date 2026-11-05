@@ -58,8 +58,15 @@ public sealed record AgentStartDecision(bool Allowed, LimitScope? Scope, LimitSo
     /// The dispatch reason for a held work item: <c>global_concurrency_limit</c> or <c>concurrency_limit</c>; null when
     /// allowed.
     /// </summary>
-    public string? Reason => Allowed ? null
-        : Scope == LimitScope.Global ? AgentCapacityRules.GlobalLimitReason : AgentCapacityRules.TemplateLimitReason;
+    public string? Reason
+    {
+        get
+        {
+            if (Allowed)
+                return null;
+            return Scope == LimitScope.Global ? AgentCapacityRules.GlobalLimitReason : AgentCapacityRules.TemplateLimitReason;
+        }
+    }
 }
 
 /// <summary>

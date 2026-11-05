@@ -4063,7 +4063,7 @@ public class ChatJobDispatcherTests
                         await Task.Delay(10);
                     if (gate.Disposed > 0)
                         RegisterChatAgent(registry, "agent-after-release", dispatchId);
-                });
+                }, CancellationToken.None);
             })
             .Returns(Task.CompletedTask);
         await using var dispatcher = CreateDispatcher(
