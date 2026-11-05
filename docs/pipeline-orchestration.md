@@ -79,7 +79,8 @@ stateDiagram-v2
     QualityGateDecision --> PrClosed : PR closed during CI wait
 
     state FinalQualityCheck <<choice>>
-    PreparingForPullRequest --> FinalQualityCheck : quality gates re-run after cleanup
+    PreparingForPullRequest --> FinalizingPullRequest : cleanup changed nothing
+    PreparingForPullRequest --> FinalQualityCheck : quality gates re-run after a cleanup that changed code
     FinalQualityCheck --> FinalizingPullRequest : all passed
     FinalQualityCheck --> GeneratingCode : failed, retries remaining
     FinalQualityCheck --> FinalizingPullRequest : failed, retries exhausted (draft PR)
@@ -123,7 +124,7 @@ stateDiagram-v2
 Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPreRun → CreatingBranch
   → VerifyingBaseline → AnalyzingCode → ReviewingAnalysis → PostingAnalysis → [Confidence Gate]
   → GeneratingCode → CheckingDroppedIdentifiers → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
-  → PreparingForPullRequest → [Final Quality Gate]
+  → PreparingForPullRequest → [Final Quality Gate, only if the cleanup changed code]
   → FinalizingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
 ```
 
@@ -148,7 +149,7 @@ The workspace baseline's build and tests run next to the analysis (`AnalyzingCod
 | **CheckingDroppedIdentifiers** | Post-codegen verification that identifiers present in force-resolved conflict files were re-applied during code generation. Non-blocking — always continues regardless of outcome. |
 | **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
 | **RunningQualityGates** | Build, tests, and external CI checks run |
-| **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
+| **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time if the cleanup changed the commit or the working tree, or if that cannot be determined. Otherwise the earlier passing result stands. |
 | **FinalizingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here. For a normal PR the agent then writes a structured PR description (non-fatal on failure) and the PR is marked ready for review last |
 | **ReflectingOnRun** | Agent reviews the entire run and enriches `.brain/` knowledge (if brain repo configured). After reflection and the brain sync, every non-draft run collects feedback in a separate agent call (standalone feedback prompt, `FeedbackTimeoutSeconds`, default 60 s), with or without a brain repo |
 | **SyncingBrainRepoPostRun** | Brain updates committed and pushed to brain repository |
