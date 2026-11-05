@@ -111,8 +111,8 @@ Readiness check (must return 200 within 60 seconds after deploy):
   Expected: 200. If 503: leader election not yet complete, retry. If CrashLoopBackOff:
   check logs for fast-fail messages (missing PipelineApi:BaseUrl, AGENT_API_KEY, or not-in-cluster).
 
-Job-templates ConfigMap changes take effect after a rollout (templates load once at startup):
-  kubectl rollout restart deployment/{{ include "coding-agent-automation.fullname" . }}-jobcontroller -n {{ .Release.Namespace }}
+Job template changes restart the API and the Job Controller automatically (checksum annotation; templates load once
+at startup). Agent limits below the Helm values are set in Settings → Agents → Capacity without a restart.
 {{- end }}
 
 ── Monitoring ────────────────────────────────────────────────────────────────
@@ -129,6 +129,8 @@ Key metrics (OpenTelemetry):
   pod_start_seconds                      — histogram
   dispatcher_last_poll_epoch_seconds     — gauge (staleness detection)
   credential_pool_available              — gauge (PVC pool headroom)
+  agents_running                         — gauge by job template and kind (run, chat)
+  agents_limit                           — gauge: the agent limit that applies, and its source (helm, ui)
 
 ── Scaling ───────────────────────────────────────────────────────────────────
 

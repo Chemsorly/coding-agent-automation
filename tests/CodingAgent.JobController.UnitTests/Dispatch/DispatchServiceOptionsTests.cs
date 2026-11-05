@@ -270,4 +270,29 @@ public sealed class DispatchServiceOptionsFactoryTests
             "Create must clamp ChatPodConnectTimeoutSeconds to the 5s minimum so the " +
             "JobController's EnforceDispatchedTimeoutAsync never fails freshly dispatched items immediately");
     }
+
+    // Spec 057 req 1.2, 5.3: the Helm global agent limit.
+    [Fact]
+    public void Create_ReadsMaxConcurrentAgents()
+    {
+        var opts = DispatchServiceOptionsFactory.Create(BuildConfig(new() { ["WorkDistribution:MaxConcurrentAgents"] = "6" }));
+
+        opts.MaxConcurrentAgents.Should().Be(6);
+    }
+
+    // Spec 057 req 1.2: no value means no Helm global limit.
+    [Fact]
+    public void Create_WithoutMaxConcurrentAgents_DefaultsTo0()
+    {
+        DispatchServiceOptionsFactory.Create(BuildConfig(new())).MaxConcurrentAgents.Should().Be(0);
+    }
+
+    // Spec 057 req 1.2: a negative value counts as no limit.
+    [Fact]
+    public void Create_ClampsNegativeMaxConcurrentAgents_To0()
+    {
+        var opts = DispatchServiceOptionsFactory.Create(BuildConfig(new() { ["WorkDistribution:MaxConcurrentAgents"] = "-2" }));
+
+        opts.MaxConcurrentAgents.Should().Be(0);
+    }
 }

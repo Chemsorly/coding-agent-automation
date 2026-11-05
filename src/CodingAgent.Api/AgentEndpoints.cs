@@ -41,7 +41,17 @@ public static class AgentEndpoints
 
         group.MapGet("/", GetAllAgents);
         group.MapGet("/credential-pool", GetCredentialPool);
+        group.MapGet("/capacity", GetAgentCapacity);
     }
+
+    // ── GET /api/agents/capacity ─────────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/agents/capacity — spec 057 req 7.2: running agents (runs and chats) and the limits that apply, for the
+    /// Scheduler leader's <c>workdistribution.agents.*</c> gauges.
+    /// </summary>
+    internal static async Task<Ok<AgentCapacityStatus>> GetAgentCapacity(AgentCapacityReader reader, CancellationToken ct) =>
+        TypedResults.Ok(await reader.ReadStatusAsync(ct));
 
     // ── GET /api/agents/credential-pool ──────────────────────────────────────
 

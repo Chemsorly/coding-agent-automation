@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
@@ -74,6 +75,8 @@ public static class ApiDispatchServiceExtensions
         // into the API; nothing here resolved an IWorkDistributor before.
         // Spec 053: the routing table, and the router that pins a route on every work item when it is created.
         services.AddSingleton<AgentRoutingStore>();
+        // Spec 057: the UI agent capacity limits, read at every agent start.
+        services.AddSingleton<AgentCapacityStore>();
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemRouter>();
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
@@ -135,12 +138,31 @@ public static class ApiDispatchServiceExtensions
         // Spec 053 DD10: routes a Pending item a previous-release API stored without a selector.
         services.AddSingleton<CodingAgent.Api.Dispatch.RolloutRouting>();
 
+        // ── Agent start gate (spec 057) ──────────────────────────────────────────────────────
+        // One lock for every agent start (work-item dispatch and chat launch), the running-agent count from the
+        // Kubernetes Jobs, and the four optional limits (Helm and UI, per job template and for all agents).
+        services.AddSingleton<IAgentStartGate>(sp => new CodingAgent.Api.Dispatch.AgentStartGate(
+            sp.GetRequiredService<IDistributedLockProvider>(),
+            sp.GetRequiredService<IKubernetesJobClient>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            sp.GetRequiredService<DispatchServiceOptions>(),
+            sp.GetRequiredService<AgentCapacityStore>(),
+            Log.Logger));
+        // The read-only view of running agents and limits for the Capacity page and the Scheduler's gauges.
+        services.AddSingleton(sp => new CodingAgent.Api.Dispatch.AgentCapacityReader(
+            sp.GetRequiredService<IKubernetesJobClient>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            sp.GetRequiredService<DispatchServiceOptions>(),
+            sp.GetRequiredService<AgentCapacityStore>(),
+            Log.Logger));
+
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
-        // The dispatch of a Pending item (DispatchPendingWorkItem): concurrency-snapshot query,
-        // gate block and lifecycle. Singleton — stateless, depends only on JobTemplateStore.
+        // The dispatch of a Pending item (DispatchPendingWorkItem): the agent start gate, the PVC gate and the
+        // lifecycle. Singleton — stateless.
         services.AddSingleton<CodingAgent.Api.Dispatch.DispatchWorkItemService>(sp =>
             new CodingAgent.Api.Dispatch.DispatchWorkItemService(
-                sp.GetRequiredService<JobTemplateStore>()));
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<IAgentStartGate>()));
 
         return services;
     }

@@ -140,6 +140,14 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         };
     }
 
+    /// <summary>
+    /// Spec 057: tells whether a work item is still active (Pending, Dispatched or Running). Set once by the API host
+    /// factory. When set, the agent-Job list reports the Job of an ended work item as <c>Complete</c>, as the real pod
+    /// exit does, so the running-agent count does not grow across tests. Not cleared by <see cref="Reset"/>: the hosts
+    /// outlive the tests.
+    /// </summary>
+    public Func<Guid, bool>? IsWorkItemActive { get; set; }
+
     public Task<V1JobList> ListJobsAsync(string ns, string labelSelector, CancellationToken ct = default)
     {
         // Validate before the Where so unsupported selectors throw even when the collection is empty
@@ -147,8 +155,38 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         ValidateSelector(labelSelector);
         var jobs = CreatedJobs.Values.Concat(ExistingJobs)
             .Where(j => MatchesSelector(j.Metadata?.Labels, labelSelector))
+            .Select(j => labelSelector == AgentJobPvcs.AgentJobSelector ? EndedIfItemInactive(j) : j)
             .ToList();
         return Task.FromResult(new V1JobList { Items = jobs });
+    }
+
+    /// <summary>
+    /// A copy of <paramref name="job"/> with a <c>Complete</c> condition when its work item is no longer active; the
+    /// stored Job is never changed, and only the agent-Job selector sees the copy (the JobController's own lists keep
+    /// seeing the Jobs as stored).
+    /// </summary>
+    private V1Job EndedIfItemInactive(V1Job job)
+    {
+        var isActive = IsWorkItemActive;
+        if (isActive is null || KubernetesJobConditions.IsTerminal(job))
+            return job;
+
+        string? raw = null;
+        if (job.Metadata?.Labels is { } labels)
+            labels.TryGetValue("caa/work-item-id", out raw);
+        if (!Guid.TryParse(raw, out var id) || isActive(id))
+            return job;
+
+        return new V1Job
+        {
+            Metadata = job.Metadata,
+            Spec = job.Spec,
+            Status = new V1JobStatus
+            {
+                StartTime = job.Status?.StartTime,
+                Conditions = [.. job.Status?.Conditions ?? [], new V1JobCondition { Type = KubernetesJobConditions.JobPhaseComplete, Status = "True" }],
+            },
+        };
     }
 
     public Task CreateSecretAsync(V1Secret secret, string ns, CancellationToken ct = default)

@@ -51,7 +51,7 @@ public class SettingsTreeNavComponentTests : BunitContext
     {
         var cut = Render<SettingsTreeNav>();
 
-        GroupNodes(cut, "Agents").Should().Equal("Agent Profiles", "Routing");
+        GroupNodes(cut, "Agents").Should().Equal("Agent Profiles", "Routing", "Capacity");
         GroupNodes(cut, "Quality").Should().Equal("Quality Gate Configs", "Reviewer Configs");
         cut.Find($"a[href='settings?section={SettingsNodes.AgentRouting}']").TextContent.Trim().Should().Be("Routing");
     }

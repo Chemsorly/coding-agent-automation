@@ -594,4 +594,35 @@ public sealed class JobTemplateStoreTests
 
         JobTemplateStore.LoadFromYaml(yaml).ToolsByKey().Should().Equal(new Dictionary<string, string> { ["dotnet"] = "" });
     }
+
+    // Spec 057 req 1.5: every deployed key with its Helm limit, 0 for a template without one.
+    [Fact]
+    public void MaxConcurrentByKey_ListsEveryTemplate_WithZeroForNoLimit()
+    {
+        const string yaml = """
+            - labels: kiro,dotnet
+              image: agent:latest
+              providerType: kiro
+              maxConcurrent: 4
+            - labels: claude
+              image: agent:latest
+              providerType: claude
+            """;
+
+        JobTemplateStore.LoadFromYaml(yaml).MaxConcurrentByKey().Should().Equal(
+            new Dictionary<string, int> { ["dotnet,kiro"] = 4, ["claude"] = 0 });
+    }
+
+    // Spec 057 B6: the Contracts copy of the normalize rule gives the same keys as JobTemplateStore.
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    [InlineData(" kiro , dotnet ")]
+    [InlineData("a,,b")]
+    [InlineData("Z,a")]
+    public void NormalizeKey_MatchesNormalizeLabels(string input)
+    {
+        CodingAgent.Pipeline.Services.AgentCapacityLimitsValidator.NormalizeKey(input)
+            .Should().Be(JobTemplateStore.NormalizeLabels(input));
+    }
 }

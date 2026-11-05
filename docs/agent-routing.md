@@ -17,7 +17,7 @@ servers and an enabled flag. It has no model and no effort: the route names thos
 
 | Field | What it does |
 |-------|--------------|
-| Job template | A Helm `jobTemplates[]` entry, by its labels key (for example `dotnet,kiro`). The template names the image, `maxConcurrent`, the resources and the tool (`providerType`). |
+| Job template | A Helm `jobTemplates[]` entry, by its labels key (for example `dotnet,kiro`). The template names the image, `maxConcurrent` (its capacity ceiling), the resources and the tool (`providerType`). |
 | Tool settings | The settings of that tool: Agent Name (Kiro), Base URL (OpenCode), Auth Mode (Claude Code). |
 | MCP servers | Added to the agent's MCP configuration, together with the project's. |
 
@@ -27,8 +27,10 @@ the same name. The page flags profiles whose job template is missing, for exampl
 such a profile is not started until the template is back.
 
 Several profiles can share one job template, and with it the image and the capacity pool, for example two Kiro profiles
-with different MCP servers. A profile that a route names cannot be disabled or deleted; the refusal lists the routes
-("Global · Decomposition", "Repository X · Implementation").
+with different MCP servers. The template's capacity is its Helm `maxConcurrent`, which Settings → Agents → Capacity can
+lower; the runs of every profile on the template and the chats on it count toward it (see
+[Configuration — Agent Capacity](configuration.md#agent-capacity)). A profile that a route names cannot be disabled or
+deleted; the refusal lists the routes ("Global · Decomposition", "Repository X · Implementation").
 
 ## Routing
 
@@ -92,7 +94,8 @@ Each agent tool has one image, built from `dockerfiles/agent.Dockerfile` with `-
 
 The image does not route work: the route names a profile, the profile names its job template, and the template names
 the image. One job template per tool is enough; add another template of the same tool only for different capacity or
-resources. Each template keeps its own `maxConcurrent` and resources, shared by all profiles on it.
+resources. Each template keeps its own `maxConcurrent` and resources, shared by all profiles on it and by chats on it;
+Settings → Agents → Capacity can set a lower limit per template.
 
 The image's default `AGENT_LABELS` lists the agent tool and every stack. Kubernetes Jobs set `AGENT_LABELS` from their job template, so the default applies only to an agent started outside Kubernetes.
 

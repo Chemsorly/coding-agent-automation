@@ -1,0 +1,120 @@
+# helm unittest suite for spec 057 (agent concurrency limits).
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Covers:
+#   1. The job-templates ConfigMap renders maxConcurrent (0 when not set).
+#   2. WorkDistribution__MaxConcurrentAgents reaches the API container ("0" by default).
+#   3. The API and Job Controller pod templates carry checksum/job-templates, which changes with the job templates,
+#      so a change to maxConcurrent restarts the pods (the store is read once at startup).
+
+suite: job templates and agent limits
+
+templates:
+  - templates/web-job-templates-configmap.yaml
+  - templates/api-deployment.yaml
+  - templates/jobcontroller-deployment.yaml
+
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  secrets.agentApiKey: "test-key"
+  api.enabled: true
+  jobController.enabled: true
+  scheduler.enabled: true
+  signalr.redis.connectionString: "redis:6379"
+  scheduler.image.tag: "test"
+
+tests:
+
+  # ── 1. ConfigMap ──────────────────────────────────────────────────────────
+
+  - it: renders maxConcurrent 0 for a template without one
+    template: templates/web-job-templates-configmap.yaml
+    set:
+      jobTemplates:
+        - labels: "kiro,dotnet"
+          image: "agent:test"
+          providerType: "kiro"
+    asserts:
+      - matchRegex:
+          path: data["job-templates.yaml"]
+          pattern: "maxConcurrent: 0"
+
+  - it: renders the template's maxConcurrent
+    template: templates/web-job-templates-configmap.yaml
+    set:
+      jobTemplates:
+        - labels: "kiro,dotnet"
+          image: "agent:test"
+          providerType: "kiro"
+          maxConcurrent: 4
+    asserts:
+      - matchRegex:
+          path: data["job-templates.yaml"]
+          pattern: "maxConcurrent: 4"
+
+  # ── 2. Helm global agent limit ───────────────────────────────────────────
+
+  - it: passes the global agent limit 0 to the API by default
+    template: templates/api-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: WorkDistribution__MaxConcurrentAgents
+            value: "0"
+
+  - it: passes a set global agent limit to the API
+    template: templates/api-deployment.yaml
+    set:
+      workDistribution.maxConcurrentAgents: 6
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: WorkDistribution__MaxConcurrentAgents
+            value: "6"
+
+  # ── 3. Restart on a job template change ──────────────────────────────────
+
+  - it: the API pod template carries the job templates' checksum
+    template: templates/api-deployment.yaml
+    set:
+      jobTemplates:
+        - labels: "kiro,dotnet"
+          image: "agent:test"
+          providerType: "kiro"
+          maxConcurrent: 2
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/job-templates"]
+          value: 48d8759843fd116628406591c4612971a64152aeb8b76dc0aefecaa8a645f007
+
+  - it: the Job Controller pod template carries the same checksum
+    template: templates/jobcontroller-deployment.yaml
+    set:
+      jobTemplates:
+        - labels: "kiro,dotnet"
+          image: "agent:test"
+          providerType: "kiro"
+          maxConcurrent: 2
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["checksum/job-templates"]
+          value: 48d8759843fd116628406591c4612971a64152aeb8b76dc0aefecaa8a645f007
+
+  - it: a different maxConcurrent changes the checksum, so the pods restart
+    template: templates/api-deployment.yaml
+    set:
+      jobTemplates:
+        - labels: "kiro,dotnet"
+          image: "agent:test"
+          providerType: "kiro"
+          maxConcurrent: 3
+    asserts:
+      - matchRegex:
+          path: spec.template.metadata.annotations["checksum/job-templates"]
+          pattern: "^[a-f0-9]{64}$"
+      - notEqual:
+          path: spec.template.metadata.annotations["checksum/job-templates"]
+          value: 48d8759843fd116628406591c4612971a64152aeb8b76dc0aefecaa8a645f007

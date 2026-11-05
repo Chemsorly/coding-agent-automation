@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
 
+using CodingAgent.Web.TestUtilities;
+
 namespace CodingAgent.Web.UnitTests.Dispatch;
 
 /// <summary>
@@ -126,10 +128,12 @@ public class ChatDispatcherObservabilityTests : IDisposable
             templateStore = JobTemplateStore.LoadFromYaml(yaml);
         }
 
+        var client = jobClient ?? CreateJobClientMock().Object;
         return new ChatJobDispatcher(
-            jobClient ?? CreateJobClientMock().Object,
+            client,
             hubContext ?? CreateHubContextMock().Object,
             templateStore,
+            AgentStartGateFakes.AllowAll(client, TestNamespace),
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
             Mock.Of<ILogger>());
@@ -428,10 +432,12 @@ public class ChatDispatcherObservabilityTests : IDisposable
                 """;
             var templateStore = JobTemplateStore.LoadFromYaml(yaml);
 
+            var client = jobClient ?? CreateJobClientMock().Object;
             return new ChatJobDispatcher(
-                jobClient ?? CreateJobClientMock().Object,
+                client,
                 hubContext ?? CreateHubContextMock().Object,
                 templateStore,
+                AgentStartGateFakes.AllowAll(client, TestNamespace),
                 registry ?? CreateRegistry(),
                 options ?? CreateOptions(),
                 logger);

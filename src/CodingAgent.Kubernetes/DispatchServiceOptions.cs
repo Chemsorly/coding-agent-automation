@@ -81,6 +81,12 @@ public sealed class DispatchServiceOptions
     // the Redis warning even though the deployment is broken. See review finding [WARNING] #2133.
     public int ChatReplicaCount { get; set; } = 1;
 
+    /// <summary>
+    /// Spec 057: the Helm global agent limit (<c>workDistribution.maxConcurrentAgents</c>), an infrastructure ceiling
+    /// for all agent pods together, chats included. 0 = none. Read from <c>WorkDistribution:MaxConcurrentAgents</c>.
+    /// </summary>
+    public int MaxConcurrentAgents { get; set; }
+
     private const int MinChatJobMaxDurationSeconds = 60;
     private const int MinChatPodConnectTimeoutSeconds = 5;
     private const int MinChatTerminationGracePeriodSeconds = 5;
@@ -136,6 +142,12 @@ public sealed class DispatchServiceOptions
             logger?.Warning("NullDispatchedAtGraceWindowSeconds ({Value}) is below minimum ({Min}), clamping",
                 NullDispatchedAtGraceWindowSeconds, MinNullDispatchedAtGraceWindowSeconds);
             NullDispatchedAtGraceWindowSeconds = MinNullDispatchedAtGraceWindowSeconds;
+        }
+        if (MaxConcurrentAgents < 0)
+        {
+            logger?.Warning("MaxConcurrentAgents ({Value}) is below minimum ({Min}), clamping",
+                MaxConcurrentAgents, 0);
+            MaxConcurrentAgents = 0;
         }
     }
 }

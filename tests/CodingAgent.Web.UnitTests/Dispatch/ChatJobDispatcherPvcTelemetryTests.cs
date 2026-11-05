@@ -12,6 +12,8 @@ using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
 
+using CodingAgent.Web.TestUtilities;
+
 namespace CodingAgent.Web.UnitTests.Dispatch;
 
 /// <summary>
@@ -92,10 +94,12 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
               maxConcurrent: 2
             """);
 
+        var client = jobClient ?? CreateJobClientMock().Object;
         return new ChatJobDispatcher(
-            jobClient ?? CreateJobClientMock().Object,
+            client,
             CreateHubContextMock().Object,
             templateStore,
+            AgentStartGateFakes.AllowAll(client, TestNamespace),
             registry ?? new AgentRegistryService(Mock.Of<ILogger>()),
             CreateOptions(),
             Mock.Of<ILogger>());
@@ -348,6 +352,7 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
                   providerType: "kiro"
                   maxConcurrent: 2
                 """),
+            AgentStartGateFakes.AllowAll(jobClientMock.Object, TestNamespace),
             registryMock.Object,
             options,
             Mock.Of<ILogger>(),

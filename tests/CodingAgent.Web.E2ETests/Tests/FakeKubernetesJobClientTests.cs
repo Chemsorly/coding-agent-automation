@@ -308,6 +308,70 @@ public sealed class FakeKubernetesJobClientTests
         Assert.Equal(new HashSet<string> { "pvc-a" }, held);
     }
 
+    // ── Spec 057: Jobs of ended work items end in the agent-Job list ─────
+
+    private static V1Job AgentJob(string name, Guid workItemId, string? condition = null)
+    {
+        var job = BuildJob(name, ("app.kubernetes.io/component", "agent-job"), ("caa/work-item-id", workItemId.ToString()),
+            ("app.kubernetes.io/managed-by", "caa-orchestrator"));
+        job.Status = condition is null ? new V1JobStatus() : new V1JobStatus
+        {
+            Conditions = [new V1JobCondition { Type = condition, Status = "True" }]
+        };
+        return job;
+    }
+
+    [Fact]
+    public async Task ListJobsAsync_AgentJobSelector_ReportsTheJobOfAnEndedItemAsComplete_WithoutChangingTheStoredJob()
+    {
+        var ended = Guid.NewGuid();
+        var active = Guid.NewGuid();
+        var client = new FakeKubernetesJobClient { IsWorkItemActive = id => id == active };
+        client.CreatedJobs["ended"] = AgentJob("ended", ended);
+        client.CreatedJobs["active"] = AgentJob("active", active);
+
+        var result = await client.ListJobsAsync("ns", AgentJobPvcs.AgentJobSelector, CancellationToken.None);
+
+        Assert.True(KubernetesJobConditions.IsTerminal(result.Items.Single(j => j.Metadata!.Name == "ended")));
+        Assert.False(KubernetesJobConditions.IsTerminal(result.Items.Single(j => j.Metadata!.Name == "active")));
+        Assert.False(KubernetesJobConditions.IsTerminal(client.CreatedJobs["ended"]), "the stored Job must not change");
+    }
+
+    [Fact]
+    public async Task ListJobsAsync_OtherSelectors_SeeTheJobsAsStored()
+    {
+        var client = new FakeKubernetesJobClient { IsWorkItemActive = _ => false };
+        client.CreatedJobs["ended"] = AgentJob("ended", Guid.NewGuid());
+
+        var result = await client.ListJobsAsync("ns", "app.kubernetes.io/managed-by=caa-orchestrator", CancellationToken.None);
+
+        Assert.False(KubernetesJobConditions.IsTerminal(result.Items.Single()));
+    }
+
+    [Fact]
+    public async Task ListJobsAsync_AFailedJob_IsReturnedAsStored()
+    {
+        var client = new FakeKubernetesJobClient { IsWorkItemActive = _ => false };
+        var failed = AgentJob("failed", Guid.NewGuid(), KubernetesJobConditions.JobPhaseFailed);
+        client.CreatedJobs["failed"] = failed;
+
+        var result = await client.ListJobsAsync("ns", AgentJobPvcs.AgentJobSelector, CancellationToken.None);
+
+        Assert.Same(failed, result.Items.Single());
+    }
+
+    [Fact]
+    public async Task ListJobsAsync_WithoutTheCallback_ReturnsTheJobsAsStored()
+    {
+        var client = new FakeKubernetesJobClient();
+        var job = AgentJob("j", Guid.NewGuid());
+        client.CreatedJobs["j"] = job;
+
+        var result = await client.ListJobsAsync("ns", AgentJobPvcs.AgentJobSelector, CancellationToken.None);
+
+        Assert.Same(job, result.Items.Single());
+    }
+
     // ── Reset tests ───────────────────────────────────────────────────────
 
     [Fact]

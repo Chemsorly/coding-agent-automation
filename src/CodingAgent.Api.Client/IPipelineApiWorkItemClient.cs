@@ -93,8 +93,9 @@ public enum DispatchPendingResult
     Dispatched,
 
     /// <summary>
-    /// Permanent rejection: item is not in Pending state, the concurrency limit for this
-    /// selector is reached, or no job template matches the selector.
+    /// Permanent rejection: item is not in Pending state (<c>not_pending</c>), the concurrency limit of the item's
+    /// job template is reached (<c>concurrency_limit</c>), no job template matches the selector (<c>no_template</c>),
+    /// or the item had no route (<c>no_route</c>).
     /// Returned when the API responds 200 with <c>{ "dispatched": false }</c>.
     /// Do not retry in the current cycle; the Scheduler poller treats this as a stop signal
     /// for the item's AgentSelector.
@@ -106,4 +107,10 @@ public enum DispatchPendingResult
     /// Retry in the next poll cycle.
     /// </summary>
     Transient,
+
+    /// <summary>
+    /// Spec 057: the limit for all agents together is reached (<c>global_concurrency_limit</c>). No other item can
+    /// start either, so the Scheduler ends the dispatch cycle.
+    /// </summary>
+    GlobalLimitReached,
 }

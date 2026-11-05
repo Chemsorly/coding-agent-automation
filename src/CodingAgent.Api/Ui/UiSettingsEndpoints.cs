@@ -29,6 +29,10 @@ internal static class UiSettingsEndpoints
         group.MapGet("/agent-routing", GetAgentRouting);
         group.MapPut("/agent-routing", SaveAgentRouting);
 
+        // Spec 057: Settings → Agents → Capacity.
+        group.MapGet("/agent-capacity", GetAgentCapacity);
+        group.MapPut("/agent-capacity", SaveAgentCapacity);
+
         group.MapGet("/agent-profiles", GetAgentProfiles);
         group.MapPut("/agent-profiles", SaveAgentProfile);
         group.MapDelete("/agent-profiles/{id}", ConfigEndpoints.DeleteAgentProfile);
@@ -116,6 +120,62 @@ internal static class UiSettingsEndpoints
         await store.SaveAsync(routing!, ct);
         return TypedResults.Ok();
     }
+
+    /// <summary>
+    /// GET /api/ui/settings/agent-capacity — spec 057 req 6.1: the running agents and the Helm, UI and effective limits,
+    /// for all agents and per deployed job template.
+    /// </summary>
+    internal static async Task<IResult> GetAgentCapacity(Dispatch.AgentCapacityReader reader, CancellationToken ct) =>
+        TypedResults.Ok(await reader.ReadPageAsync(ct));
+
+    /// <summary>
+    /// PUT /api/ui/settings/agent-capacity — spec 057 req 1.7, 6.3, 7.5, 8.3: replaces the UI limits. Invalid input is
+    /// refused with one line per problem; keys of templates that are not deployed and 0 values are dropped; each
+    /// changed value is logged with the user.
+    /// </summary>
+    internal static async Task<IResult> SaveAgentCapacity(
+        [FromBody] AgentCapacityLimits? limits, AgentCapacityStore store, JobTemplateStore templates, IUserAccess access,
+        CancellationToken ct)
+    {
+        if (limits is null)
+            return TypedResults.BadRequest("The agent capacity limits are missing.");
+
+        var errors = AgentCapacityLimitsValidator.Validate(limits);
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join("\n", errors));
+
+        var deployed = templates.ToolsByKey();
+        var byTemplate = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (key, value) in limits.MaxConcurrentByJobTemplate)
+        {
+            var normalized = AgentCapacityLimitsValidator.NormalizeKey(key);
+            if (value > 0 && deployed.ContainsKey(normalized))
+                byTemplate[normalized] = value;
+        }
+        var saved = new AgentCapacityLimits { MaxConcurrentAgents = limits.MaxConcurrentAgents, MaxConcurrentByJobTemplate = byTemplate };
+
+        var old = await store.LoadAsync(ct);
+        await store.SaveAsync(saved, ct);
+        LogChanges(old, saved, access);
+        return TypedResults.NoContent();
+    }
+
+    private static void LogChanges(AgentCapacityLimits old, AgentCapacityLimits saved, IUserAccess access)
+    {
+        var user = CodingAgent.Infrastructure.Common.LogSanitizer.SanitizeForLog(access.Username ?? access.Subject ?? "unknown");
+        if (old.MaxConcurrentAgents != saved.MaxConcurrentAgents)
+            LogChange("all", old.MaxConcurrentAgents, saved.MaxConcurrentAgents, user);
+        foreach (var key in old.MaxConcurrentByJobTemplate.Keys.Union(saved.MaxConcurrentByJobTemplate.Keys, StringComparer.Ordinal))
+        {
+            var before = old.MaxConcurrentByJobTemplate.GetValueOrDefault(key);
+            var after = saved.MaxConcurrentByJobTemplate.GetValueOrDefault(key);
+            if (before != after)
+                LogChange(CodingAgent.Infrastructure.Common.LogSanitizer.SanitizeForLog(key), before, after, user);
+        }
+    }
+
+    private static void LogChange(string key, int before, int after, string user) =>
+        Serilog.Log.Information("Agent capacity limit {Key} changed from {Old} to {New} by {User}", key, before, after, user);
 
     /// <summary>GET /api/ui/settings/agent-profiles — the profiles, MCP secrets masked, and the job templates they can run on.</summary>
     internal static async Task<IResult> GetAgentProfiles(IAgentProfileStore store, JobTemplateStore templates, CancellationToken ct) =>
