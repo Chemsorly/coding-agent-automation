@@ -457,4 +457,31 @@ public class RepositoryPageTests : BunitContext
 
         Assert.DoesNotContain("Scan for refactorings", cut.Markup);
     }
+
+    [Fact]
+    public void HeaderActions_OnlyBrowseIssuesIsPrimary()
+    {
+        // Four filled primary buttons side by side read as one block (issue #4210): only Browse issues stays primary.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        var template = DefaultTemplate with { RepoProviderId = "rp-1", ReviewEnabled = true, DecompositionEnabled = true };
+        var configClient = SetupConfigClient(MakePage(template));
+        RegisterServices(configClient, SetupSettingsClient());
+
+        var cut = Render<RepositoryPage>(p => p.Add(x => x.TemplateId, TestTemplateId));
+
+        var buttons = cut.FindAll(".cockpit-page-actions button");
+        buttons.Should().HaveCount(4);
+
+        cut.FindAll(".cockpit-page-actions button.btn-save")
+            .Select(b => b.GetAttribute("data-testid") ?? b.TextContent.Trim())
+            .Should().Equal("browse-issues-btn");
+
+        var scanButton = buttons.Single(b => b.TextContent.Contains("Scan for refactorings"));
+        scanButton.ClassList.Should().Contain("btn-edit").And.NotContain("btn-save");
+        foreach (var testId in new[] { "browse-prs-btn", "browse-epics-btn" })
+        {
+            var button = cut.Find($"[data-testid='{testId}']");
+            button.ClassList.Should().Contain("btn-edit").And.NotContain("btn-save");
+        }
+    }
 }
