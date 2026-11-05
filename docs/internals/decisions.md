@@ -259,6 +259,12 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ## Pipeline behavior
 
+### Final quality gates run only when the cleanup changed the code
+<!-- 2026-10-31 -->
+**Rule:** After the pre-PR cleanup, the final quality gate pass runs only if `HEAD` or the working-tree fingerprint changed, or if either is unavailable. Otherwise the earlier passing report stands.
+**Why:** On widow, 74 of 85 final passes in 7 days ran on code the cleanup had not touched, for 20 minutes or more each. The 4 that failed were flakes, not defects.
+**Not:** a setting; comparing only the working tree (misses an agent that committed).
+
 ### The workspace baseline runs next to the analysis
 <!-- 2026-10-31 -->
 **Rule:** The agent health check blocks, the workspace baseline runs in the background during the analysis, and code generation waits for it. The analysis prompts forbid builds and test runs.
