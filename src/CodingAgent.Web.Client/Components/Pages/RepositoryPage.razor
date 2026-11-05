@@ -82,7 +82,7 @@ else
                 }
                 @if (Access.CanOperate(PageService.Project?.Id) && template.RepoProviderId is not null)
                 {
-                    <button class="btn-save" @onclick="() => OpenRefactoringModal(template.Id, template.Name)"
+                    <button class="btn-edit" @onclick="() => OpenRefactoringModal(template.Id, template.Name)"
                             title="Trigger refactoring scan for this repository">
                         <Icon Name="search" Size="14" /> Scan for refactorings
                     </button>
@@ -95,7 +95,7 @@ else
                 </button>
                 @if (template.ReviewEnabled)
                 {
-                    <button class="btn-save" @onclick="OpenPrDrawer"
+                    <button class="btn-edit" @onclick="OpenPrDrawer"
                             disabled="@(!PageService.CanDispatch())"
                             title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
                             data-testid="browse-prs-btn">
@@ -104,7 +104,7 @@ else
                 }
                 @if (template.DecompositionEnabled)
                 {
-                    <button class="btn-save" @onclick="OpenEpicDrawer"
+                    <button class="btn-edit" @onclick="OpenEpicDrawer"
                             disabled="@(!PageService.CanDispatch())"
                             title="@(!PageService.CanDispatch() ? "Operator access required to dispatch" : null)"
                             data-testid="browse-epics-btn">

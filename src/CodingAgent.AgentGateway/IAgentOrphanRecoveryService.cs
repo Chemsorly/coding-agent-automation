@@ -24,6 +24,7 @@ public interface IAgentOrphanRecoveryService
 /// <param name="FirstPickupRun">
 /// The tracked run the agent was just recorded on as its first agent — the moment a dispatched run is
 /// actually picked up — or <see langword="null"/>. Only reported once the agent's claim to the run was
-/// accepted.
+/// accepted. Also reported when the run record was missing and had to be restored, because a first pickup
+/// can then no longer be told from a reconnect.
 /// </param>
 public readonly record struct OrphanRecoveryResult(PipelineRun? FirstPickupRun);
