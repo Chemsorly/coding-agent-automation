@@ -18,7 +18,7 @@ ARG STACK_LABELS=dotnet,dotnet10,java,java21,python,python312
 # Stage 1: Build
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.402 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -45,12 +45,14 @@ RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj \
 
 # Stage 2: Toolchain shared by every agent tool. Full SDK, not the ASP.NET runtime: the quality
 # gates run dotnet build/test, mvn and pytest inside the agent pod.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.402 AS toolchain
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS toolchain
 
 # Stack toolchains (JDK 21 + Maven, Python 3.12), git, Node.js/npm for MCP servers, tini as
 # PID 1 for OpenCode, unzip for the Kiro CLI installer, and gpg/gpgv/jq to verify the Claude
-# Code release manifest
+# Code release manifest. apt-get upgrade picks up Ubuntu security fixes released after the base
+# image was built (the Trivy scan in ci.yml reports them).
 RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
