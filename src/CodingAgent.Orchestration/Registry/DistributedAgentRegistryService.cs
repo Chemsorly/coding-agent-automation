@@ -105,6 +105,18 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     internal bool InternalConnectionIndexContainsForTesting(string connectionId)
         => _connectionIndex.ContainsKey(connectionId);
 
+    /// <summary>
+    /// Test hook: returns <c>true</c> if the node-local <c>_localSnapshot</c> contains an entry
+    /// for the specified agent ID. Used to assert the order of the Redis removals and the snapshot
+    /// removal in <see cref="DeregisterAsync"/> without relying on thread scheduling.
+    /// NOT used in any production code path.
+    /// </summary>
+    [ExcludeFromCodeCoverage(Justification =
+        "Test-only observability hook for _localSnapshot state: exposes private dictionary " +
+        "state to tests that assert call order inside DeregisterAsync.")]
+    internal bool InternalLocalSnapshotContainsForTesting(string agentId)
+        => _localSnapshot.ContainsKey(agentId);
+
     public DistributedAgentRegistryService(IRedisStore store, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(store);
@@ -383,24 +395,49 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             _connectionIndex.TryRemove(fallbackConnectionId, out _);
         }
 
-        // Unconditionally clear the local snapshot so that a subsequent heartbeat does NOT
-        // recreate the entry for an intentionally deregistered agent (issue #2110 AC4).
-        // This must NOT be inside the `if (entry is not null)` block: if the Redis hash has
-        // already expired when Deregister is called, GetAgentRaw returns null and the snapshot
-        // would be left in place, causing the next heartbeat to ghost-resurrect the entry.
-        // TODO (WARNING): Fire-and-forget race — a Register call arriving between _localSnapshot.TryRemove
-        // and _store.DeleteAsync will repopulate _localSnapshot; the pending DeleteAsync will then remove
-        // the newly-registered hash while _localSnapshot still holds the entry, causing a resurrection
-        // on the next heartbeat. Pre-existing architectural characteristic of fire-and-forget; narrowed
-        // (but not eliminated) by _localSnapshot.TryRemove occurring before any await.
-        _localSnapshot.TryRemove(agentId.Value, out _);
-
         // Remove from the all-agents cache so sync read overloads don't return the deregistered agent.
         RemoveFromAllAgentsCache(agentId.Value);
 
-        await _store.DeleteAsync(key);
-        await _store.SetRemoveAsync(AgentsAllKey, agentId.Value);
-        await _store.SetRemoveAsync(AgentsIdleKey, agentId.Value);
+        // The Redis removals run BEFORE _localSnapshot is cleared (issue #4250). Clearing the snapshot
+        // first left a window in which a concurrent Register repopulated it and then had its freshly
+        // written hash deleted by the pending DeleteAsync below, so the next heartbeat found a snapshot
+        // without a hash and resurrected the deregistered agent. With this order, a snapshot written
+        // by a Register during the awaits is cleared again below, so it can never outlive a deleted hash.
+        // TODO [WARNING]: The snapshot now stays visible across the three Redis round-trips. A heartbeat
+        // that already passed AgentHub's ownership check can run UpdateHeartbeatAsync's ExistsAsync after
+        // DeleteAsync completes, get false, still find the snapshot and call WriteRegistrationAsync,
+        // re-creating the hash (600s TTL) and possibly leaving it out of agents:all/agents:idle depending
+        // on ordering against the SetRemoveAsync calls below. ChatJobDispatcher.CleanupSession calls
+        // Deregister on agents that are still heartbeating, so the overlap is plausible. Closing it needs
+        // a design change (e.g. a "deregistering" tombstone that UpdateHeartbeatAsync checks before
+        // re-registering), so it is not fixed here. Prescribed order and trade-off: issue #4250.
+        // TODO [WARNING]: A Register for the same agent id that lands during the awaits is handled
+        // inconsistently. (a) The TryRemove below wipes the snapshot the new registration just wrote: if
+        // its HashSetAsync landed before DeleteAsync, the hash is deleted too and the next heartbeat hits
+        // "unknown/deregistered — ignoring" with no snapshot to self-heal from, leaving a live reconnected
+        // agent invisible to dispatch until it re-registers; if it landed after, the hash survives without
+        // a snapshot. (b) While DeleteAsync is in flight, Register's Fix B1 fallback and AddOrUpdate can
+        // read the OLD session's snapshot and inherit its ActiveJobId/Busy status. Typical trigger: the old
+        // connection's OnDisconnectedAsync calls Deregister while the agent's new connection registers
+        // (AgentHub's guard is check-then-act and Deregister is keyed by agent id only). The "can never
+        // outlive a deleted hash" claim above holds for the snapshot only, not for the hash and sets.
+        try
+        {
+            await _store.DeleteAsync(key);
+            await _store.SetRemoveAsync(AgentsAllKey, agentId.Value);
+            await _store.SetRemoveAsync(AgentsIdleKey, agentId.Value);
+        }
+        finally
+        {
+            // Unconditionally clear the local snapshot so that a subsequent heartbeat does NOT
+            // recreate the entry for an intentionally deregistered agent (issue #2110 AC4).
+            // This must NOT be inside the `if (entry is not null)` block: if the Redis hash has
+            // already expired when Deregister is called, GetAgentRaw returns null and the snapshot
+            // would be left in place, causing the next heartbeat to ghost-resurrect the entry.
+            // It runs in a finally so a Redis fault in any removal above cannot leak the snapshot
+            // (the old order cleared it before the first await, so a fault could never leak it).
+            _localSnapshot.TryRemove(agentId.Value, out _);
+        }
 
         _logger.Information("Agent {AgentId} deregistered", agentId);
     }
