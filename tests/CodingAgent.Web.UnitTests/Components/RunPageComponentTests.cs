@@ -6,6 +6,7 @@ using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -1638,6 +1639,73 @@ public class RunPageComponentTests : BunitContext
         var tbody = cut.Find(".monitoring-table tbody");
         tbody.TextContent.Should().Contain("sonarqube 20");
         tbody.TextContent.Should().Contain("web 2");
+    }
+
+    // ── Context peak ──────────────────────────────────────────────────────────
+
+    private static PipelineRunSummary MakeContextSummary(Dictionary<string, PhaseUsage> phases) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = "4263",
+        IssueTitle = "Context peak test",
+        FinalStep = PipelineStep.Completed,
+        RunType = PipelineRunType.Implementation,
+        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+        CompletedAtOffset = DateTimeOffset.UtcNow,
+        PhaseBreakdown = phases,
+    };
+
+    [Fact]
+    public void PhaseBreakdownTable_WhenAPhaseReportsItsContext_ShouldShowAContextColumn()
+    {
+        var summary = MakeContextSummary(new Dictionary<string, PhaseUsage>
+        {
+            ["analysis"] = new PhaseUsage(1000, 0.05m) { PeakContextTokens = 142_000, ContextWindowTokens = 200_000 },
+            ["review"] = new PhaseUsage(500, 0.01m),
+        });
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+        cut.Find(".phase-breakdown-header").Click();
+
+        cut.Find(".monitoring-table thead").TextContent.Should().Contain("Peak context");
+        var rows = cut.FindAll(".monitoring-table tbody tr");
+        rows[0].TextContent.Should().Contain("142.0K / 200.0K (71%)");
+        rows[1].QuerySelector("[data-testid='phase-context']")!.TextContent.Trim().Should().Be("—");
+    }
+
+    [Fact]
+    public void PhaseBreakdownTable_WhenNoPhaseReportsContext_ShouldHaveNoContextColumn()
+    {
+        var summary = MakeContextSummary(new Dictionary<string, PhaseUsage>
+        {
+            ["analysis"] = new PhaseUsage(1000, 0.05m),
+        });
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+        cut.Find(".phase-breakdown-header").Click();
+
+        cut.Find(".monitoring-table thead").TextContent.Should().NotContain("Peak context");
+        cut.FindAll("[data-testid='run-context']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RunDetails_WhenPhasesReportContext_ShouldShowTheFullestPhase()
+    {
+        var summary = MakeContextSummary(new Dictionary<string, PhaseUsage>
+        {
+            ["analysis"] = new PhaseUsage(1000, 0.05m) { PeakContextTokens = 60_000, ContextWindowTokens = 200_000 },
+            ["code_review"] = new PhaseUsage(1000, 0.05m) { PeakContextTokens = 180_000, ContextWindowTokens = 200_000 },
+        });
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        var item = cut.Find("[data-testid='run-context']");
+        item.QuerySelector(".k")!.TextContent.Should().Be("Peak context");
+        item.QuerySelector(".v")!.TextContent.Should().Be("180.0K / 200.0K (90%)");
+        item.TextContent.Should().Contain(PhaseNameFormatter.HumanizePhase("code_review"));
     }
 
     // ── Issue #3856: cost figure with token breakdown ─────────────────────────

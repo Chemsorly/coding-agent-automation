@@ -230,6 +230,29 @@ public class AccumulateTokenUsageTests
     }
 
     [Fact]
+    public void AccumulateTokenUsage_ContextWithoutTokenUsage_StillRecordsThePeak()
+    {
+        // Kiro reports no tokens, only how full the context got.
+        var run = CreateRun();
+        AgentResult Session(long? peak) => new()
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            UsageDetails = new AgentUsageDetails { PeakContextTokens = peak, ContextWindowTokens = 200_000 }
+        };
+
+        run.AccumulateTokenUsage(Session(50_000), "codegen");
+        run.AccumulateTokenUsage(Session(90_000), "codegen");
+
+        var phase = run.Metrics.PhaseBreakdown["codegen"];
+        phase.PeakContextTokens.Should().Be(90_000);
+        phase.ContextWindowTokens.Should().Be(200_000);
+        phase.Tokens.Should().Be(0);
+        phase.Cost.Should().BeNull();
+        run.TotalTokens.Should().Be(0);
+    }
+
+    [Fact]
     public void AccumulateAgentSession_ThenTokenUsage_KeepsBothSides()
     {
         var run = CreateRun();

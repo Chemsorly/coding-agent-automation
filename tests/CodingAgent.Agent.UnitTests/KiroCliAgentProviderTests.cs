@@ -551,6 +551,71 @@ public class KiroCliAgentProviderTests
         }
     }
 
+    // --- Context peak from the session file ---
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExecuteAsync_WhenTheCallWritesASessionFile_ShouldReportItsContextPeakAndWindow(bool useResume)
+    {
+        var sessions = Path.Combine(Path.GetTempPath(), "kiro-sessions-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(sessions);
+        // Runs pass a relative workspace (./workspaces/<runId>); kiro-cli records its absolute working directory.
+        const string relativeWorkspace = "./workspaces/run-1";
+        try
+        {
+            _mockOrchestrator
+                .Setup(o => o.ExecutePromptAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                    It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+                .Callback(() => File.WriteAllText(Path.Combine(sessions, "s1.json"),
+                    KiroSessionContextTests.Session(Path.GetFullPath(relativeWorkspace), 200_000, "s1",
+                        KiroSessionContextTests.Turn(DateTimeOffset.UtcNow.AddSeconds(1), 40))))
+                .ReturnsAsync(0);
+            var provider = new KiroCliAgentProvider(
+                _mockOrchestrator.Object, _mockLogger.Object, null,
+                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object)
+            {
+                SessionsDirectory = sessions,
+                CreateEphemeralOrchestratorWith = _ => _mockOrchestrator.Object
+            };
+
+            var result = await provider.ExecuteAsync(
+                new AgentRequest { Prompt = "test", WorkspacePath = relativeWorkspace, UseResume = useResume },
+                CancellationToken.None);
+
+            result.UsageDetails.Should().NotBeNull();
+            result.UsageDetails!.PeakContextTokens.Should().Be(80_000);
+            result.UsageDetails.ContextWindowTokens.Should().Be(200_000);
+            result.Usage.Should().BeNull("kiro-cli reports no token counts");
+        }
+        finally
+        {
+            Directory.Delete(sessions, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithoutSessionFiles_ShouldReportNoUsageDetails()
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null,
+            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object)
+        {
+            SessionsDirectory = Path.Combine(Path.GetTempPath(), "missing-" + Guid.NewGuid().ToString("N"))
+        };
+
+        var result = await provider.ExecuteAsync(
+            new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true }, CancellationToken.None);
+
+        result.UsageDetails.Should().BeNull();
+    }
+
     // --- ToolCalls mapping tests ---
 
     [Fact]

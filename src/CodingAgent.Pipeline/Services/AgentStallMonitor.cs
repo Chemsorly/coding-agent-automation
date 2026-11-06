@@ -154,8 +154,11 @@ internal static class AgentStallMonitor
             return;
 
         sessionSpan.SetTag("agent.billing", details.BillingMode);
-        sessionSpan.SetTag("agent.turns", details.Turns);
-        sessionSpan.SetTag("agent.api_duration_s", details.ApiDurationSeconds);
+        // A provider that reports only some details (Kiro: context only) leaves these at 0; a 0 tag would skew averages.
+        if (details.Turns > 0)
+            sessionSpan.SetTag("agent.turns", details.Turns);
+        if (details.ApiDurationSeconds > 0)
+            sessionSpan.SetTag("agent.api_duration_s", details.ApiDurationSeconds);
         if (details.WebSearchRequests > 0)
             sessionSpan.SetTag("agent.web_search_requests", details.WebSearchRequests);
         if (details.PeakContextTokens is { } peakContext)

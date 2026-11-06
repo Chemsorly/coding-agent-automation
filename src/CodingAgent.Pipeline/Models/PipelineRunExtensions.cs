@@ -89,7 +89,18 @@ public static class PipelineRunExtensions
                 run.Metrics.RateLimits[observation.Window] = observation;
         }
 
-        if (result?.Usage is null) return;
+        if (result?.Usage is null)
+        {
+            // A provider without token counts (Kiro) can still report how full its context got.
+            if (phase is not null && result?.UsageDetails is { } contextOnly
+                && (contextOnly.PeakContextTokens is not null || contextOnly.ContextWindowTokens is not null))
+            {
+                run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
+                    AddContext(new PhaseUsage(0, null), contextOnly),
+                    (_, existing) => AddContext(existing, contextOnly));
+            }
+            return;
+        }
         run.TotalTokens += result.Usage.TotalTokens;
         run.CacheReadTokens += result.Usage.CacheReadTokens;
         run.CacheWriteTokens += result.Usage.CacheWriteTokens;
@@ -188,6 +199,14 @@ public static class PipelineRunExtensions
             BillingMode = phase.BillingMode ?? details?.BillingMode,
             PeakContextTokens = MaxOrNull(phase.PeakContextTokens, details?.PeakContextTokens),
             ContextWindowTokens = MaxOrNull(phase.ContextWindowTokens, details?.ContextWindowTokens)
+        };
+
+    /// <summary>Returns <paramref name="phase"/> with one invocation's context peak and window merged in (maximum, not sum).</summary>
+    private static PhaseUsage AddContext(PhaseUsage phase, AgentUsageDetails details) =>
+        phase with
+        {
+            PeakContextTokens = MaxOrNull(phase.PeakContextTokens, details.PeakContextTokens),
+            ContextWindowTokens = MaxOrNull(phase.ContextWindowTokens, details.ContextWindowTokens)
         };
 
     /// <summary>The larger of two optional values; null only when both are null.</summary>
