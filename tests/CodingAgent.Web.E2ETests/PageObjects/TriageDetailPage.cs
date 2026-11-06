@@ -115,6 +115,53 @@ public sealed class TriageDetailPage
     /// <summary>The create-issues button (<c>data-testid=triage-create</c>).</summary>
     public ILocator Create => _page.Locator("[data-testid=triage-create]");
 
+    // ── Report / drafts / draft editor ───────────────────────────────────
+
+    /// <summary>The "What the agent investigated" card (<c>data-testid=triage-investigated</c>).</summary>
+    public ILocator Investigated => _page.Locator("[data-testid=triage-investigated]");
+
+    /// <summary>The evidence card (<c>data-testid=triage-evidence</c>).</summary>
+    public ILocator Evidence => _page.Locator("[data-testid=triage-evidence]");
+
+    /// <summary>
+    /// The agent's questions as the read-only report renders them (<c>data-testid=triage-report-questions</c>).
+    /// Not the answer form (<see cref="Questions"/>), which only a user who can act sees.
+    /// </summary>
+    public ILocator ReportQuestions => _page.Locator("[data-testid=triage-report-questions]");
+
+    /// <summary>Every proposed-issue row (<c>data-testid=triage-draft</c>).</summary>
+    public ILocator Draft => _page.Locator("[data-testid=triage-draft]");
+
+    /// <summary>The selection checkbox of every draft row (<c>data-testid=triage-draft-select</c>).</summary>
+    public ILocator DraftSelect => _page.Locator("[data-testid=triage-draft-select]");
+
+    /// <summary>The "Edit draft" button of every draft row (<c>data-testid=triage-draft-edit</c>).</summary>
+    public ILocator DraftEdit => _page.Locator("[data-testid=triage-draft-edit]");
+
+    /// <summary>The "Created #N" link of every draft that already has an issue (<c>data-testid=triage-created-link</c>).</summary>
+    public ILocator CreatedLink => _page.Locator("[data-testid=triage-created-link]");
+
+    /// <summary>The "queue for implementation" checkbox in the actions bar (<c>data-testid=triage-queue</c>).</summary>
+    public ILocator Queue => _page.Locator("[data-testid=triage-queue]");
+
+    /// <summary>The draft editor drawer body (<c>data-testid=triage-draft-editor</c>); absent while the drawer is closed.</summary>
+    public ILocator DraftEditor => _page.Locator("[data-testid=triage-draft-editor]");
+
+    /// <summary>The title input of the draft editor (<c>data-testid=triage-draft-title</c>). Binds on change.</summary>
+    public ILocator DraftTitle => _page.Locator("[data-testid=triage-draft-title]");
+
+    /// <summary>The body textarea of the draft editor (<c>data-testid=triage-draft-body</c>). Binds on change.</summary>
+    public ILocator DraftBody => _page.Locator("[data-testid=triage-draft-body]");
+
+    /// <summary>The "Reset to the agent's version" button of the draft editor (<c>data-testid=triage-draft-reset</c>).</summary>
+    public ILocator DraftReset => _page.Locator("[data-testid=triage-draft-reset]");
+
+    /// <summary>The "Save draft" button of the draft editor (<c>data-testid=triage-draft-save</c>).</summary>
+    public ILocator DraftSave => _page.Locator("[data-testid=triage-draft-save]");
+
+    /// <summary>The "Cancel" button in the footer of the draft editor drawer.</summary>
+    public ILocator DraftCancel => _page.Locator(".triage-drawer-foot button:has-text('Cancel')");
+
     // ── Verdict / re-run panel / answer inputs ───────────────────────────
 
     /// <summary>
