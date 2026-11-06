@@ -569,6 +569,12 @@
 /* Work in-flight / queue: the issue column takes the remaining width and truncates (max-width: 0 stops its
    text from counting towards the column width), so Cancel/Remove stay in view. */
 .cockpit .work-table td:first-child { width: 100%; max-width: 0; }
+.cockpit .runs-title-cell { overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+/* Without spare width the max-width: 0 columns collapse and lose the row's identity: they keep a real width and the table scrolls. */
+@media (max-width: 1024px) {
+    .cockpit .work-table td:first-child,
+    .cockpit .runs-title-cell { width: auto; max-width: none; min-width: 240px; white-space: normal; }
+}
 
 /* A destructive action is quiet until hovered: a full column of red read as an error state. */
 .cockpit .work-table .btn-cancel-small { border-color: var(--ctl-border); color: var(--text-muted); }
@@ -855,6 +861,12 @@
     /* Page headers must wrap when title + actions exceed the narrow content area */
     .cockpit-page-header { flex-wrap: wrap; }
     .cockpit-page-actions { max-width: 100%; justify-content: flex-start; }
+    .cockpit-page-header > :last-child { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+
+    /* Top bar: the count and the project switcher stay, the words around them go (they stay in the DOM) */
+    .cockpit-attention { white-space: nowrap; }
+    .cockpit-attention-label, .cockpit-user-name { display: none; }
+    .cockpit-project-switcher { flex: 1 1 auto; }
 
     /* Collapse multi-column grids to single column */
     .cockpit-kpi-3col { grid-template-columns: 1fr !important; }

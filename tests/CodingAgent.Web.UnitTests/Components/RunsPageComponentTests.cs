@@ -1045,4 +1045,23 @@ public class RunsPageComponentTests : BunitContext
         issueNumberSpan.TextContent.Should().Contain("#42",
             "the span found by the margin-right style must be the issue number span");
     }
+
+    // ── Issue #4205 — the Run cell keeps its identity on narrow screens ───────
+
+    // 37. The Run cell is styled by a class, so a media query can override it (an inline max-width: 0 cannot be)
+    [Fact]
+    public void RunsTable_TitleCell_UsesRunsTitleCellClass_WithoutInlineStyle()
+    {
+        _mockRunHistory
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(OnePage(MakeSummary("r1", issueIdentifier: "42", issueTitle: "My issue")));
+
+        var cut = Render<Runs>();
+
+        var titleCell = cut.Find(".monitoring-table tbody tr td.runs-title-cell");
+        titleCell.TextContent.Should().Contain("#42").And.Contain("My issue",
+            "the runs-title-cell is the Run column that carries the issue number and title");
+        titleCell.HasAttribute("style").Should().BeFalse(
+            "an inline max-width: 0 collapses the column on narrow screens and cannot be overridden by CSS (issue #4205)");
+    }
 }

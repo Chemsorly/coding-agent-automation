@@ -220,6 +220,20 @@ public class CockpitLayoutAccessTests : BunitContext
         form.InnerHtml.Should().Contain("__RequestVerificationToken");
     }
 
+    [Fact]
+    public void UserMenu_NameSpan_CarriesTheHideableClass_AndKeepsItsText()
+    {
+        // #4205: the phone layout hides the name with CSS only; the text must stay in the DOM.
+        Services.AddTestAccess(TestAccess.Global(AccessRole.ReadOnly), TestAccess.User("alice"));
+        _js.Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]?>())).ReturnsAsync((string?)null);
+        var cut = Render<CockpitLayout>();
+
+        var name = cut.Find("[data-testid=user-menu-name]");
+        name.ClassList.Should().Contain("cockpit-user-name");
+        name.TextContent.Should().Be("alice");
+        cut.FindAll(".cockpit-user-name").Should().ContainSingle();
+    }
+
     /// <summary>Stands in for a page: records the project scope when it first initializes.</summary>
     private sealed class ProjectProbe : ComponentBase
     {

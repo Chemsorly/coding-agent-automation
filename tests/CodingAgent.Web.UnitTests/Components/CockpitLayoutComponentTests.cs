@@ -100,6 +100,48 @@ public class CockpitLayoutComponentTests : BunitContext
         Assert.NotNull(cut.Find(".cockpit-theme-toggle"));
     }
 
+    // ── Narrow-screen top bar (issue #4205) ──────────────────────────────────
+    // bUnit does not evaluate CSS: these tests pin the markup hooks that the ≤640px rules in cockpit.css
+    // hide, and that the words stay in the DOM (tests and the E2E page object read the badge text).
+
+    [Fact]
+    public async Task AttentionBadge_WithCount_PutsOnlyTheWordsInTheHideableLabel()
+    {
+        var cut = Render<CockpitLayout>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid=topbar-attention-badge]"));
+
+        await cut.InvokeAsync(() => _state.SetAttentionCount(3));
+
+        cut.WaitForAssertion(() =>
+        {
+            var badge = cut.Find("[data-testid=topbar-attention-badge]");
+            var label = badge.QuerySelector(".cockpit-attention-label");
+            label.Should().NotBeNull("the words 'need attention' sit in a span that the phone layout hides");
+            label!.TextContent.Should().Be("need attention", "the count stays outside the label so it remains visible");
+            badge.TextContent.Trim().Should().Be("3 need attention",
+                "the text must still read '<count> need attention': AttentionPage.GetTopBarBadgeCountAsync parses it");
+            badge.ClassList.Should().NotContain("is-disabled");
+            badge.GetAttribute("aria-label").Should().Be("3 need attention",
+                "the phone layout hides the words, so the link keeps an accessible name that repeats them");
+        });
+    }
+
+    [Fact]
+    public void AttentionBadge_WithZeroCount_KeepsTheAttentionWordVisible()
+    {
+        var cut = Render<CockpitLayout>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var badge = cut.Find("[data-testid=topbar-attention-badge]");
+            badge.TextContent.Trim().Should().Be("Attention");
+            badge.QuerySelector(".cockpit-attention-label").Should().BeNull(
+                "the zero-count wording is not hidden on a phone: without a count it is all the badge says");
+            badge.ClassList.Should().Contain("is-disabled");
+            badge.GetAttribute("aria-label").Should().Be("Attention");
+        });
+    }
+
     // ── localStorage project persistence tests (issue #2491) ─────────────────
 
     /// <summary>
