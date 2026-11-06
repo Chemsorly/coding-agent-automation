@@ -99,10 +99,33 @@ public class AgentSessionSpanTests : IDisposable
         span.GetTagItem("gen_ai.usage.input_tokens").Should().Be(150L);
         span.GetTagItem("gen_ai.usage.output_tokens").Should().Be(75L);
         span.GetTagItem("gen_ai.usage.total_tokens").Should().Be(225L);
-        // TODO: This test uses a non-null Usage to exercise the token tag path. Add a companion test
-        // for the realistic Kiro case (Usage = null) that asserts gen_ai.usage.* tags are ABSENT on the
-        // span — Kiro never reports tokens, so those tags should never appear. Without that test, a
-        // regression that accidentally populates Kiro token tags would go undetected.
+    }
+
+    [Fact]
+    public async Task ExecuteWithMonitoringAsync_KiroWithOnlyContext_TagsTheContextAndNoZeroUsage()
+    {
+        // The realistic Kiro result: no token counts, only the context read from its session file.
+        var uniquePhase = $"codegen_{_testRunTag}";
+        var agentResult = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            UsageDetails = new AgentUsageDetails { PeakContextTokens = 80_000, ContextWindowTokens = 200_000 }
+        };
+        var provider = CreateMockProvider(AgentProviderType.KiroCli, model: "auto", result: agentResult);
+
+        await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            new AgentMonitorContext(provider.Object, CreateRun(), CreateConfig(), "Codegen agent", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None,
+            phase: uniquePhase);
+
+        var span = SpanFor(uniquePhase);
+        span.GetTagItem("agent.context.peak_tokens").Should().Be(80_000L);
+        span.GetTagItem("agent.context.window_tokens").Should().Be(200_000L);
+        span.GetTagItem("gen_ai.usage.input_tokens").Should().BeNull();
+        span.GetTagItem("gen_ai.usage.total_tokens").Should().BeNull();
+        span.GetTagItem("agent.turns").Should().BeNull("Kiro does not report turns; a 0 would skew averages");
+        span.GetTagItem("agent.api_duration_s").Should().BeNull();
+        span.GetTagItem("agent.billing").Should().BeNull();
     }
 
     [Fact]

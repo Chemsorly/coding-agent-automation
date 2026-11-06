@@ -19,6 +19,9 @@ internal static class KiroSessionContext
     /// <summary>Largest context of the call in tokens, and the model's context window.</summary>
     internal sealed record Reading(long PeakTokens, long WindowTokens);
 
+    /// <summary>A session of the workspace with turns that ended during the call, and its reading if it has one.</summary>
+    internal sealed record Candidate(string? SessionId, Reading? Reading);
+
     /// <summary>The directory kiro-cli writes its session files to.</summary>
     internal static string SessionsDirectory(string? kiroHome, string userHome) =>
         Path.Combine(string.IsNullOrWhiteSpace(kiroHome) ? Path.Combine(userHome, ".kiro") : kiroHome, "sessions", "cli");
@@ -29,15 +32,16 @@ internal static class KiroSessionContext
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
 
     /// <summary>
-    /// The fullest context among <paramref name="workspacePath"/>'s sessions written since <paramref name="since"/>,
-    /// counting only turns that ended since then. Parallel calls in one workspace can see each other's sessions;
-    /// each then reports the fullest of them, which leaves a phase's peak (a maximum) unchanged.
+    /// The reading of the call's session: the one with <paramref name="sessionId"/> when that is among the
+    /// workspace's sessions with turns since <paramref name="since"/>; otherwise the only such session. Null when
+    /// several calls ran in the workspace at once and the call's session is not known, so a parallel call never
+    /// reports another's context.
     /// </summary>
-    internal static Reading? Read(string sessionsDirectory, string workspacePath, DateTimeOffset since)
+    internal static Reading? Read(string sessionsDirectory, string workspacePath, DateTimeOffset since, string? sessionId)
     {
         if (!Directory.Exists(sessionsDirectory)) return null;
 
-        Reading? fullest = null;
+        var candidates = new List<Candidate>();
         // A second of slack for file systems with coarse modification times.
         var modifiedAfter = since.UtcDateTime.AddSeconds(-1);
         foreach (var file in Directory.EnumerateFiles(sessionsDirectory, "*.json"))
@@ -53,20 +57,21 @@ internal static class KiroSessionContext
                 continue;
             }
 
-            if (Parse(json, workspacePath, since) is { } reading
-                && (fullest is null || Share(reading) > Share(fullest)))
-            {
-                fullest = reading;
-            }
+            if (Inspect(json, workspacePath, since) is { } candidate)
+                candidates.Add(candidate);
         }
-        return fullest;
+
+        if (sessionId is not null && candidates.Find(c => c.SessionId == sessionId) is { } known)
+            return known.Reading;
+        return candidates.Count == 1 ? candidates[0].Reading : null;
     }
 
     /// <summary>
-    /// The largest context of the turns in one session file that ended since <paramref name="since"/>, or null when
-    /// the session belongs to another workspace or the file lacks the share or the window.
+    /// One session file: a candidate when it belongs to <paramref name="workspacePath"/> and has turns that ended
+    /// since <paramref name="since"/>, with the largest context of those turns when the file holds the share and the
+    /// window. Null for another workspace, no turns in the call, or a file of another shape.
     /// </summary>
-    internal static Reading? Parse(string json, string workspacePath, DateTimeOffset since)
+    internal static Candidate? Inspect(string json, string workspacePath, DateTimeOffset since)
     {
         try
         {
@@ -75,15 +80,19 @@ internal static class KiroSessionContext
             if (root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("cwd", out var cwd) || cwd.ValueKind != JsonValueKind.String
                 || !SamePath(cwd.GetString()!, workspacePath)
-                || !root.TryGetProperty("session_state", out var state) || state.ValueKind != JsonValueKind.Object)
+                || !root.TryGetProperty("session_state", out var state) || state.ValueKind != JsonValueKind.Object
+                || TurnsSince(state, since) is not { Count: > 0 } turns)
             {
                 return null;
             }
 
-            if (WindowTokens(state) is not { } window) return null;
-            if (PeakShare(state, since) is not { } share) return null;
-
-            return new Reading((long)Math.Round(share / 100.0 * window, MidpointRounding.AwayFromZero), window);
+            var sessionId = root.TryGetProperty("session_id", out var id) && id.ValueKind == JsonValueKind.String
+                ? id.GetString()
+                : null;
+            var reading = WindowTokens(state) is { } window && PeakShare(turns) is { } share
+                ? new Reading((long)Math.Round(share / 100.0 * window, MidpointRounding.AwayFromZero), window)
+                : null;
+            return new Candidate(sessionId, reading);
         }
         catch (JsonException)
         {
@@ -99,22 +108,29 @@ internal static class KiroSessionContext
             ? tokens
             : null;
 
-    private static double? PeakShare(JsonElement state, DateTimeOffset since)
+    private static List<JsonElement>? TurnsSince(JsonElement state, DateTimeOffset since)
     {
         if (!state.TryGetProperty("conversation_metadata", out var meta) || meta.ValueKind != JsonValueKind.Object
             || !meta.TryGetProperty("user_turn_metadatas", out var turns) || turns.ValueKind != JsonValueKind.Array)
         {
             return null;
         }
+        return turns.EnumerateArray()
+            .Where(turn => turn.ValueKind == JsonValueKind.Object && EndedSince(turn, since))
+            .ToList();
+    }
 
+    private static readonly string[] ShareFields = ["context_usage_percentage", "final_context_usage_percentage"];
+
+    private static double? PeakShare(List<JsonElement> turns)
+    {
         double? peak = null;
-        foreach (var turn in turns.EnumerateArray())
+        foreach (var turn in turns)
         {
-            if (turn.ValueKind != JsonValueKind.Object || !EndedSince(turn, since)) continue;
-            foreach (var name in (ReadOnlySpan<string>)["context_usage_percentage", "final_context_usage_percentage"])
+            foreach (var name in ShareFields)
             {
                 if (turn.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
-                    && value.GetDouble() is var share and > 0)
+                    && value.TryGetDouble(out var share) && double.IsFinite(share) && share > 0)
                 {
                     peak = Math.Max(peak ?? 0, share);
                 }
@@ -130,6 +146,4 @@ internal static class KiroSessionContext
 
     private static bool SamePath(string a, string b) =>
         string.Equals(a.TrimEnd('/', '\\'), b.TrimEnd('/', '\\'), StringComparison.Ordinal);
-
-    private static double Share(Reading reading) => (double)reading.PeakTokens / reading.WindowTokens;
 }

@@ -553,38 +553,36 @@ public class KiroCliAgentProviderTests
 
     // --- Context peak from the session file ---
 
-    [Fact]
-    public async Task ExecuteAsync_WhenTheCallWritesASessionFile_ShouldReportItsContextPeakAndWindow()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExecuteAsync_WhenTheCallWritesASessionFile_ShouldReportItsContextPeakAndWindow(bool useResume)
     {
         var sessions = Path.Combine(Path.GetTempPath(), "kiro-sessions-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(sessions);
+        // Runs pass a relative workspace (./workspaces/<runId>); kiro-cli records its absolute working directory.
+        const string relativeWorkspace = "./workspaces/run-1";
         try
         {
             _mockOrchestrator
                 .Setup(o => o.ExecutePromptAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                     It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-                .Callback(() => File.WriteAllText(Path.Combine(sessions, "s1.json"), $$"""
-                    {
-                      "cwd": "/ws",
-                      "session_state": {
-                        "conversation_metadata": { "user_turn_metadatas": [
-                          { "end_timestamp": "{{DateTimeOffset.UtcNow.AddSeconds(1):O}}", "context_usage_percentage": 40 }
-                        ] },
-                        "rts_model_state": { "model_info": { "model_id": "auto", "context_window_tokens": 200000 } }
-                      }
-                    }
-                    """))
+                .Callback(() => File.WriteAllText(Path.Combine(sessions, "s1.json"),
+                    KiroSessionContextTests.Session(Path.GetFullPath(relativeWorkspace), 200_000, "s1",
+                        KiroSessionContextTests.Turn(DateTimeOffset.UtcNow.AddSeconds(1), 40))))
                 .ReturnsAsync(0);
             var provider = new KiroCliAgentProvider(
                 _mockOrchestrator.Object, _mockLogger.Object, null,
                 "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object)
             {
-                SessionsDirectory = sessions
+                SessionsDirectory = sessions,
+                CreateEphemeralOrchestratorWith = _ => _mockOrchestrator.Object
             };
 
             var result = await provider.ExecuteAsync(
-                new AgentRequest { Prompt = "test", WorkspacePath = "/ws", UseResume = true }, CancellationToken.None);
+                new AgentRequest { Prompt = "test", WorkspacePath = relativeWorkspace, UseResume = useResume },
+                CancellationToken.None);
 
             result.UsageDetails.Should().NotBeNull();
             result.UsageDetails!.PeakContextTokens.Should().Be(80_000);

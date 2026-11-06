@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Agent.KiroCli;
 
@@ -23,24 +25,27 @@ public sealed class KiroSessionContextTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
-    private static string Turn(DateTimeOffset end, double? percent, double? finalPercent = null) =>
+    private static string Number(double? value) =>
+        value is null ? "null" : value.Value.ToString(CultureInfo.InvariantCulture);
+
+    internal static string Turn(DateTimeOffset end, double? percent, double? finalPercent = null) =>
         $$"""
         {
           "end_reason": "UserTurnEnd",
           "end_timestamp": "{{end.UtcDateTime:yyyy-MM-ddTHH:mm:ss.fffffffZ}}",
           "input_token_count": 0,
           "output_token_count": 0,
-          "context_usage_percentage": {{(percent is null ? "null" : percent.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))}},
-          "final_context_usage_percentage": {{(finalPercent is null ? "null" : finalPercent.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))}},
+          "context_usage_percentage": {{Number(percent)}},
+          "final_context_usage_percentage": {{Number(finalPercent)}},
           "metering_usage": []
         }
         """;
 
-    private static string Session(string cwd, long? window, params string[] turns) =>
+    internal static string Session(string cwd, long? window, string id, params string[] turns) =>
         $$"""
         {
-          "session_id": "aaaaaaaa-0000-0000-0000-000000000001",
-          "cwd": "{{cwd}}",
+          "session_id": "{{id}}",
+          "cwd": {{JsonSerializer.Serialize(cwd)}},
           "session_state": {
             "version": "v1",
             "conversation_metadata": { "user_turn_metadatas": [ {{string.Join(",", turns)}} ] },
@@ -52,6 +57,8 @@ public sealed class KiroSessionContextTests : IDisposable
         }
         """;
 
+    private static string AnySession(string cwd, long? window, params string[] turns) => Session(cwd, window, "s1", turns);
+
     private string WriteSession(string name, string json)
     {
         var path = Path.Combine(_dir, name + ".json");
@@ -60,63 +67,77 @@ public sealed class KiroSessionContextTests : IDisposable
         return path;
     }
 
-    // ── Parse ───────────────────────────────────────────────────────────────
+    private static KiroSessionContext.Reading? ReadingOf(string json) =>
+        KiroSessionContext.Inspect(json, Workspace, CallStart)?.Reading;
+
+    // ── Inspect: one file ───────────────────────────────────────────────────
 
     [Fact]
-    public void Parse_WhenATurnOfTheCallReportsItsShare_ShouldTurnItIntoTokensOfTheWindow()
+    public void Inspect_WhenATurnOfTheCallReportsItsShare_ShouldTurnItIntoTokensOfTheWindow()
     {
-        var json = Session(Workspace, 200_000, Turn(CallStart.AddMinutes(1), 21.5));
+        var json = Session(Workspace, 200_000, "abc", Turn(CallStart.AddMinutes(1), 21.5));
 
-        var context = KiroSessionContext.Parse(json, Workspace, CallStart);
+        var candidate = KiroSessionContext.Inspect(json, Workspace, CallStart);
 
-        context.Should().Be(new KiroSessionContext.Reading(43_000, 200_000));
+        candidate.Should().Be(new KiroSessionContext.Candidate("abc", new KiroSessionContext.Reading(43_000, 200_000)));
     }
 
     [Fact]
-    public void Parse_ShouldIgnoreTurnsThatEndedBeforeTheCall()
+    public void Inspect_ShouldIgnoreTurnsThatEndedBeforeTheCall()
     {
         // A resumed session keeps the turns of earlier phases.
-        var json = Session(Workspace, 200_000,
+        var json = AnySession(Workspace, 200_000,
             Turn(CallStart.AddMinutes(-30), 80),
             Turn(CallStart.AddMinutes(2), 10));
 
-        KiroSessionContext.Parse(json, Workspace, CallStart)!.PeakTokens.Should().Be(20_000);
+        ReadingOf(json)!.PeakTokens.Should().Be(20_000);
     }
 
     [Fact]
-    public void Parse_ShouldTakeTheLargestShareOfTheCallsTurns_IncludingTheFinalShare()
+    public void Inspect_ShouldTakeTheLargestShareOfTheCallsTurns_IncludingTheFinalShare()
     {
-        var json = Session(Workspace, 1_000_000,
+        var json = AnySession(Workspace, 1_000_000,
             Turn(CallStart.AddMinutes(1), 5, finalPercent: 12),
             Turn(CallStart.AddMinutes(2), 9));
 
-        KiroSessionContext.Parse(json, Workspace, CallStart)!.PeakTokens.Should().Be(120_000);
+        ReadingOf(json)!.PeakTokens.Should().Be(120_000);
     }
 
     [Fact]
-    public void Parse_WhenTheSessionBelongsToAnotherWorkspace_ShouldBeNull()
+    public void Inspect_WhenNoTurnEndedDuringTheCall_ShouldNotBeACandidate()
     {
-        var json = Session("/home/ubuntu/work/other", 200_000, Turn(CallStart.AddMinutes(1), 21.5));
+        var json = AnySession(Workspace, 200_000, Turn(CallStart.AddMinutes(-5), 40));
 
-        KiroSessionContext.Parse(json, Workspace, CallStart).Should().BeNull();
+        KiroSessionContext.Inspect(json, Workspace, CallStart).Should().BeNull();
     }
 
     [Fact]
-    public void Parse_WhenTheWorkspaceDiffersOnlyByATrailingSlash_ShouldStillMatch()
+    public void Inspect_WhenTheSessionBelongsToAnotherWorkspace_ShouldNotBeACandidate()
     {
-        var json = Session(Workspace + "/", 200_000, Turn(CallStart.AddMinutes(1), 50));
+        var json = AnySession("/home/ubuntu/work/other", 200_000, Turn(CallStart.AddMinutes(1), 21.5));
 
-        KiroSessionContext.Parse(json, Workspace, CallStart)!.PeakTokens.Should().Be(100_000);
+        KiroSessionContext.Inspect(json, Workspace, CallStart).Should().BeNull();
+    }
+
+    [Fact]
+    public void Inspect_WhenTheWorkspaceDiffersOnlyByATrailingSlash_ShouldStillMatch()
+    {
+        var json = AnySession(Workspace + "/", 200_000, Turn(CallStart.AddMinutes(1), 50));
+
+        ReadingOf(json)!.PeakTokens.Should().Be(100_000);
     }
 
     [Theory]
-    [InlineData(null, 21.5)]   // no model info
+    [InlineData(null, 21.5)]     // no model info
     [InlineData(200_000L, null)] // the server sent no share
-    public void Parse_WhenTheShareOrTheWindowIsMissing_ShouldBeNull(long? window, double? percent)
+    public void Inspect_WhenTheShareOrTheWindowIsMissing_ShouldBeACandidateWithoutAReading(long? window, double? percent)
     {
-        var json = Session(Workspace, window, Turn(CallStart.AddMinutes(1), percent));
+        var json = AnySession(Workspace, window, Turn(CallStart.AddMinutes(1), percent));
 
-        KiroSessionContext.Parse(json, Workspace, CallStart).Should().BeNull();
+        var candidate = KiroSessionContext.Inspect(json, Workspace, CallStart);
+
+        candidate.Should().NotBeNull();
+        candidate!.Reading.Should().BeNull();
     }
 
     [Theory]
@@ -124,31 +145,78 @@ public sealed class KiroSessionContextTests : IDisposable
     [InlineData("not json")]
     [InlineData("""{ "cwd": "/home/ubuntu/work/repo" }""")]
     [InlineData("""{ "cwd": "/home/ubuntu/work/repo", "session_state": { "conversation_metadata": { "user_turn_metadatas": "x" } } }""")]
-    public void Parse_WhenTheFileHasAnotherShape_ShouldBeNullNotThrow(string json)
+    public void Inspect_WhenTheFileHasAnotherShape_ShouldBeNullNotThrow(string json)
     {
-        KiroSessionContext.Parse(json, Workspace, CallStart).Should().BeNull();
+        KiroSessionContext.Inspect(json, Workspace, CallStart).Should().BeNull();
     }
 
-    // ── Read (directory) ────────────────────────────────────────────────────
+    [Fact]
+    public void Inspect_WhenAShareIsNotAFiniteNumber_ShouldIgnoreItNotThrow()
+    {
+        var json = AnySession(Workspace, 200_000, Turn(CallStart.AddMinutes(1), 10))
+            .Replace("\"context_usage_percentage\": 10", "\"context_usage_percentage\": 1e400", StringComparison.Ordinal);
+
+        var act = () => KiroSessionContext.Inspect(json, Workspace, CallStart);
+
+        act.Should().NotThrow();
+        act()!.Reading.Should().BeNull();
+    }
+
+    // ── Read: the call's session among the directory's files ────────────────
 
     [Fact]
-    public void Read_ShouldTakeTheFullestSessionOfTheWorkspaceWrittenDuringTheCall()
+    public void Read_WithOneSessionOfTheWorkspaceWrittenDuringTheCall_ShouldReportIt()
     {
-        WriteSession("a", Session(Workspace, 200_000, Turn(CallStart.AddMinutes(1), 10)));
-        WriteSession("b", Session(Workspace, 200_000, Turn(CallStart.AddMinutes(2), 30)));
-        WriteSession("other", Session("/elsewhere", 200_000, Turn(CallStart.AddMinutes(2), 90)));
-        var old = WriteSession("old", Session(Workspace, 200_000, Turn(CallStart.AddMinutes(2), 95)));
+        WriteSession("a", Session(Workspace, 200_000, "a", Turn(CallStart.AddMinutes(1), 30)));
+        WriteSession("other", Session("/elsewhere", 200_000, "other", Turn(CallStart.AddMinutes(2), 90)));
+        var old = WriteSession("old", Session(Workspace, 200_000, "old", Turn(CallStart.AddMinutes(2), 95)));
         File.SetLastWriteTimeUtc(old, CallStart.UtcDateTime.AddHours(-1));
 
-        var context = KiroSessionContext.Read(_dir, Workspace, CallStart);
+        KiroSessionContext.Read(_dir, Workspace, CallStart, sessionId: null)
+            .Should().Be(new KiroSessionContext.Reading(60_000, 200_000));
+    }
 
-        context.Should().Be(new KiroSessionContext.Reading(60_000, 200_000));
+    [Fact]
+    public void Read_WithParallelSessionsAndNoKnownId_ShouldReportNothingRatherThanAnotherCallsContext()
+    {
+        // Parallel reviewers each record under their own phase; one must not get another's peak.
+        WriteSession("a", Session(Workspace, 200_000, "a", Turn(CallStart.AddMinutes(1), 10)));
+        WriteSession("b", Session(Workspace, 200_000, "b", Turn(CallStart.AddMinutes(2), 90)));
+
+        KiroSessionContext.Read(_dir, Workspace, CallStart, sessionId: null).Should().BeNull();
+    }
+
+    [Fact]
+    public void Read_WithParallelSessionsAndAKnownId_ShouldReportThatSession()
+    {
+        WriteSession("a", Session(Workspace, 200_000, "a", Turn(CallStart.AddMinutes(1), 10)));
+        WriteSession("b", Session(Workspace, 200_000, "b", Turn(CallStart.AddMinutes(2), 90)));
+
+        KiroSessionContext.Read(_dir, Workspace, CallStart, sessionId: "a")!.PeakTokens.Should().Be(20_000);
+    }
+
+    [Fact]
+    public void Read_WhenTheOnlyCandidateHasNoShare_ShouldNotFallBackToAnotherSession()
+    {
+        WriteSession("a", Session(Workspace, 200_000, "a", Turn(CallStart.AddMinutes(1), null)));
+        WriteSession("b", Session(Workspace, 200_000, "b", Turn(CallStart.AddMinutes(2), 90)));
+
+        KiroSessionContext.Read(_dir, Workspace, CallStart, sessionId: "a").Should().BeNull();
+    }
+
+    [Fact]
+    public void Read_WhenTheKnownIdIsNotAmongTheFiles_ShouldFallBackToTheOnlyCandidate()
+    {
+        WriteSession("a", Session(Workspace, 200_000, "a", Turn(CallStart.AddMinutes(1), 30)));
+
+        KiroSessionContext.Read(_dir, Workspace, CallStart, sessionId: "listed-id-in-another-format")!
+            .PeakTokens.Should().Be(60_000);
     }
 
     [Fact]
     public void Read_WhenTheDirectoryIsMissing_ShouldBeNull()
     {
-        KiroSessionContext.Read(Path.Combine(_dir, "missing"), Workspace, CallStart).Should().BeNull();
+        KiroSessionContext.Read(Path.Combine(_dir, "missing"), Workspace, CallStart, sessionId: null).Should().BeNull();
     }
 
     [Fact]

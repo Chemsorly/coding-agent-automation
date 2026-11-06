@@ -93,13 +93,16 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     /// <summary>
     /// The context peak and window of the call that started at <paramref name="since"/>, from kiro-cli's session
-    /// files; null when they do not say (no file, another format, or the server sent no share).
+    /// files; null when they do not say (no file, another format, the server sent no share, or parallel calls
+    /// whose sessions cannot be told apart). Never throws: the call has already finished.
     /// </summary>
-    private AgentUsageDetails? ReadContextUsage(string workspacePath, DateTimeOffset since)
+    /// <param name="workspacePath">The workspace as an absolute path: kiro-cli records its absolute working directory.</param>
+    /// <param name="sessionId">The session the call resumed, when known.</param>
+    private AgentUsageDetails? ReadContextUsage(string workspacePath, string? sessionId, DateTimeOffset since)
     {
         try
         {
-            if (KiroSessionContext.Read(SessionsDirectory, workspacePath, since) is not { } reading)
+            if (KiroSessionContext.Read(SessionsDirectory, workspacePath, since, sessionId) is not { } reading)
                 return null;
             _logger.Debug("kiro-cli context peak {PeakContextTokens} of {ContextWindowTokens} tokens",
                 reading.PeakTokens, reading.WindowTokens);
@@ -109,7 +112,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 ContextWindowTokens = reading.WindowTokens
             };
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Debug(ex, "Could not read kiro-cli session files in {SessionsDirectory}", SessionsDirectory);
             return null;
@@ -270,7 +273,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                                 ? AgentErrorCategory.ProviderMisconfigured
                                 : AgentErrorCategory.None,
                             ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls),
-                            UsageDetails = ReadContextUsage(request.WorkspacePath, callStart)
+                            UsageDetails = ReadContextUsage(normalizedPath, resumeSessionId, callStart)
                         };
                     }
                     finally
@@ -281,7 +284,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 () =>
                 {
                     _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly(), ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls), UsageDetails = ReadContextUsage(request.WorkspacePath, callStart) });
+                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly(), ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls), UsageDetails = ReadContextUsage(normalizedPath, resumeSessionId, callStart) });
                 });
 
             // A main-conversation run without an ID started a new session, which becomes the main one
