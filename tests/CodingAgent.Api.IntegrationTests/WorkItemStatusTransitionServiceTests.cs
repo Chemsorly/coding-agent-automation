@@ -172,6 +172,46 @@ public sealed class WorkItemStatusTransitionServiceTests
         lifecycleManager.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(WorkItemStatus.Cancelled)]
+    [InlineData(WorkItemStatus.Succeeded)]
+    public async Task TransitionAsync_Failed_ItemBecomesTerminalAfterThePreRead_ReturnsAlreadyAtTarget_NoLifecycleCall(
+        WorkItemStatus winnerStatus)
+    {
+        // Arrange: the item is still Running when the pre-read guard looks at it, so the guard lets the
+        // request through. Another terminal report (e.g. the agent's hub completion racing the JobController's
+        // timeout report) lands before the transition opens its own context, and wins. The first terminal
+        // report wins and later ones are no-ops, so the loser must see AlreadyAtTarget (204), not Rejected (400).
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var racingFactory = new RaceInjectingDbContextFactory(opts, beforeCall: 2, async () =>
+        {
+            await using var ctx = new TestPipelineDbContext(opts);
+            var row = await ctx.WorkItems.SingleAsync(w => w.Id == item.Id);
+            row.Status = winnerStatus;
+            row.CompletedAt = DateTimeOffset.UtcNow;
+            await ctx.SaveChangesAsync();
+        });
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = new WorkItemStatusTransitionService(
+            new WorkItemTransitionService(racingFactory, NullLogger<WorkItemTransitionService>.Instance),
+            lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, CreateDbFactory(opts));
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Failed }, CancellationToken.None);
+
+        // Assert
+        racingFactory.RaceInjected.Should().BeTrue("the test must have flipped the item between the pre-read and the transition");
+        outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget,
+            "an item that became terminal between the pre-read and the transition is the same no-op as one that was terminal at the pre-read");
+        lifecycleManager.VerifyNoOtherCalls();
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        (await verifyCtx.WorkItems.AsNoTracking().SingleAsync(w => w.Id == item.Id)).Status.Should().Be(winnerStatus,
+            "the losing report must not overwrite the winner's terminal status");
+    }
+
     // ── AlreadyAtTarget via TransitionDetailedAsync (Issue #3975) ────────────────
 
     [Fact]
@@ -1539,6 +1579,29 @@ public sealed class WorkItemStatusTransitionServiceTests
         public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(_opts);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
             => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// A factory that runs <c>race</c> once, just before it hands out the <c>beforeCall</c>-th context. Lets a test
+    /// make another writer land at an exact point between two reads of the same service, without threads.
+    /// </summary>
+    private sealed class RaceInjectingDbContextFactory(
+        DbContextOptions<PipelineDbContext> opts, int beforeCall, Func<Task> race) : IDbContextFactory<PipelineDbContext>
+    {
+        private int _calls;
+        public bool RaceInjected { get; private set; }
+
+        public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(opts);
+
+        public async Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        {
+            if (++_calls == beforeCall)
+            {
+                await race();
+                RaceInjected = true;
+            }
+            return CreateDbContext();
+        }
     }
 
     /// <summary>
