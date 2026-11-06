@@ -169,6 +169,14 @@
                         }
                     </div>
                 }
+                @if (ContextUsageDisplay.Fullest(run.PhaseBreakdown) is { } _fullest)
+                {
+                    <div class="cockpit-detail-item" data-testid="run-context" title="Largest context one model call sent, in the phase that came closest to the model's context window">
+                        <div class="k">Peak context</div>
+                        <div class="v mono">@ContextUsageDisplay.PhaseText(_fullest.Usage)</div>
+                        <div class="monitoring-muted" style="font-size: 12px;">@PhaseNameFormatter.HumanizePhase(_fullest.Phase)</div>
+                    </div>
+                }
                 @if (run.RetryCount > 0)
                 {
                     <div class="cockpit-detail-item"><div class="k">Retries</div><div class="v">@run.RetryCount</div></div>
@@ -413,13 +421,18 @@
                         <ChildContent>
                             <div class="monitoring-table-wrap">
                                 <table class="monitoring-table" style="margin-top: 6px;">
-                                    <thead><tr><th>Phase</th><th>Cost</th><th>Tools</th></tr></thead>
+                                    @{ var _showContext = ContextUsageDisplay.AnyReported(phases); }
+                                    <thead><tr><th>Phase</th><th>Cost</th>@if (_showContext) {<th title="Largest context one model call sent in the phase, and its share of the model's context window">Peak context</th>}<th>Tools</th></tr></thead>
                                     <tbody>
                                         @foreach (var phase in phases.OrderByDescending(p => p.Value.Cost ?? 0m).ThenByDescending(p => p.Value.Tokens))
                                         {
                                             <tr>
                                                 <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
                                                 <td><UsageCost Usage="RunUsage.From(phase.Value)" /></td>
+                                                @if (_showContext)
+                                                {
+                                                    <td class="mono" data-testid="phase-context">@ContextUsageDisplay.PhaseText(phase.Value)</td>
+                                                }
                                                 <td>@(ToolUsageDisplay.PhaseSummary(phase.Value) is { Length: > 0 } t ? t : "—")</td>
                                             </tr>
                                         }

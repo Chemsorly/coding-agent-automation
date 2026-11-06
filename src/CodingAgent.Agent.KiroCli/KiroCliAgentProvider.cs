@@ -88,6 +88,34 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>Creates the orchestrator for an isolated call; tests replace it.</summary>
     internal Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> CreateEphemeralOrchestratorWith { get; init; }
 
+    /// <summary>Where kiro-cli writes its session files, read for the context peak; tests replace it.</summary>
+    internal string SessionsDirectory { get; init; } = KiroSessionContext.SessionsDirectory();
+
+    /// <summary>
+    /// The context peak and window of the call that started at <paramref name="since"/>, from kiro-cli's session
+    /// files; null when they do not say (no file, another format, or the server sent no share).
+    /// </summary>
+    private AgentUsageDetails? ReadContextUsage(string workspacePath, DateTimeOffset since)
+    {
+        try
+        {
+            if (KiroSessionContext.Read(SessionsDirectory, workspacePath, since) is not { } reading)
+                return null;
+            _logger.Debug("kiro-cli context peak {PeakContextTokens} of {ContextWindowTokens} tokens",
+                reading.PeakTokens, reading.WindowTokens);
+            return new AgentUsageDetails
+            {
+                PeakContextTokens = reading.PeakTokens,
+                ContextWindowTokens = reading.WindowTokens
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            _logger.Debug(ex, "Could not read kiro-cli session files in {SessionsDirectory}", SessionsDirectory);
+            return null;
+        }
+    }
+
     /// <summary>
     /// The run settings for this provider's orchestrators: the CLI path, and the model, effort and agent
     /// that every run passes as flags. A blank or <c>auto</c> model, <c>Auto</c> effort and a blank or
@@ -200,6 +228,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
         var normalizedPath = Path.GetFullPath(request.WorkspacePath);
         var (resumeSessionId, onMainConversation) = ResolveSession(request, normalizedPath);
         var outputLines = new List<string>();
+        var callStart = DateTimeOffset.UtcNow;
 
         // For isolated (non-resume) calls, create an ephemeral orchestrator with its own
         // process slot. This enables concurrent execution — each parallel review agent gets
@@ -240,7 +269,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
                             ErrorCategory = orchestrator.LastRunRejectedConfiguration
                                 ? AgentErrorCategory.ProviderMisconfigured
                                 : AgentErrorCategory.None,
-                            ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls)
+                            ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls),
+                            UsageDetails = ReadContextUsage(request.WorkspacePath, callStart)
                         };
                     }
                     finally
@@ -251,7 +281,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 () =>
                 {
                     _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
-                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly(), ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls) });
+                    return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly(), ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls), UsageDetails = ReadContextUsage(request.WorkspacePath, callStart) });
                 });
 
             // A main-conversation run without an ID started a new session, which becomes the main one
