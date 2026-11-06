@@ -68,7 +68,7 @@ public sealed class KiroSessionContextTests : IDisposable
     }
 
     private static KiroSessionContext.Reading? ReadingOf(string json) =>
-        KiroSessionContext.Inspect(json, Workspace, CallStart)?.Reading;
+        KiroSessionContext.Inspect(json, Workspace, CallStart)?.Context;
 
     // ── Inspect: one file ───────────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ public sealed class KiroSessionContextTests : IDisposable
         var candidate = KiroSessionContext.Inspect(json, Workspace, CallStart);
 
         candidate.Should().NotBeNull();
-        candidate!.Reading.Should().BeNull();
+        candidate!.Context.Should().BeNull();
     }
 
     [Theory]
@@ -159,7 +159,7 @@ public sealed class KiroSessionContextTests : IDisposable
         var act = () => KiroSessionContext.Inspect(json, Workspace, CallStart);
 
         act.Should().NotThrow();
-        act()!.Reading.Should().BeNull();
+        act()!.Context.Should().BeNull();
     }
 
     // ── Read: the call's session among the directory's files ────────────────

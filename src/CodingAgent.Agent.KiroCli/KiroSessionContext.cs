@@ -19,8 +19,8 @@ internal static class KiroSessionContext
     /// <summary>Largest context of the call in tokens, and the model's context window.</summary>
     internal sealed record Reading(long PeakTokens, long WindowTokens);
 
-    /// <summary>A session of the workspace with turns that ended during the call, and its reading if it has one.</summary>
-    internal sealed record Candidate(string? SessionId, Reading? Reading);
+    /// <summary>A session of the workspace with turns that ended during the call, and its reading (<see cref="Context"/>) if it has one.</summary>
+    internal sealed record Candidate(string? SessionId, Reading? Context);
 
     /// <summary>The directory kiro-cli writes its session files to.</summary>
     internal static string SessionsDirectory(string? kiroHome, string userHome) =>
@@ -62,8 +62,8 @@ internal static class KiroSessionContext
         }
 
         if (sessionId is not null && candidates.Find(c => c.SessionId == sessionId) is { } known)
-            return known.Reading;
-        return candidates.Count == 1 ? candidates[0].Reading : null;
+            return known.Context;
+        return candidates.Count == 1 ? candidates[0].Context : null;
     }
 
     /// <summary>
