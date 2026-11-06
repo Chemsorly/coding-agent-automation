@@ -11,6 +11,7 @@ using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace CodingAgent.Web.UnitTests.Components;
@@ -853,6 +854,80 @@ public class RunPageComponentTests : BunitContext
         Assert.NotNull(callout);
         Assert.Contains("Cancel failed", callout.TextContent);
         Assert.Contains("503 Service Unavailable", callout.TextContent);
+    }
+
+    /// <summary>
+    /// A failed cancel leaves a warning in the log that names the run, so the browser console shows
+    /// which run the failure belongs to.
+    /// </summary>
+    [Fact]
+    public async Task CancelRun_CancelFails_LogsAWarningNamingTheRun()
+    {
+        var runId = Guid.NewGuid().ToString();
+        _workItemActions
+            .Setup(w => w.CancelAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("503 Service Unavailable"));
+        RegisterServices(MakeActiveSummary(runId));
+        var logger = new CapturingLogger<RunPage>();
+        Services.AddSingleton<ILogger<RunPage>>(logger);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, runId));
+        await cut.InvokeAsync(() => cut.Find("[data-testid='cancel-pipeline-btn']").Click());
+        await cut.InvokeAsync(() => cut.Find("[data-testid='confirm-cancel-pipeline-btn']").Click());
+
+        logger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning && e.Message.Contains("failed to cancel run"))
+            .Which.RunId.Should().Be(runId);
+    }
+
+    /// <summary>
+    /// A failed re-dispatch leaves a warning in the log that names the run.
+    /// </summary>
+    [Fact]
+    public async Task ReDispatch_ApiRefuses_LogsAWarningNamingTheRun()
+    {
+        var summary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "2600",
+            IssueTitle = "Re-dispatch log test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+        };
+        var runs = new Mock<CodingAgent.Web.Ui.IUiRunClient>();
+        runs.Setup(r => r.RedispatchAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Issue #2600 already has queued or running work."));
+        RegisterServices(summary, runs);
+        var logger = new CapturingLogger<RunPage>();
+        Services.AddSingleton<ILogger<RunPage>>(logger);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+        await cut.InvokeAsync(() => cut.Find("[data-testid='redispatch-btn']").Click());
+        await cut.InvokeAsync(() => cut.Find("[data-testid='redispatch-confirm-btn']").Click());
+
+        logger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning && e.Message.Contains("failed to re-dispatch run"))
+            .Which.RunId.Should().Be(summary.RunId);
+    }
+
+    /// <summary>A logger that keeps each entry's level, rendered message and RunId value.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message, string? RunId)> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var runId = state is IEnumerable<KeyValuePair<string, object?>> pairs
+                ? pairs.FirstOrDefault(p => p.Key == "RunId").Value?.ToString()
+                : null;
+            Entries.Enqueue((logLevel, formatter(state, exception), runId));
+        }
     }
 
     // ── Terminal-like final steps ─────────────────────────────────────────

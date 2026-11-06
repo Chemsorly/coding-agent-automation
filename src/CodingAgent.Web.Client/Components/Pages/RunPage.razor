@@ -586,6 +586,12 @@
 @code {
     [Parameter] public string RunId { get; set; } = "";
 
+    // RunId as a Guid, for log messages. The route value is whatever the URL holds; logging the
+    // parsed Guid keeps line breaks and other control characters out of the log (CodeQL
+    // cs/log-forging). The page loads nothing for a RunId that is not a Guid, so every log call
+    // below gets the real id.
+    private Guid RunGuid => Guid.TryParse(RunId, out var id) ? id : Guid.Empty;
+
     private readonly CancellationTokenSource _cts = new();
     private PipelineRunSummary? _run;
     private UiRunAgent? _agent;
@@ -709,7 +715,7 @@
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
+                    Logger.LogWarning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunGuid);
                 }
                 _diagnosis = RunDiagnoser.Diagnose(_run, recentFailed);
             }
@@ -814,7 +820,7 @@
         catch (Exception ex)
         {
             // Live trace is best-effort; the post-hoc summary above still stands.
-            Logger.LogWarning(ex, "RunPage: failed to subscribe to live run {RunId}", RunId);
+            Logger.LogWarning(ex, "RunPage: failed to subscribe to live run {RunId}", RunGuid);
         }
     }
 
@@ -919,13 +925,13 @@
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunId);
+                    Logger.LogWarning(ex, "RunPage: failed to load recent failed runs for the diagnosis of {RunId}", RunGuid);
                 }
                 _diagnosis = RunDiagnoser.Diagnose(_run, recentFailed);
             }
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
-        catch (Exception ex) { Logger.LogWarning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
+        catch (Exception ex) { Logger.LogWarning(ex, "RunPage: failed to reload completed run {RunId}", RunGuid); }
     }
 
     // Accumulates incremental chat entries pushed by the hub during an active run.
@@ -966,7 +972,7 @@
         catch (Exception ex)
         {
             _cancelError = ex.Message;
-            Logger.LogWarning(ex, "RunPage: failed to cancel run {RunId}", RunId);
+            Logger.LogWarning(ex, "RunPage: failed to cancel run {RunId}", RunGuid);
         }
         finally
         {
@@ -1021,7 +1027,7 @@
         catch (Exception ex)
         {
             _redispatchError = ex.Message;
-            Logger.LogWarning(ex, "RunPage: failed to re-dispatch run {RunId}", RunId);
+            Logger.LogWarning(ex, "RunPage: failed to re-dispatch run {RunId}", RunGuid);
         }
         finally
         {
