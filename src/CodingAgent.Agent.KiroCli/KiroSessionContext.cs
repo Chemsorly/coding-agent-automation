@@ -89,7 +89,7 @@ internal static class KiroSessionContext
             var sessionId = root.TryGetProperty("session_id", out var id) && id.ValueKind == JsonValueKind.String
                 ? id.GetString()
                 : null;
-            var reading = WindowTokens(state) is { } window && PeakShare(turns) is { } share
+            var reading = ContextWindowOf(state) is { } window && PeakShare(turns) is { } share
                 ? new Reading((long)Math.Round(share / 100.0 * window, MidpointRounding.AwayFromZero), window)
                 : null;
             return new Candidate(sessionId, reading);
@@ -100,7 +100,7 @@ internal static class KiroSessionContext
         }
     }
 
-    private static long? WindowTokens(JsonElement state) =>
+    private static long? ContextWindowOf(JsonElement state) =>
         state.TryGetProperty("rts_model_state", out var model) && model.ValueKind == JsonValueKind.Object
         && model.TryGetProperty("model_info", out var info) && info.ValueKind == JsonValueKind.Object
         && info.TryGetProperty("context_window_tokens", out var window) && window.ValueKind == JsonValueKind.Number
