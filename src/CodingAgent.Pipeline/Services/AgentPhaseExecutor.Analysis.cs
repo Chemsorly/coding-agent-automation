@@ -294,8 +294,9 @@ public partial class AgentPhaseExecutor
 
     /// <summary>
     /// Ends a run whose model provider is unavailable (rate limit, overload, rejected credentials, a CLI
-    /// that refused its configuration) as an infrastructure failure at once: retrying against the same
-    /// outage cannot help. The run ends with <c>agent:error</c> like other infrastructure failures, not
+    /// that refused its configuration) as an infrastructure failure. A rate limit or overload reaches this
+    /// point only after the agent call's own retries (AgentStallMonitor.MaxProviderRetries) are used up.
+    /// The run ends with <c>agent:error</c> like other infrastructure failures, not
     /// <c>agent:needs-refinement</c>, which would ask the author to rewrite an issue that is not at fault.
     /// </summary>
     private async Task FailForUnavailableProviderAsync(AgentPhaseContext context, ProviderUnavailableException ex)

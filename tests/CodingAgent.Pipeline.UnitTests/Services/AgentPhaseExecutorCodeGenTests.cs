@@ -42,7 +42,8 @@ public class AgentPhaseExecutorCodeGenTests
         {
             AgentTimeout = TimeSpan.FromMinutes(10),
             StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
+            StallWarningInterval = TimeSpan.FromHours(1),
+            TransientRetryDelay = TimeSpan.Zero
         };
 
         _executor = new AgentPhaseExecutor(_mockLogger.Object);
@@ -102,13 +103,17 @@ public class AgentPhaseExecutorCodeGenTests
     [Fact]
     public async Task CodeGen_TransientProviderFailure_ContinuesToQualityGates()
     {
-        // The quality gate loop waits out a rate limit without spending its retries.
+        // The agent call retries a rate limit itself; when those retries are used up, the quality gate
+        // loop waits it out without spending its own retries.
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit });
 
         var result = await _executor.ExecuteCodeGenerationAsync(BuildContext(), CancellationToken.None);
 
         result.Should().BeTrue();
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(AgentStallMonitor.MaxProviderRetries + 1));
     }
 
     [Fact]
