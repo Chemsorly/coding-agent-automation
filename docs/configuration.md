@@ -14,7 +14,7 @@ Each setting has one home:
 | Project | Overrides of the settings marked **Project** in the reference, plus secrets, steering and MCP servers | Settings → Projects → (project) |
 | Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's stack labels, agent routing rows, secrets, setup steps, steering and commit blacklist | Pipelines page |
 | Repository provider | The connection: type, owner and repository, base branch, credentials | Settings → Providers → Repository |
-| Agents | Agent profiles (job template, tool settings, MCP servers), the global routing table (profile, model and effort per task type) and the UI agent limits (see [Agent Capacity](#agent-capacity)) | Settings → Agents (the limits under Capacity) |
+| Agents | Agent profiles (job template, tool settings, MCP servers), the global routing table (profile, model and effort per task type), the UI agent limits (see [Agent Capacity](#agent-capacity)) and the pause of each agent credential (see [Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses)) | Settings → Agents (the limits under Capacity, the pauses under Credentials; global operators also pause and resume from Fleet) |
 | Quality catalogs | Quality gate configs and reviewer configs, each chosen by the repository's stack labels | Settings → Quality |
 | Deployment | Images, concurrency ceilings per job template and in total, chat pod lifetimes, age-based retention | Helm `values.yaml` and environment variables |
 
@@ -172,7 +172,7 @@ The stored configuration has five fields that are not settings, and no page offe
 - `closedLoopAutoStart` records whether the loop should run; Start and Stop set it, and the Scheduler leader starts or stops the loop to match.
 - `loopResumeRequestedAt` records when a user last asked the loop to resume after its circuit breaker opened; Resume sets it.
 - `pipelineInjectedPaths` is filled in at runtime from the agent provider.
-- `transientRetryDelay` is the wait after a provider rate limit or overload (30 seconds); tests set it to zero.
+- `transientRetryDelay` is the wait after a short provider rate limit or an overload (30 seconds); tests set it to zero. A used-up quota is not retried: the credential is paused and the work queued again (see below).
 - `workspaceBaseDirectory` is where agents create run workspaces: `./workspaces`, which is `/app/workspaces` in the agent images.
 
 ### Removed Settings
@@ -198,6 +198,7 @@ How the limits work:
 - Chats count toward every limit, but only Helm limits refuse a chat. A UI limit only holds pipeline work.
 - A change applies at the next dispatch, without a restart. Lowering a limit does not stop running agents; new ones wait until fewer run.
 - The page lists only the deployed job templates, and saving writes their values only. An imported limit for a template that is not deployed is kept and ignored.
+- Work that waits for a limit shows it on the Work page (Waiting column: "4 of 4 agents are running for dotnet,kiro …"). A template whose credential is paused is marked on the page; its work waits for the credential whatever the limit (see [Credentials and Pauses](agent-routing.md#credentials-and-pauses)).
 
 ## Chat Pod Lifecycle
 
@@ -230,9 +231,11 @@ The retry loop classifies agent failures into categories to distinguish provider
 |----------------|-------------|------------------------|----------|
 | `ProviderRateLimit` | 429 | **No** | `RetryCount` is not incremented. The loop waits `TransientRetryDelay` (default: 30 seconds), then retries from the same position without spending a fix attempt. After 10 consecutive transient results the loop stops and the run ends with a draft PR; a normal fix attempt resets the count. |
 | `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
-| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends with a draft PR. |
-| `ProviderBillingLimit` | billing_error (Claude Code) | **No** | Loop aborts immediately — top up the API credit or switch the agent profile's Auth Mode. The run ends with a draft PR. |
+| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends **without** a draft PR: it is queued again and its credential paused until resumed (spec 056). |
+| `ProviderQuotaExhausted` | Claude Code `billing_error` or a usage limit, Kiro's monthly limit, OpenCode's quota error | **No** | Loop aborts immediately. The run ends without a draft PR, its issue goes back to its queue label, the same work is queued again as a new work item, and the credential is paused until the reset time the provider names (or until resumed). Top up the credit, wait for the reset, or route the work to another profile. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
+
+The tools recognize a used-up quota or a rejected login from their own error output: Claude Code from its `result` event (`billing_error`, usage limit, `authentication_failed`), OpenCode from its error event, Kiro only from an `error:` line of a call that failed, so tool output that quotes such a message pauses nothing. A Claude Code profile whose credential is missing from the agent Secret records a rejected login before any agent call. The provider's line, masked, is shown as the pause detail.
 
 > **Operator note:** A sustained 429/503 storm from the upstream LLM provider ends the retry loop after 10 consecutive transient results, and the run finishes with a draft PR. If the job's `agentTimeout` fires first, the timeout ends the run. If you see draft PRs with no code changes, check agent logs for repeated `ProviderRateLimit` or `ProviderOverload` classifications and investigate your LLM provider's rate limits or quota.
 
@@ -460,7 +463,7 @@ Agent profiles on a job template with `providerType: claude` run the Claude Code
 |---------|-------|-------------|
 | Model | Route (Settings → Agents → Routing, or the repository's rows) | Full model ID to pin a version (e.g. `claude-opus-5-5`, `claude-opus-4-8`), an alias for the latest of a family (`opus`, `sonnet`, `haiku`, `fable`), or `auto` for the CLI default. The CLI cannot list models, so the routing table suggests a fixed list and accepts any other ID. |
 | Effort | Route | `low`, `medium`, `high`, `xhigh`, `max` or `auto` — passed as `--effort` |
-| Auth Mode | Agent profile | `auto` (API key if configured, else subscription token), `apiKey`, or `subscription`. Exactly one credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order. |
+| Auth Mode | Agent profile | `subscription` (the default; the subscription token, credential "Claude subscription") or `apiKey` (the API key, credential "Claude API key"). Exactly that credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order; a missing one pauses its credential on the first run. Spec 056 removed `auto`; profiles that had it run on `subscription`. |
 
 Credentials live in the agent Secret (`claude-api-key`, `claude-oauth-token`; see [Deployment](deployment.md)). The subscription token comes from `claude setup-token`, is valid for one year, needs a Pro, Max, Team or Enterprise plan, and expires without warning — renew it before then. The CLI runs with `--dangerously-skip-permissions`, the same trust level as Kiro's `--trust-all-tools`; the agent pod is the sandbox. MCP servers from the agent profile are written to `~/.claude/pipeline-mcp.json` and passed with `--mcp-config`; a repository's `.mcp.json` servers load as well.
 

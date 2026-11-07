@@ -28,7 +28,7 @@ The rules a plausible change could break. Details are in the linked entries.
 - Every new pipeline enum gets a JSON roundtrip test. ([Enum test](#enum-roundtrip-test-is-a-mandatory-invariant-for-new-pipeline-enums))
 - The confidence gate fails closed. ([Confidence gate](#confidence-gate-is-intentionally-fail-closed))
 - Critical-path failures are fatal, enrichment failures are not; new steps are non-fatal unless a later step needs their output. ([Partial failure](#partial-failure-contract-enrichment-steps-are-non-fatal-critical-path-steps-are-fatal))
-- Exhausted retries end in a draft PR labeled `agent:error`. ([Draft PR](#draft-pr-is-the-retry-exhausted-fallback))
+- Exhausted retries end in a draft PR labeled `agent:error`. ([Draft PR](#draft-pr-is-the-retry-exhausted-fallback)) A run that hits its credential's limit is queued again instead, and its credential paused. ([Paused credential](#a-paused-credential-holds-work-the-routing-table-is-the-fallback))
 - `agent:done` means every step finished and post-PR CI passed. ([agent:done](#agentdone-ordering-full-pipeline--post-pr-ci-before-label-is-set))
 - A label swap adds the new label before it removes the old one. ([Label swap](#label-swap-add-first-ordering-for-crash-safety))
 - Reviewers run in isolated sessions. ([Isolated review](#code-review-always-uses-isolated-sessions-no-shared-mode))
@@ -250,10 +250,10 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** several teams with separate infrastructure share the system.
 
 ### Agents are routed per task type; stack labels pick quality gates and reviewers
-<!-- 2026-10-21 -->
-**Rule:** An agent profile is how an agent runs: its Helm job template (image, capacity and tool), the tool's settings and its MCP servers. A routing table picks a profile, a model and an effort per task type: a required default row, an optional row per task type, and optional rows per repository with no repository default. The API resolves the route once, when it creates a work item (the repository row, else the global task row, else the default), pins it on the work item and checks it again when an agent claims it. A row that does not resolve refuses the work with the reason; nothing falls back to another profile. A repository's stack labels pick only its quality gates and reviewers.
+<!-- 2026-10-21; dispatch-time routing 2026-11-07 (spec 056) -->
+**Rule:** An agent profile is how an agent runs: its Helm job template (image, capacity and tool), the tool's settings and its MCP servers. A routing table picks a profile, a model and an effort per task type: a required default row, an optional row per task type, and optional rows per repository with no repository default. Creating work never routes it. The API resolves the route each time it dispatches a queued item (the repository row, else the global task row, else the default), pins it on the work item and checks it again when an agent claims it. A route that cannot run now makes the item wait with the reason; nothing falls back to another profile. A repository's stack labels pick only its quality gates and reviewers.
 **Why:** Task types need different models, and one subscription serves several models, which a model per profile could only express by duplicating profiles. The label chain picked agents through fallbacks (the repository's labels, the global default labels, the first matching profile), and work whose labels resolved to nothing went to an agent nobody had chosen. Folding the provider config into the profile, rejected before, is now right: with the model and effort on the route, the provider config held only tool settings, and as a separate object it was one more thing to keep consistent with the job template's tool.
-**Accepting:** a repository whose work should run on another job template than the default route's needs its own rows; profiles on one job template share its capacity; the Routing page is last write wins, like every settings page; queued and running work keeps the route it was created with.
+**Accepting:** a repository whose work should run on another job template than the default route's needs its own rows; profiles on one job template share its capacity; the Routing page is last write wins, like every settings page; a routing change applies to queued work at its next dispatch, and running work keeps its route. Spec 053 resolved the route at creation and refused work without one (D7); spec 056 moved it to dispatch so that a routing change or a paused credential reaches queued work and nothing is refused for routing.
 **Not:** task types on profiles; label-based agent routing; a model or an effort on the profile; a fallback to any profile that no route names.
 **Revisit when:** a team needs to choose its own agents: project-level routing (#3577).
 
@@ -295,7 +295,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Draft PR is the retry-exhausted fallback
 <!-- 2026-07-04 -->
-**Rule:** When quality gates still fail after all retries, the pipeline opens a draft PR with the work, labeled `agent:error`, instead of only failing the run.
+**Rule:** When quality gates still fail after all retries, the pipeline opens a draft PR with the work, labeled `agent:error`, instead of only failing the run. A run that stops because its credential's quota is used up or its login was rejected opens no draft PR: it is queued again ([A paused credential holds work](#a-paused-credential-holds-work-the-routing-table-is-the-fallback)).
 **Why:** People see what the agent tried and can finish it without digging through logs.
 **Not:** failing without a PR; a summary comment only.
 **Revisit when:** abandoned draft PRs become a measurable housekeeping burden.
@@ -663,6 +663,21 @@ A setting's limits are standard `[Range]` attributes, the one source for the API
 **Not:** a UI value that overrides Helm upward; the limits in `PipelineConfiguration`; counting work-item rows in the database; slots reserved per job template.
 **Revisit when:** limits per project are needed.
 
+### A paused credential holds work; the routing table is the fallback
+<!-- 2026-11-07 -->
+**Rule:** Every agent profile uses one credential (Kiro, Claude subscription, Claude API key, OpenCode). When an agent reports that the credential's quota is used up or its login was rejected, the API pauses the credential (until the reset time the provider names, or until resumed), ends the run without a draft PR, puts the issue back to its queue label and queues the same work as a new work item, with its retry count, priority and enqueue time. Work routed to a paused credential waits, with the pause as its reason; chats on it are refused; work on other credentials runs. Global operators pause and resume by hand. An automatic pause never replaces an operator's pause. There is no automatic fallback to another tool: an operator changes the routing. Waits that only an operator ends sort behind other queued work, and a credential or template stop applies only to the dispatch loop's current cycle, so held work never blocks other work. Like [Agent concurrency](#agent-concurrency-helm-sets-the-ceiling-the-ui-the-operators-limit-chats-count), the pause is global: one Kiro subscription serves every project.
+**Why:** On 2026-11-02 the Kiro monthly limit ran out during a batch: 35 runs failed one after another as agent errors, each with a draft PR and `agent:error`, and the queue kept dispatching into the wall. A profile's enabled flag could not express "this subscription is empty until the 1st" and was removed with the Claude `auto` mode, which silently switched between subscription and API key.
+**Accepting:** an operator has to notice the banner and decide on a fallback; a requeued run starts from scratch; a pause is per credential, not per model.
+**Not:** an automatic fallback route; retrying a used-up quota; a profile enabled flag; a draft PR for a run that hit a provider limit; moving the ended item back to Pending (a requeue is a new work item, so the old run keeps its history row).
+**Revisit when:** several credentials of one tool exist (per-credential routing), or fallbacks are wanted often enough to automate.
+
+### Prefer the Claude subscription over the API key
+<!-- 2026-11-07 -->
+**Rule:** A Claude Code profile names its credential: `subscription` (the default) or `apiKey`. The CLI gets exactly that one. A profile whose credential is missing from the agent Secret fails before any agent call and pauses that credential. The startup step and the config import turn the former `auto` (and any unknown value) into `subscription`.
+**Why:** `auto` picked the API key whenever one was configured, so a deployment with both paid per token without anyone choosing it, and a used-up key could not be told from a used-up subscription.
+**Not:** `auto`; falling back to the other credential.
+**Revisit when:** Anthropic changes how subscription and API usage are billed.
+
 ## Observability
 
 ### Telemetry philosophy: instrument every decision point for full run traceability
@@ -758,6 +773,8 @@ Decisions that no longer hold. Don't bring one back without asking the owner.
 - Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only (2026-07-25, retired 2026-10-10): superseded by [Refactoring scan issues are independent](#refactoring-scan-issues-are-independent-ordered-work-goes-through-epics).
 - admin is global-only; project bindings scope actions and visibility (2026-10-04, retired 2026-10-10): superseded by [Project admins edit their project's behaviour](#project-admins-edit-their-projects-behaviour-the-operator-owns-bindings-and-shared-resources).
 - Agent label routing: layered resolution from provider to global default (2026-07-04, retired 2026-10-21) and Agent profile names its job template; the closest fit picks the profile (2026-10-10, retired 2026-10-21): superseded by [Agents are routed per task type](#agents-are-routed-per-task-type-stack-labels-pick-quality-gates-and-reviewers).
+- The route is pinned when work is created and a route that does not resolve refuses the work (spec 053 D7, 2026-10-21, retired 2026-11-07): superseded by dispatch-time routing in [Agents are routed per task type](#agents-are-routed-per-task-type-stack-labels-pick-quality-gates-and-reviewers).
+- An agent profile can be disabled (2026-10-21, retired 2026-11-07), and Claude Code's auth mode `auto` (retired 2026-11-07): superseded by [A paused credential holds work](#a-paused-credential-holds-work-the-routing-table-is-the-fallback) and [Prefer the Claude subscription](#prefer-the-claude-subscription-over-the-api-key).
 
 
 ## Brain v2: inbox-based learning loop (2026-10-28)

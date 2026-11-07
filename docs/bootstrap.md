@@ -34,7 +34,7 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
    - Go to **Settings** and configure: Providers (Issue, Repository, optionally Pipeline/CI), Agents → Agent Profiles (the job template and the tool's settings), Agents → Routing (the default route: profile, model and effort), Quality Gate Configs, Reviewer Configs
    - Go to **Pipelines** and configure: Pipeline Job Templates (use the **+ Add** button)
 
-   Until the default route is set, every work item is refused with `No agent route: set the default route in Settings → Agents → Routing`. See [Agent Routing](agent-routing.md).
+   Until the default route is set, work is queued but waits ("No agent route for Implementation — set it in Settings → Agents → Routing" on the Work page); it starts once the route is saved. See [Agent Routing](agent-routing.md).
 
 5. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
 
