@@ -25,10 +25,11 @@ public enum AgentErrorCategory
     ProviderMisconfigured,
 
     /// <summary>
-    /// The provider refused the call for billing reasons, for example the API credit balance is too low —
-    /// permanent until the account is topped up or the profile switches to another auth mode.
+    /// The provider's quota is used up: a usage or spend limit was reached, or the API credit balance is too low —
+    /// permanent until the quota resets or is topped up. Spec 056 renamed it from <c>ProviderBillingLimit</c>; the
+    /// numeric value is unchanged.
     /// </summary>
-    ProviderBillingLimit,
+    ProviderQuotaExhausted,
 }
 
 public sealed class AgentResult
@@ -55,6 +56,13 @@ public sealed class AgentResult
     /// The QG retry loop uses this to skip <c>RetryCount</c> increments on transient provider errors.
     /// </summary>
     public AgentErrorCategory ErrorCategory { get; init; } = AgentErrorCategory.None;
+
+    /// <summary>
+    /// Spec 056: what the provider said when <see cref="ErrorCategory"/> is
+    /// <see cref="AgentErrorCategory.ProviderQuotaExhausted"/> or <see cref="AgentErrorCategory.PermanentAuthFailure"/>:
+    /// the category, the reset time if known and the masked line. Null otherwise.
+    /// </summary>
+    public AgentProviderFailure? ProviderFailure { get; init; }
 
     /// <summary>
     /// MCP and web tool calls of this invocation, keyed <c>server/tool</c> (<see cref="McpToolKeys"/>).

@@ -24,5 +24,11 @@ public enum FailureReason
     QualityGateExhausted,
 
     /// <summary>Analysis gate rejected the issue (needs-refinement or won't-do). Not an agent error.</summary>
-    GateRejected
+    GateRejected,
+
+    /// <summary>
+    /// Spec 056: the agent's credential could not be used (quota used up or login rejected). The credential was
+    /// paused and the work queued again as a new work item; not an issue failure.
+    /// </summary>
+    ProviderUnavailable
 }

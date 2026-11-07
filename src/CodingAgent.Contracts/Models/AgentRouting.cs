@@ -45,10 +45,18 @@ public enum AgentRouteSource
     /// <summary>The global default route.</summary>
     GlobalDefault,
 
-    /// <summary>A work item created before spec 053, routed when an agent claimed it.</summary>
+    /// <summary>
+    /// A work item created before spec 053, routed when an agent claimed it. Never produced since spec 056; kept because
+    /// stored payloads carry the name.
+    /// </summary>
+    [Obsolete("Never produced since spec 056; kept because stored payloads carry the name.")]
     Claim,
 
-    /// <summary>A work item a previous-release API stored without a selector, routed by the dispatcher.</summary>
+    /// <summary>
+    /// A work item a previous-release API stored without a selector, routed by the dispatcher. Never produced since
+    /// spec 056; kept because stored payloads carry the name.
+    /// </summary>
+    [Obsolete("Never produced since spec 056; kept because stored payloads carry the name.")]
     Dispatch,
 }
 
@@ -97,8 +105,8 @@ public static class AgentRouteLabels
         AgentRouteSource.Repository => "repository",
         AgentRouteSource.GlobalTaskRow => "global task row",
         AgentRouteSource.GlobalDefault => "global default",
-        AgentRouteSource.Claim => "claim",
-        AgentRouteSource.Dispatch => "dispatch",
+        AgentRouteSource.Claim => "routed at claim (earlier release)",
+        AgentRouteSource.Dispatch => "routed at dispatch (earlier release)",
         _ => "unknown",
     };
 }

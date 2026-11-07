@@ -35,6 +35,7 @@ public sealed record UiAgentProfilesPage(IReadOnlyList<AgentProfile> Profiles, I
 /// When the route does not resolve, only <paramref name="Problem"/> is set, with the refusal text a work item would get.
 /// A route to a job template the Helm values do not define is resolved and names that as its problem.
 /// </summary>
+/// <param name="CredentialPausedText">Spec 056: the pause text when the route's credential is paused; null otherwise.</param>
 public sealed record UiResolvedRoute(
     WorkItemTaskType TaskType,
     string? ProfileName,
@@ -43,4 +44,5 @@ public sealed record UiResolvedRoute(
     string? Effort,
     AgentRouteSource? Source,
     string? JobTemplateKey,
-    string? Problem);
+    string? Problem,
+    string? CredentialPausedText = null);

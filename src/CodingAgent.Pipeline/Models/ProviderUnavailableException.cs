@@ -35,7 +35,7 @@ public sealed class ProviderUnavailableException : Exception
     public static bool IsPermanentProviderFailure(AgentErrorCategory category) =>
         category is AgentErrorCategory.PermanentAuthFailure
             or AgentErrorCategory.ProviderMisconfigured
-            or AgentErrorCategory.ProviderBillingLimit;
+            or AgentErrorCategory.ProviderQuotaExhausted;
 
     /// <summary>
     /// The failure reason for a provider failure: the category and exit code, then the last output

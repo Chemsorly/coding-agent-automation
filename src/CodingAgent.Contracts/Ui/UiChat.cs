@@ -11,6 +11,7 @@ public sealed record UiChatOptions(IReadOnlyList<UiChatProfile> Profiles, int Co
 /// chat may use (<c>auto</c>, the models routes name for it, the tool's built-in list), the efforts the tool accepts,
 /// and the preselection from the global default route.
 /// </summary>
+/// <param name="PausedText">Spec 056: the pause text when the profile's credential is paused (a launch answers 409); null otherwise.</param>
 public sealed record UiChatProfile(
     string Id,
     string DisplayName,
@@ -18,7 +19,8 @@ public sealed record UiChatProfile(
     IReadOnlyList<string> Models,
     IReadOnlyList<string> Efforts,
     string DefaultModel,
-    string DefaultEffort);
+    string DefaultEffort,
+    string? PausedText = null);
 
 /// <summary>
 /// Body of <c>POST /api/ui/chat</c>. Without a project the chat runs with no project context. <paramref name="Model"/> must

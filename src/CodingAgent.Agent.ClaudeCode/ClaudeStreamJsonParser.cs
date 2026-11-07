@@ -131,7 +131,7 @@ internal sealed class ClaudeStreamState
     public AgentErrorCategory ClassifyFailure()
     {
         if (LastErrorCategory is "billing_error")
-            return AgentErrorCategory.ProviderBillingLimit;
+            return AgentErrorCategory.ProviderQuotaExhausted;
 
         var status = ApiErrorStatus ?? LastErrorStatus;
 

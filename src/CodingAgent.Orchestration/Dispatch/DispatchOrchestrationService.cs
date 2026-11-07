@@ -563,21 +563,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     public Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)
     {
-        // Revert the label back to the queue label that was on the issue before dispatch.
-        // The correct label depends on the run type:
-        //   DecompositionAnalysis → agent:epic  (Phase 1 epic queue label)
-        //   Decomposition         → agent:epic-approved  (Phase 2 epic queue label)
-        //   Triage                → agent:triage  (never agent:next: that would implement a raw bug report)
-        //   everything else       → agent:next
+        // Revert the label back to the queue label that was on the issue before dispatch (QueueLabels.For).
         // Note: OCE propagates (swallowCancellation defaults false) — if the dispatch token is
         // cancelled the revert should stop, not silently succeed.
-        var revertLabel = request.RunType switch
-        {
-            PipelineRunType.DecompositionAnalysis => AgentLabels.Epic,
-            PipelineRunType.Decomposition => AgentLabels.EpicApproved,
-            PipelineRunType.Triage => AgentLabels.Triage,
-            _ => AgentLabels.Next
-        };
+        var revertLabel = QueueLabels.For(request.RunType) ?? AgentLabels.Next;
         _logger.Warning(
             "Reverting failed distribution for issue {IssueIdentifier}: swapping label back to {RevertLabel} (runType={RunType})",
             request.IssueIdentifier, revertLabel, request.RunType);
