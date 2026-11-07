@@ -61,6 +61,51 @@ public class AgentProfileSectionComponentTests : BunitContext
     }
 
     [Fact]
+    public void WhileLoading_ShowsLoadingInsteadOfTheEmptyMessage()
+    {
+        _client.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .Returns(new TaskCompletionSource<UiAgentProfilesPage>().Task);
+
+        var cut = RenderSection();
+
+        cut.Markup.Should().Contain("Loading…").And.NotContain("No agent profiles configured").And.NotContain("+ Add Agent Profile");
+    }
+
+    [Fact]
+    public void WhenTheLoadFails_ShowsTheErrorInsteadOfTheEmptyMessage()
+    {
+        _client.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("boom"));
+        var statuses = new List<(string Message, bool IsError)>();
+
+        var cut = Render<AgentProfileSection>(p => p
+            .Add(s => s.ConfigClient, _client.Object)
+            .Add(s => s.OnShowStatus, Microsoft.AspNetCore.Components.EventCallback.Factory.Create<(string, bool)>(this, v => statuses.Add(v))));
+
+        cut.Find("[data-testid='agent-profiles-load-error']").TextContent.Should().Be("Failed to load the agent profiles: boom");
+        cut.Markup.Should().NotContain("No agent profiles configured").And.NotContain("+ Add Agent Profile");
+        statuses.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WhenAReloadAfterADeleteFails_KeepsTheListAndReportsThroughOnShowStatus()
+    {
+        Returns(AgentRoutingTestData.Profile("p-1", KiroTemplate, "To Delete"));
+        var statuses = new List<(string Message, bool IsError)>();
+        var cut = Render<AgentProfileSection>(p => p
+            .Add(s => s.ConfigClient, _client.Object)
+            .Add(s => s.OnShowStatus, Microsoft.AspNetCore.Components.EventCallback.Factory.Create<(string, bool)>(this, v => statuses.Add(v))));
+        _client.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new HttpRequestException("boom"));
+
+        cut.Find(".btn-delete").Click();
+        cut.Find(".agent-detail-confirm .btn-delete").Click();
+
+        statuses.Should().Contain(("Failed to load profiles: boom", true));
+        cut.Find("[data-testid='profile-row-p-1']").TextContent.Should().Contain("To Delete");
+        cut.FindAll("[data-testid='agent-profiles-load-error']").Should().BeEmpty();
+    }
+
+    [Fact]
     public void Table_ShowsNameJobTemplateAndTool()
     {
         Returns(AgentRoutingTestData.Profile("p-1", ClaudeTemplate, "Claude dotnet"));
