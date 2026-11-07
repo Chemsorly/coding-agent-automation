@@ -49,6 +49,33 @@ public class ReviewerConfigSectionComponentTests : BunitContext
         Assert.Contains("Add Reviewer Configuration", cut.Markup);
     }
 
+    [Fact]
+    public void Section_WhileLoading_ShowsLoadingInsteadOfTheEmptyMessage()
+    {
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns(new TaskCompletionSource<IReadOnlyList<ReviewerConfiguration>>().Task);
+
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        Assert.Contains("Loading…", cut.Markup);
+        Assert.DoesNotContain("No reviewer configurations", cut.Markup);
+        Assert.DoesNotContain("+ Add Reviewer Configuration", cut.Markup);
+    }
+
+    // TODO [WARNING] This test does not wire OnShowStatus, so it does not record whether a failed first load reports a status (Requirement 3 says it must not; the section still does). Assert the chosen behaviour once the owner decides.
+    [Fact]
+    public void Section_WhenTheLoadFails_ShowsTheErrorInsteadOfTheEmptyMessage()
+    {
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("boom"));
+
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        Assert.Equal("Failed to load the reviewer configurations: boom", cut.Find("[data-testid='reviewer-configs-load-error']").TextContent);
+        Assert.DoesNotContain("No reviewer configurations", cut.Markup);
+        Assert.DoesNotContain("+ Add Reviewer Configuration", cut.Markup);
+    }
+
     // ═══ Table Rendering ═══
 
     [Fact]
@@ -313,6 +340,39 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     }
 
     // ═══ Error Handling ═══
+
+    [Fact]
+    public async Task Section_WhenAReloadAfterADeleteFails_KeepsTheListAndReportsThroughOnShowStatus()
+    {
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>
+            {
+                new()
+                {
+                    Id = "rc-1",
+                    DisplayName = "To Delete",
+                    MatchLabels = Array.Empty<string>(),
+                    Agents = new[] { new ReviewAgent { Name = "Agent", Prompt = "Prompt" } }
+                }
+            });
+        _mockStore.Setup(s => s.DeleteReviewerConfigAsync("rc-1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var statuses = new List<(string Message, bool IsError)>();
+        var cut = Render<ReviewerConfigSection>(p => p
+            .Add(s => s.ConfigClient, _mockStore.Object)
+            .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => statuses.Add(v))));
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("boom"));
+
+        var deleteBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Delete");
+        await deleteBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        var confirmBtn = cut.FindAll("button.btn-delete").Last();
+        await confirmBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains(("Failed to load reviewer configs: boom", true), statuses);
+        Assert.Contains("To Delete", cut.Markup);
+        Assert.Empty(cut.FindAll("[data-testid='reviewer-configs-load-error']"));
+    }
 
     [Fact]
     public async Task Section_LoadFails_InvokesOnShowStatus()

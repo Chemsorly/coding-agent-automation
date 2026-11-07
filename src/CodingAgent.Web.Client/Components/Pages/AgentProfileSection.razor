@@ -5,7 +5,18 @@
     <h2>Agent Profiles</h2>
     <p class="section-description">A profile is how an agent runs: the Helm job template it runs on (which sets the tool), the tool's settings and its MCP servers. Which profile, model and effort run each task type is set in Routing.</p>
 
-    @if (_profiles.Count == 0)
+    @if (!_loaded)
+    {
+        @if (_loadError is not null)
+        {
+            <div class="settings-status status-error" data-testid="agent-profiles-load-error">@_loadError</div>
+        }
+        else
+        {
+            <div class="monitoring-empty">Loading…</div>
+        }
+    }
+    else if (_profiles.Count == 0)
     {
         <div class="monitoring-empty">No agent profiles configured. Create at least one profile, then set the default route in Routing.</div>
     }
@@ -276,7 +287,7 @@
         </div>
         </div>
     }
-    else
+    else if (_loaded)
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Agent Profile</button>
     }
@@ -301,6 +312,8 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private List<AgentProfile> _profiles = new();
+    private bool _loaded;
+    private string? _loadError;
     private IReadOnlyList<UiJobTemplate> _jobTemplates = [];
     private bool _showForm;
     private AgentProfile? _editingProfile;
@@ -326,10 +339,18 @@
             var page = await ConfigClient.GetAgentProfilesAsync(CancellationToken.None);
             _profiles = page.Profiles.ToList();
             _jobTemplates = page.JobTemplates;
+            _loaded = true;
         }
         catch (Exception ex)
         {
-            await OnShowStatus.InvokeAsync(($"Failed to load profiles: {ex.Message}", true));
+            if (_loaded)
+            {
+                await OnShowStatus.InvokeAsync(($"Failed to load profiles: {ex.Message}", true));
+            }
+            else
+            {
+                _loadError = $"Failed to load the agent profiles: {ex.Message}";
+            }
         }
     }
 

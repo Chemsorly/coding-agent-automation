@@ -49,6 +49,33 @@ public class QualityGateConfigSectionComponentTests : BunitContext
         Assert.Contains("Add Quality Gate Configuration", cut.Markup);
     }
 
+    [Fact]
+    public void Section_WhileLoading_ShowsLoadingInsteadOfTheEmptyMessage()
+    {
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns(new TaskCompletionSource<IReadOnlyList<QualityGateConfiguration>>().Task);
+
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        Assert.Contains("Loading…", cut.Markup);
+        Assert.DoesNotContain("No quality gate configurations", cut.Markup);
+        Assert.DoesNotContain("+ Add Quality Gate Configuration", cut.Markup);
+    }
+
+    // TODO [WARNING] This test does not wire OnShowStatus, so it does not record whether a failed first load reports a status (Requirement 3 says it must not; the section still does). Assert the chosen behaviour once the owner decides.
+    [Fact]
+    public void Section_WhenTheLoadFails_ShowsTheErrorInsteadOfTheEmptyMessage()
+    {
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("boom"));
+
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        Assert.Equal("Failed to load the quality gate configurations: boom", cut.Find("[data-testid='quality-gate-configs-load-error']").TextContent);
+        Assert.DoesNotContain("No quality gate configurations", cut.Markup);
+        Assert.DoesNotContain("+ Add Quality Gate Configuration", cut.Markup);
+    }
+
     // ═══ Table Rendering ═══
 
     [Fact]
@@ -344,6 +371,39 @@ public class QualityGateConfigSectionComponentTests : BunitContext
 
         Assert.Contains("Failed to load", status.Message);
         Assert.True(status.IsError);
+    }
+
+    [Fact]
+    public async Task Section_WhenAReloadAfterADeleteFails_KeepsTheListAndReportsThroughOnShowStatus()
+    {
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<QualityGateConfiguration>
+            {
+                new()
+                {
+                    Id = "qgc-1",
+                    DisplayName = "To Delete",
+                    CompilationCommand = "dotnet",
+                    Enabled = true
+                }
+            });
+        _mockStore.Setup(s => s.DeleteQualityGateConfigAsync("qgc-1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var statuses = new List<(string Message, bool IsError)>();
+        var cut = Render<QualityGateConfigSection>(p => p
+            .Add(s => s.ConfigClient, _mockStore.Object)
+            .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => statuses.Add(v))));
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("boom"));
+
+        var deleteBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Delete");
+        await deleteBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        var confirmBtn = cut.FindAll("button.btn-delete").Last();
+        await confirmBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.Contains(("Failed to load QGCs: boom", true), statuses);
+        Assert.Contains("To Delete", cut.Markup);
+        Assert.Empty(cut.FindAll("[data-testid='quality-gate-configs-load-error']"));
     }
 
     [Fact]
