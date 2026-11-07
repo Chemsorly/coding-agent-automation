@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AwesomeAssertions;
 using Moq;
 using CodingAgent.Pipeline.Interfaces;
@@ -526,6 +527,130 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         // Second agent's findings still counted despite first agent failing
         _run.CodeReviewWarningCount.Should().Be(1);
         _run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CodeReview_ParallelMode_RunsAcceptanceCriteriaNextToTheReviewers()
+    {
+        _mockAgent.SetupGet(a => a.SupportsParallelExecution).Returns(true);
+
+        // Every agent call waits until three calls have started: two reviewers and the acceptance criteria check.
+        // If the check ran behind the reviewers, only two calls would start and the wait would time out.
+        var started = 0;
+        var allStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>(async (req, ct, _) =>
+            {
+                if (Interlocked.Increment(ref started) >= 3)
+                    allStarted.TrySetResult();
+                await allStarted.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+
+                if (req.Prompt.Contains(AgentWorkspacePaths.AcceptanceCriteriaFilePath))
+                {
+                    WriteAcceptanceCriteriaJson("""
+                    {
+                        "criteria": [ { "criterion": "Feature works", "status": "non_compliant", "evidence": "Missing" } ],
+                        "summary": "0 of 1 criteria addressed."
+                    }
+                    """);
+                }
+                return new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() };
+            });
+
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+        };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
+        _run.AcceptanceCriteriaReport.Should().NotBeNull();
+        _run.CodeReviewCriticalCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CodeReview_ParallelMode_AllReviewersCrash_IgnoresTheAcceptanceReportButCountsItsTokens()
+    {
+        _mockAgent.SetupGet(a => a.SupportsParallelExecution).Returns(true);
+
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                if (!req.Prompt.Contains(AgentWorkspacePaths.AcceptanceCriteriaFilePath))
+                    throw new InvalidOperationException("reviewer crashed");
+
+                WriteAcceptanceCriteriaJson("""
+                {
+                    "criteria": [ { "criterion": "Feature works", "status": "non_compliant", "evidence": "Missing" } ],
+                    "summary": "0 of 1 criteria addressed."
+                }
+                """);
+                return Task.FromResult(new AgentResult
+                {
+                    ExitCode = 0,
+                    OutputLines = Array.Empty<string>(),
+                    Usage = new TokenUsage { InputTokens = 10, OutputTokens = 5 }
+                });
+            });
+
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "Fix the issues" }
+        };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        // The iteration returns without using the check's report, but the check ran, so its tokens are counted.
+        _run.AcceptanceCriteriaReport.Should().BeNull();
+        _run.CodeReviewCriticalCount.Should().Be(0);
+        _run.Metrics.PhaseBreakdown.Should().ContainKey("acceptance_criteria");
+    }
+
+    [Fact]
+    public async Task CodeReview_SequentialMode_RunsAcceptanceCriteriaAfterTheReviewers()
+    {
+        // SupportsParallelExecution is false by default in this class: reviewers first, then the check.
+        var prompts = new List<string>();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) => prompts.Add(req.Prompt))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+        };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        prompts.FindIndex(p => p.Contains(AgentWorkspacePaths.AcceptanceCriteriaFilePath)).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task CodeReview_ParallelMode_AcceptanceCriteriaDisabled_DoesNotRunTheCheck()
+    {
+        _mockAgent.SetupGet(a => a.SupportsParallelExecution).Returns(true);
+
+        var prompts = new ConcurrentBag<string>();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) => prompts.Add(req.Prompt))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = false,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+        };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        prompts.Should().NotBeEmpty("the reviewers still run");
+        prompts.Should().NotContain(p => p.Contains(AgentWorkspacePaths.AcceptanceCriteriaFilePath),
+            "the acceptance criteria check must not be launched when it is disabled, even if the reviewers run in parallel");
+        _run.AcceptanceCriteriaReport.Should().BeNull();
     }
 
     [Fact]

@@ -64,8 +64,16 @@ internal class CodeReviewOrchestrator
 
             try
             {
-                var (dispatchCriticalCount, crashedCount) = await DispatchReviewAgentsAsync(
+                // The acceptance criteria check reads the same code as the reviewers, in a session and with an
+                // output file of its own, so where the reviewers run in parallel it runs next to them.
+                var acceptanceTask = config.AcceptanceCriteriaEnabled && useParallel
+                    ? ExecuteAcceptanceCriteriaSafeAsync(context, ct)
+                    : null;
+                var dispatchTask = DispatchReviewAgentsAsync(
                     context, agents, i, useParallel, iterationFindings, agentsRun, ct);
+                await Task.WhenAll(dispatchTask, (Task?)acceptanceTask ?? Task.CompletedTask);
+
+                var (dispatchCriticalCount, crashedCount) = await dispatchTask;
                 iterationCriticalCount = dispatchCriticalCount;
 
                 run.CodeReviewAgentsRun = agentsRun;
@@ -96,13 +104,18 @@ internal class CodeReviewOrchestrator
                     context.Callbacks.EmitOutputLine(
                         $"⚠️ Code review iteration {i + 1}: all review agents failed — no findings produced");
                     context.Callbacks.NotifyChange();
+                    if (acceptanceTask is not null && await acceptanceTask is { } unusedAcceptanceResult)
+                        run.AccumulateTokenUsage(unusedAcceptanceResult, phase: "acceptance_criteria");
                     return;
                 }
 
                 // Run acceptance criteria check on every iteration so the report reflects current code state
                 if (config.AcceptanceCriteriaEnabled)
                 {
-                    iterationCriticalCount += await InjectAcceptanceCriteriaFindingsAsync(context, iterationFindings, ct);
+                    var acceptanceResult = acceptanceTask is not null
+                        ? await acceptanceTask
+                        : await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
+                    iterationCriticalCount += await InjectAcceptanceCriteriaFindingsAsync(context, acceptanceResult, iterationFindings, ct);
                     iterationFindingsText = iterationFindings.ToString();
                 }
 
@@ -235,18 +248,18 @@ internal class CodeReviewOrchestrator
     }
 
     /// <summary>
-    /// Runs acceptance criteria check and injects non-compliant criteria as CRITICAL findings.
+    /// Reads the acceptance criteria check's report and injects non-compliant criteria as CRITICAL findings.
     /// Returns the number of additional critical findings injected.
     /// </summary>
     // NOTE: Add targeted unit tests for InjectAcceptanceCriteriaFindingsAsync branching logic
     // (acResult null, no criteria, no non-compliant criteria). Currently only covered at integration level.
     private async Task<int> InjectAcceptanceCriteriaFindingsAsync(
         AgentPhaseContext context,
+        AgentResult? acResult,
         System.Text.StringBuilder iterationFindings,
         CancellationToken ct)
     {
         var run = context.Run;
-        var acResult = await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
         if (acResult is null)
             return 0;
 
