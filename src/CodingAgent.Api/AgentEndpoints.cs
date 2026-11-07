@@ -42,6 +42,7 @@ public static class AgentEndpoints
         group.MapGet("/", GetAllAgents);
         group.MapGet("/credential-pool", GetCredentialPool);
         group.MapGet("/capacity", GetAgentCapacity);
+        group.MapGet("/credentials", GetAgentCredentials);
     }
 
     // ── GET /api/agents/capacity ─────────────────────────────────────────────
@@ -52,6 +53,19 @@ public static class AgentEndpoints
     /// </summary>
     internal static async Task<Ok<AgentCapacityStatus>> GetAgentCapacity(AgentCapacityReader reader, CancellationToken ct) =>
         TypedResults.Ok(await reader.ReadStatusAsync(ct));
+
+    // ── GET /api/agents/credentials ──────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/agents/credentials — spec 056 req 8.1: each credential in use and whether it is paused, for the
+    /// Scheduler leader's <c>pipeline.agent_credential.paused</c> gauge.
+    /// </summary>
+    internal static async Task<Ok<IReadOnlyList<AgentCredentialStatus>>> GetAgentCredentials(
+        CodingAgent.Infrastructure.Persistence.Services.CredentialPauseStore pauses,
+        IAgentProfileStore profiles,
+        JobTemplateStore templates,
+        CancellationToken ct) =>
+        TypedResults.Ok(await Ui.AgentCredentialViews.ReadStatusAsync(pauses, profiles, templates, ct));
 
     // ── GET /api/agents/credential-pool ──────────────────────────────────────
 

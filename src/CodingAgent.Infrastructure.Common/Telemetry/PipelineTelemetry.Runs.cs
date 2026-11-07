@@ -340,6 +340,14 @@ public static partial class PipelineTelemetry
             "pipeline.run.agent_stalls", "{stall}",
             "Agent stall events (stall_kill, process_death, process_timeout) recorded by the API");
 
+        // ── Agent credential pauses (spec 056) ───────────────────────────────────
+        AgentCredentialPauses = Meter.CreateCounter<long>(
+            "pipeline.agent_credential.pauses", "{pause}",
+            "Agent credentials that changed from available to paused, by credential, reason and source");
+        AgentCredentialResumes = Meter.CreateCounter<long>(
+            "pipeline.agent_credential.resumes", "{resume}",
+            "Paused agent credentials that became available, by credential and source (manual or reset)");
+
         // ── Observable gauges (must be last — gauge instruments are created on the Meter) ───────
         // ObservableGauge instruments must be created on the Meter; creating them in the static
         // constructor avoids duplicate-instrument warnings if the type is loaded by multiple hosts.
@@ -353,6 +361,11 @@ public static partial class PipelineTelemetry
             observeValues: () => Volatile.Read(ref _totalConnectionsCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
             unit: "{connection}",
             description: "Total registered agents");
+        Meter.CreateObservableGauge(
+            "pipeline.agent_credential.paused",
+            observeValues: () => Volatile.Read(ref _agentCredentialPausedCallback)?.Invoke() ?? Enumerable.Empty<Measurement<long>>(),
+            unit: "{credential}",
+            description: "1 while an agent credential in use is paused, 0 while it is available");
     }
 
     // ── Normalization helpers ────────────────────────────────────────────────────

@@ -81,6 +81,8 @@ public sealed class WorkItemCountsServiceAgentGaugeTests : IDisposable
 
     public WorkItemCountsServiceAgentGaugeTests()
     {
+        // Another test class in the Metrics collection may have left its service's callbacks registered.
+        ResetStaticCallbacks();
         _mockClient = new Mock<ISchedulerApiClient>();
         _mockLeaderGate = new Mock<ILeaderGate>();
         _mockLogger = new Mock<ILogger>();

@@ -77,6 +77,12 @@ public static class ApiDispatchServiceExtensions
         services.AddSingleton<AgentRoutingStore>();
         // Spec 057: the UI agent capacity limits, read at every agent start.
         services.AddSingleton<AgentCapacityStore>();
+        // Spec 056: the pause of each agent credential, written under its own advisory lock.
+        services.AddSingleton(sp => new CredentialPauseStore(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IDistributedLockProvider>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            Log.Logger));
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemRouter>();
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();

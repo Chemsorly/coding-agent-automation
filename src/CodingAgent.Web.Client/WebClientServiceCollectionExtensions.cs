@@ -45,6 +45,7 @@ public static class WebClientServiceCollectionExtensions
         services.AddHttpClient<IUiWorkItemClient, UiWorkItemClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiConsolidationClient, UiConsolidationClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         services.AddHttpClient<IUiLoopClient, UiLoopClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
+        services.AddHttpClient<IUiCredentialsClient, UiCredentialsClient>(client => client.BaseAddress = new Uri(apiBaseUrl));
         // Creating several issues on a slow tracker can take longer than the default timeout. No retries:
         // the POSTs are not idempotent (a retried re-run would start a second attempt).
         services.AddHttpClient<IUiTriageClient, UiTriageClient>(client =>

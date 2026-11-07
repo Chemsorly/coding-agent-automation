@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -7,6 +6,7 @@ using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -618,7 +618,7 @@ public sealed partial class WorkItemStatusTransitionService
     /// Caps a pod log tail to the last 100 lines, truncates each line to 1000 characters,
     /// and redacts common secret patterns. Returns null for null or empty input.
     /// </summary>
-    // TODO: [WARNING] AWS_ACCESS_KEY_ID values are not redacted by any of the three patterns.
+    // TODO: [WARNING] AWS_ACCESS_KEY_ID values are not redacted by any SecretPatternRedactor pattern.
     // KeyValueSecretRegex matches keywords token/password/passwd/secret/api[_-]?key/authorization;
     // ACCESS_KEY_ID contains none of those words. AWS_SECRET_ACCESS_KEY is caught by the 'secret'
     // keyword, but the corresponding key ID is not. If an agent pod is configured with
@@ -636,23 +636,10 @@ public sealed partial class WorkItemStatusTransitionService
         foreach (var raw in tail)
         {
             var line = raw.Length > 1000 ? raw[..1000] : raw;
-            try { line = KeyValueSecretRegex().Replace(line, "$1$2***"); }
-            catch (RegexMatchTimeoutException) { continue; }
-            try { line = BearerTokenRegex().Replace(line, "Bearer ***"); }
-            catch (RegexMatchTimeoutException) { continue; }
-            try { line = GitHubTokenRegex().Replace(line, "***"); }
-            catch (RegexMatchTimeoutException) { continue; }
-            result.Add(line);
+            // A line whose redaction timed out is dropped rather than kept unredacted.
+            if (SecretPatternRedactor.TryRedact(line) is { } redacted)
+                result.Add(redacted);
         }
         return result.Count > 0 ? result : null;
     }
-
-    [GeneratedRegex(@"(?i)(token|password|passwd|secret|api[_\-]?key|authorization)(\s*[=:]\s*)(bearer\s+)?\S+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex KeyValueSecretRegex();
-
-    [GeneratedRegex(@"(?i)\bbearer\s+\S+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex BearerTokenRegex();
-
-    [GeneratedRegex(@"\bgh[pousr]_[A-Za-z0-9]{20,}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex GitHubTokenRegex();
 }
