@@ -4,7 +4,18 @@
     <h2>Reviewer Configurations</h2>
     <p class="section-description">Define specialized review agents that run after code generation. Configs with matching labels apply together — use empty labels for reviewers that should run on every job.</p>
 
-    @if (_configs.Count == 0)
+    @if (!_loaded)
+    {
+        @if (_loadError is not null)
+        {
+            <div class="settings-status status-error" data-testid="reviewer-configs-load-error">@_loadError</div>
+        }
+        else
+        {
+            <div class="monitoring-empty">Loading…</div>
+        }
+    }
+    else if (_configs.Count == 0)
     {
         <div class="monitoring-empty">No reviewer configurations. Add one to enable label-based review agent routing.</div>
     }
@@ -121,7 +132,7 @@
             </div>
         </div>
     }
-    else
+    else if (_loaded)
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Reviewer Configuration</button>
         <button class="btn-revert" style="margin-top: 12px; margin-left: 8px;" @onclick="() => _showResetConfirm = true">Reset collection to defaults</button>
@@ -155,6 +166,8 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private List<ReviewerConfiguration> _configs = new();
+    private bool _loaded;
+    private string? _loadError;
     private bool _showForm;
     private ReviewerConfiguration? _editingConfig;
     private ReviewerConfigForm _form = new();
@@ -173,9 +186,12 @@
         try
         {
             _configs = (await ConfigClient.GetReviewerConfigsAsync(CancellationToken.None)).ToList();
+            _loaded = true;
         }
         catch (Exception ex)
         {
+            if (!_loaded) _loadError = $"Failed to load the reviewer configurations: {ex.Message}";
+            // TODO [WARNING] A failed first load still calls OnShowStatus, contradicting Requirement 3 ("A failed first load does not call OnShowStatus") and differing from AgentProfileSection. The existing Section_LoadFails_InvokesOnShowStatus test must stay unchanged, so the owner has to decide which side wins.
             await OnShowStatus.InvokeAsync(($"Failed to load reviewer configs: {ex.Message}", true));
         }
     }

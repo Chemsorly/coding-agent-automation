@@ -247,6 +247,9 @@ public class QualityGateExecutorRetryTests
         var config = CreateConfig(maxRetries: 3);
         SetupValidatorAlwaysFails();
         var fixPrompts = new List<string>();
+        // AgentStallMonitor sends a rate-limited call again, so the loop sees the transient result only
+        // after the call and its MaxProviderRetries retries (all carrying the same fix prompt) were rate-limited.
+        var rateLimitedCalls = AgentStallMonitor.MaxProviderRetries + 1;
 
         _mockAgent.Setup(a => a.ExecuteAsync(
                 It.IsAny<AgentRequest>(),
@@ -257,7 +260,7 @@ public class QualityGateExecutorRetryTests
                 if (req.Prompt.Contains("Quality gates failed (attempt"))
                     fixPrompts.Add(req.Prompt);
             })
-            .ReturnsAsync(() => fixPrompts.Count == 1
+            .ReturnsAsync(() => fixPrompts.Count <= rateLimitedCalls
                 ? new AgentResult
                 {
                     ExitCode = 1,
@@ -273,10 +276,10 @@ public class QualityGateExecutorRetryTests
 
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
-        fixPrompts.Should().HaveCountGreaterThanOrEqualTo(3);
-        fixPrompts[1].Should().NotContain("Prior attempt failures",
+        fixPrompts.Should().HaveCountGreaterThanOrEqualTo(rateLimitedCalls + 2);
+        fixPrompts[rateLimitedCalls].Should().NotContain("Prior attempt failures",
             "a rate-limited attempt ran no fix, so re-sending attempt 1 has no earlier attempt to show");
-        fixPrompts[2].Should().Contain("Attempt 1:").And.Contain("Attempt 2:").And.NotContain("Attempt 0:",
+        fixPrompts[rateLimitedCalls + 1].Should().Contain("Attempt 1:").And.Contain("Attempt 2:").And.NotContain("Attempt 0:",
             "the history has one entry per fix attempt, numbered from 1");
     }
 
@@ -652,13 +655,15 @@ public class QualityGateExecutorRetryTests
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
         // Assert: finalized as draft (transient cap exhausted)
-        // Verify exactly 11 agent calls were made:
-        //   - 10 transient retry loop calls (locking in the cap boundary value)
-        //   - 1 failure-feedback call from CollectFailureFeedbackAsync (always runs after draft finalization)
-        // A regression (e.g. off-by-one `>` instead of `>=`) would produce 12 calls here.
+        // Verify exactly 111 agent calls were made:
+        //   - 10 transient retry loop calls (locking in the cap boundary value), each one call that
+        //     AgentStallMonitor sends again MaxProviderRetries times after a rate limit (11 calls each)
+        //   - 1 failure-feedback call from CollectFailureFeedbackAsync (always runs after draft finalization;
+        //     a direct provider call, so it is not retried)
+        // A regression (e.g. off-by-one `>` instead of `>=`) would add another 11 calls here.
         _mockAgent.Verify(
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(11));
+            Times.Exactly(CallsUntilTransientCap));
         _mockCallbacks.Verify(
             c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
@@ -686,14 +691,15 @@ public class QualityGateExecutorRetryTests
 
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
-        // Verify exactly 11 agent calls were made:
-        //   - 10 transient retry loop calls (locking in the cap boundary for ProviderOverload)
+        // Verify exactly 111 agent calls were made:
+        //   - 10 transient retry loop calls (locking in the cap boundary for ProviderOverload), each one call
+        //     that AgentStallMonitor sends again MaxProviderRetries times (11 calls each)
         //   - 1 failure-feedback call from CollectFailureFeedbackAsync (always runs after draft finalization)
         // TODO: [WARNING] Call-count assertion verifies the cap boundary, but does not verify the
         // counter-reset criterion (same gap as TransientCounterResetsOnNonTransientIteration test).
         _mockAgent.Verify(
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(11));
+            Times.Exactly(CallsUntilTransientCap));
         _mockCallbacks.Verify(
             c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
             Times.Once);
@@ -729,8 +735,9 @@ public class QualityGateExecutorRetryTests
             .ReturnsAsync(() =>
             {
                 callCount++;
-                // First non-feedback call: transient rate-limit
-                if (callCount == 1)
+                // First non-feedback call: transient rate-limit. AgentStallMonitor sends a rate-limited call
+                // again, so it takes MaxProviderRetries + 1 results before the loop sees the transient.
+                if (callCount <= AgentStallMonitor.MaxProviderRetries + 1)
                     return new AgentResult
                     {
                         ExitCode = 1,
@@ -899,10 +906,10 @@ public class QualityGateExecutorRetryTests
         // would still fail this assertion because RetryCount would be > 0 instead of 0.
         _run.RetryCount.Should().Be(0,
             "all 10 transient iterations undo their increment via Math.Max(0, RetryCount - 1), so RetryCount must be exactly 0 when the cap fires");
-        // Positive evidence: the cap fired (10 retry + 1 feedback calls)
+        // Positive evidence: the cap fired (10 retry iterations of 11 calls each + 1 feedback call)
         _mockAgent.Verify(
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(11));
+            Times.Exactly(CallsUntilTransientCap));
     }
 
     // ── Separate Agent Hint ──────────────────────────────────────────────────
@@ -979,6 +986,12 @@ public class QualityGateExecutorRetryTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Agent calls when every call is rate-limited until the transient cap fires: 10 loop iterations, each one
+    /// call that <c>AgentStallMonitor</c> sends again <c>MaxProviderRetries</c> times, plus the failure-feedback call.
+    /// </summary>
+    private const int CallsUntilTransientCap = (AgentStallMonitor.MaxProviderRetries + 1) * 10 + 1;
 
     private static PipelineConfiguration CreateConfig(int maxRetries) => new()
     {

@@ -4,7 +4,18 @@
     <h2>Quality Gate Configurations</h2>
     <p class="section-description">Define build and test commands per tech stack. Configs with matching labels apply together — use empty labels for gates that should run on every job.</p>
 
-    @if (_configs.Count == 0)
+    @if (!_loaded)
+    {
+        @if (_loadError is not null)
+        {
+            <div class="settings-status status-error" data-testid="quality-gate-configs-load-error">@_loadError</div>
+        }
+        else
+        {
+            <div class="monitoring-empty">Loading…</div>
+        }
+    }
+    else if (_configs.Count == 0)
     {
         <div class="monitoring-empty">No quality gate configurations. The migration service will create a default on next startup, or create one manually.</div>
     }
@@ -132,7 +143,7 @@
             </div>
         </div>
     }
-    else
+    else if (_loaded)
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="ShowAddForm">+ Add Quality Gate Configuration</button>
     }
@@ -154,6 +165,8 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private List<QualityGateConfiguration> _configs = new();
+    private bool _loaded;
+    private string? _loadError;
     private bool _showForm;
     private QualityGateConfiguration? _editingConfig;
     private QgcForm _form = new();
@@ -171,9 +184,12 @@
         try
         {
             _configs = (await ConfigClient.GetQualityGateConfigsAsync(CancellationToken.None)).ToList();
+            _loaded = true;
         }
         catch (Exception ex)
         {
+            if (!_loaded) _loadError = $"Failed to load the quality gate configurations: {ex.Message}";
+            // TODO [WARNING] A failed first load still calls OnShowStatus, contradicting Requirement 3 ("A failed first load does not call OnShowStatus") and differing from AgentProfileSection. The existing Section_LoadFails_InvokesOnShowStatus test must stay unchanged, so the owner has to decide which side wins.
             await OnShowStatus.InvokeAsync(($"Failed to load QGCs: {ex.Message}", true));
         }
     }
