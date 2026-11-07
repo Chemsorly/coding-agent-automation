@@ -73,10 +73,15 @@ internal sealed class ProviderFailureHandler(
             return false;
         }
 
+        // Once the item is Failed every other path loses the swap, so nothing below may abort the requeue: the new item
+        // is created before the run is ended (its label swap would let the issue loop queue the issue first), its
+        // creation is retried, and the pause and the run's end only log their failures.
+
         // 2. Pause the credential of the route the item ran on.
+        AgentCredentialPause? intended = null;
         if (before.Credential is { } credential)
         {
-            await pauses.PauseAsync(new AgentCredentialPause(
+            intended = new AgentCredentialPause(
                 credential,
                 failure.Category == AgentProviderFailure.AuthFailed ? CredentialPauseReasons.AuthFailed : CredentialPauseReasons.QuotaExhausted,
                 CredentialPauseSources.Auto,
@@ -84,44 +89,44 @@ internal sealed class ProviderFailureHandler(
                 failure.ResetsAt,
                 detail,
                 WorkItemId: workItemId,
-                RunId: workItemId.ToString()), ct);
+                RunId: workItemId.ToString());
+            try
+            {
+                await pauses.PauseAsync(intended, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.Error(ex, "Pausing credential {Credential} for work item {WorkItemId} failed; the work is still queued again",
+                    credential, workItemId);
+            }
         }
         else
         {
             _log.Warning("Work item {WorkItemId} carries no credential; the provider failure pauses nothing", workItemId);
         }
 
-        // 3. End the run.
+        // 3. The same work, queued again; held until the credential is available.
         WorkItemPayload.TryDeserialize(before.Payload, out var request);
-        await lifecycle.RequeueRunAsync(
-            new RunId(workItemId.ToString()), text,
-            new RequeueTarget(
-                request?.RunType ?? before.TaskType.ToDefaultRunTypeOrNull() ?? PipelineRunType.Implementation,
-                before.IssueIdentifier, before.IssueProviderConfigId, request?.RepoProviderConfigId,
-                before.AssignedAgentId ?? before.K8sJobName),
-            ct);
-
-        // 4. The same work, queued again; held until the credential is available.
         var newId = Guid.Empty;
         if (request is not null)
-        {
-            var pause = before.Credential is { } paused ? await pauses.LoadAsync(paused, ct) : null;
-            var (outcome, created) = await store.CreateAsync(
-                request with { RunId = Guid.NewGuid().ToString() },
-                ct,
-                new WorkItemCreateOptions(
-                    before.RetryCount,
-                    before.PriorityWeight,
-                    before.OriginalEnqueuedAt ?? before.CreatedAt,
-                    pause is null ? null : HoldReasons.CredentialPaused,
-                    pause is null ? null : HoldTexts.CredentialPaused(pause),
-                    before.Credential,
-                    now));
-            newId = outcome == WorkItemCreateOutcome.Created ? created : Guid.Empty;
-        }
+            newId = await QueueAgainAsync(before, request, intended, now, ct);
         else
-        {
             _log.Error("Work item {WorkItemId}'s request cannot be read; it was ended but not queued again", workItemId);
+
+        // 4. End the run: history row, queue label back, agent state, Job.
+        try
+        {
+            await lifecycle.RequeueRunAsync(
+                new RunId(workItemId.ToString()), text,
+                new RequeueTarget(
+                    request?.RunType ?? before.TaskType.ToDefaultRunTypeOrNull() ?? PipelineRunType.Implementation,
+                    before.IssueIdentifier, before.IssueProviderConfigId, request?.RepoProviderConfigId,
+                    before.AssignedAgentId ?? before.K8sJobName),
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Error(ex, "Ending the run of work item {WorkItemId} after its requeue failed", workItemId);
         }
 
         // 5. The outcome of the ended attempt.
@@ -135,5 +140,50 @@ internal sealed class ProviderFailureHandler(
             "Requeued work item {WorkItemId} ({IssueIdentifier}) as {NewWorkItemId}: {Credential} {ProviderFailure} — {PauseDetail}",
             workItemId, LogSanitizer.SanitizeForLog(before.IssueIdentifier), newId, before.Credential, failure.Category, detail);
         return true;
+    }
+
+    /// <summary>
+    /// Creates the new Pending item with the ended item's retry count, priority and enqueue time, held for the paused
+    /// credential. Retried on a transient failure; an item that already exists for the issue is logged, not an error.
+    /// </summary>
+    private async Task<Guid> QueueAgainAsync(
+        Infrastructure.Persistence.Entities.WorkItemEntity before, JobDistributionRequest request,
+        AgentCredentialPause? intended, DateTimeOffset now, CancellationToken ct)
+    {
+        const int attempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                var pause = before.Credential is { } paused ? await pauses.LoadAsync(paused, ct) ?? intended : null;
+                var (outcome, created) = await store.CreateAsync(
+                    request with { RunId = Guid.NewGuid().ToString() },
+                    ct,
+                    new WorkItemCreateOptions(
+                        before.RetryCount,
+                        before.PriorityWeight,
+                        before.OriginalEnqueuedAt ?? before.CreatedAt,
+                        pause is null ? null : HoldReasons.CredentialPaused,
+                        pause is null ? null : HoldTexts.CredentialPaused(pause),
+                        before.Credential,
+                        now));
+                if (outcome == WorkItemCreateOutcome.Created)
+                    return created;
+                _log.Warning("Work item {WorkItemId} was not queued again: {CreateOutcome} (another work item for the issue exists)",
+                    before.Id, outcome);
+                return Guid.Empty;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && attempt < attempts)
+            {
+                _log.Warning(ex, "Queueing work item {WorkItemId} again failed (attempt {Attempt} of {Attempts}); retrying",
+                    before.Id, attempt, attempts);
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), time, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.Error(ex, "Work item {WorkItemId} was ended but could not be queued again", before.Id);
+                return Guid.Empty;
+            }
+        }
     }
 }

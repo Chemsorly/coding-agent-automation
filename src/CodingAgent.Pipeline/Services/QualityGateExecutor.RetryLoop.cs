@@ -691,7 +691,8 @@ public partial class QualityGateExecutor
         var run = context.Run;
         // Spec 056 DD14: remembered so the run ends Failed without a draft PR when the provider cannot be used.
         context.AbortCategory = agentResult.ErrorCategory;
-        context.AbortDetail = agentResult.ProviderFailure?.Detail;
+        // Key-shaped strings are masked here too: the detail becomes the run's failure text, which leaves the pod (req 9.4).
+        context.AbortDetail = agentResult.ProviderFailure?.Detail is { } detail ? SecretPatternRedactor.Redact(detail) : null;
         _logger.Error(
             "Pipeline {RunId} retry {RetryCount}: permanent provider failure (rejected credentials or configuration), aborting retry loop",
             run.RunId, run.RetryCount);

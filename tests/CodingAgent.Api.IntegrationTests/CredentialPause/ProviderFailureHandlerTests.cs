@@ -134,6 +134,42 @@ public sealed class ProviderFailureHandlerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // Review of spec 056: once the item is Failed every other path loses the swap, so a failing pause write must not
+    // lose the requeue.
+    [Fact]
+    public async Task WhenThePauseWriteFails_TheWorkIsStillQueuedAgain_AndTheRunEnded()
+    {
+        var item = await SeedRunningAsync();
+        var lockFails = new Mock<CodingAgent.Infrastructure.Locking.IDistributedLockProvider>();
+        lockFails.Setup(l => l.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("advisory lock timed out"));
+        var failingPauses = new CredentialPauseStore(_db, lockFails.Object, _time, Serilog.Core.Logger.None);
+        var handler = new ProviderFailureHandler(_db, _transitions, failingPauses, _lifecycle.Object,
+            new WorkItemStore(_db, Mock.Of<IOrchestratorRunService>()), _time, Serilog.Core.Logger.None);
+
+        var handled = await handler.HandleAsync(item.Id, Job, Quota(), CancellationToken.None);
+
+        handled.Should().BeTrue();
+        var requeued = (await AllAsync()).Single(w => w.Id != item.Id);
+        requeued.Status.Should().Be(WorkItemStatus.Pending);
+        requeued.HoldReason.Should().Be(HoldReasons.CredentialPaused, "the intended pause still names why it waits");
+        _lifecycle.Verify(l => l.RequeueRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<RequeueTarget>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenEndingTheRunFails_TheWorkIsStillQueuedAgain()
+    {
+        var item = await SeedRunningAsync();
+        _lifecycle.Setup(l => l.RequeueRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<RequeueTarget>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("label service down"));
+
+        var handled = await Handler().HandleAsync(item.Id, Job, Quota(), CancellationToken.None);
+
+        handled.Should().BeTrue();
+        (await AllAsync()).Should().ContainSingle(w => w.Id != item.Id && w.Status == WorkItemStatus.Pending);
+    }
+
     [Fact]
     public async Task WhenAnotherAgentReports_ShouldDoNothing()
     {
