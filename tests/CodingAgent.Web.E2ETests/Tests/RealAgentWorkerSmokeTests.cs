@@ -5,6 +5,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.E2ETests.Tests;
 
@@ -55,15 +56,12 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
     {
         var workItemId = await InsertPendingWorkItemAsync(issueId, agentSelector: "e2e");
 
-        // Set AssignedAgentId and a minimal-but-valid payload so the API's GetAssignment endpoint
-        // can deserialize it (JobDistributionRequest has required properties that fail with "{}").
+        // A minimal-but-valid payload so the API's GetAssignment endpoint can deserialize it (JobDistributionRequest has
+        // required properties that fail with "{}"). The item stays Pending until it is routed below.
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var entity = await db.WorkItems.FindAsync([workItemId], ct)
             ?? throw new InvalidOperationException($"Work item {workItemId} not found in DB after insert");
 
-        entity.Status = WorkItemStatus.Dispatched;
-        entity.AssignedAgentId = agentId;
-        entity.DispatchedAt = DateTimeOffset.UtcNow;
         entity.TaskType = taskType;
 
         // Build the identity-only payload the dispatcher writes (PayloadSchemaVersion 1); GetAssignment
@@ -93,12 +91,24 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "profile-e2e-real-agent",
             DisplayName = "Real agent smoke profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
         entity.Payload = System.Text.Json.JsonSerializer.Serialize(
             minimalPayload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
 
         await db.SaveChangesAsync(ct);
+
+        // Spec 056: POST /dispatch routes the item and pins its route; the claim refuses an item dispatched without one.
+        var route = await Fixture.ApiServices.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>().RouteAsync(workItemId, ct);
+        Assert.Equal(CodingAgent.Api.Dispatch.DispatchRouteStatus.Routed, route.Status);
+
+        // Marked Dispatched to the real agent, as the dispatch path would.
+        await using var dispatchDb = Fixture.DbContextFactory.CreateDbContext();
+        var dispatched = await dispatchDb.WorkItems.FindAsync([workItemId], ct)
+            ?? throw new InvalidOperationException($"Work item {workItemId} not found in DB after routing");
+        dispatched.Status = WorkItemStatus.Dispatched;
+        dispatched.AssignedAgentId = agentId;
+        dispatched.DispatchedAt = DateTimeOffset.UtcNow;
+        await dispatchDb.SaveChangesAsync(ct);
 
         return workItemId;
     }
@@ -149,7 +159,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "real-agent-profile",
             DisplayName = "Real Agent Profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         // Queue scripted outputs for the pipeline phases:
@@ -271,7 +280,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "decomp-agent-profile",
             DisplayName = "Decomp Agent Profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         // ── First Phase 1 run ───────────────────────────────────────────────────────
@@ -413,7 +421,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "real-agent-profile-c",
             DisplayName = "Real Agent Profile C",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         // First script: primary analysis agent returns not_ready.

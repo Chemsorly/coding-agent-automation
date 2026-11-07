@@ -109,7 +109,8 @@ public static class ApiLifecycleServiceExtensions
             // scoped test loggers, xUnit sink registrations). The idiomatic pattern is:
             //   sp.GetRequiredService<ILogger<WorkItemStatusTransitionService>>()
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemStatusTransitionService>(),
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetService<IProviderFailureHandler>()));
 
         // ── IConsolidationJobPreparationService ────────────────────────────
         // Required by AssignmentEnricher to resolve provider configs and vend short-lived tokens

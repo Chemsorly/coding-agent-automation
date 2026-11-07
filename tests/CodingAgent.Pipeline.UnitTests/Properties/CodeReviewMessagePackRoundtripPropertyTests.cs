@@ -56,7 +56,6 @@ public class CodeReviewMessagePackRoundtripPropertyTests
             from displayName in Gen.Elements("Default Agent", "Review Bot", "Code Generator")
             from jobTemplate in Gen.Elements("dotnet,kiro", "claude,dotnet", "opencode,python")
             from agentName in Gen.Elements("", "reviewer", "builder")
-            from enabled in Gen.Elements(true, false)
             from mcpCount in Gen.Choose(0, 3)
             from mcpServers in Gen.ListOf(mcpServerGen)
             select new AgentProfile
@@ -65,7 +64,6 @@ public class CodeReviewMessagePackRoundtripPropertyTests
                 DisplayName = displayName,
                 JobTemplate = jobTemplate,
                 Settings = new Dictionary<string, string> { [ProviderSettingKeys.AgentName] = agentName },
-                Enabled = enabled,
                 McpServers = mcpServers.Take(mcpCount).ToList()
             };
 
@@ -77,7 +75,6 @@ public class CodeReviewMessagePackRoundtripPropertyTests
             deserialized.DisplayName.Should().Be(original.DisplayName);
             deserialized.JobTemplate.Should().Be(original.JobTemplate);
             deserialized.Settings.Should().BeEquivalentTo(original.Settings);
-            deserialized.Enabled.Should().Be(original.Enabled);
             deserialized.McpServers.Should().HaveCount(original.McpServers.Count);
 
             for (var i = 0; i < original.McpServers.Count; i++)

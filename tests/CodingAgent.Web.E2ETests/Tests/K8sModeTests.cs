@@ -37,7 +37,6 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Id = profileId,
             DisplayName = displayName,
             JobTemplate = E2ERouting.Key("kiro", "dotnet"),
-            Enabled = true
         });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -197,12 +196,14 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentFetchesAssignment_ReturnsValidPayload()
     {
-        // Arrange: route to a kiro,dotnet profile (the work item pins it when it is created, and the claim checks it),
+        // Arrange: route to a kiro,dotnet profile (the dispatcher pins it, and the claim checks it),
         // then insert a WorkItem via Pending enqueue path
         await SeedKiroDotnetRouteAsync("profile-kiro-dotnet-fetch", "K8s Fetch Test Profile");
         var result = await DistributeDirectlyAsync("k8s-fetch-assign-900");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
+        // Spec 056 DD2: the route is pinned when the item is dispatched; route it as POST /dispatch does.
+        await Fixture.ApiServices.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>().RouteAsync(workItemId, CancellationToken.None);
 
         // Seed the issue so AssignmentEnricher can fetch context during GetAssignment
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -976,7 +977,6 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Id = "profile-pending-reg",
             DisplayName = "Pending Reg Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("pending-reg-agent", "e2e");
@@ -1032,7 +1032,6 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Id = "profile-prio-test",
             DisplayName = "Priority Test Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
         // Note: dispatch without connecting agents so items stay Pending long enough to assert
         var r1 = await DispatchIssueAsync("prio-100");
@@ -1116,7 +1115,6 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             Id = "profile-kiro-dotnet-lifecycle",
             DisplayName = "K8s Lifecycle Test Profile",
             JobTemplate = E2ERouting.Key("kiro", "dotnet"),
-            Enabled = true
         });
 
         // ── Step 1: Distribute via KubernetesWorkDistributor (synchronous dispatch) ──

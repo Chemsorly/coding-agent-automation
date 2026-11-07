@@ -93,7 +93,9 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             FailureReason = result.ErrorMessage,
             FailureCategory = result.FailureCategory,
             CompletedAt = DateTimeOffset.UtcNow,
-            PhaseBreakdown = result.PhaseBreakdown
+            PhaseBreakdown = result.PhaseBreakdown,
+            // Spec 056: the HTTP completion carries it too, so the API requeues even when the hub report failed.
+            ProviderFailure = result.ProviderFailure
         };
     }
 }

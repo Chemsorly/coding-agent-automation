@@ -236,6 +236,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                 // Other result construction paths (timeout, exception) produce None by default,
                 // which is correct — they are not provider HTTP classification failures.
                 ErrorCategory = result.ErrorCategory,
+                ProviderFailure = result.ProviderFailure,
                 ToolCalls = toolCalls,
                 UnavailableMcpServers = unavailableMcpServers,
                 UsageDetails = sseState.AssistantMessageIds.Count > 0
@@ -386,7 +387,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
         // Classify provider-side transient and permanent failures so callers (e.g. the QG retry
         // loop) can distinguish them from code-level failures without re-parsing OutputLines text.
         // 404/410 are handled above and fall through with ErrorCategory.None (the default).
-        var category = response.StatusCode switch
+        // Spec 056 req 5.4: a quota code or text in the body wins over the status code.
+        var category = OpenCodeQuotaText.IsQuota(body) ? AgentErrorCategory.ProviderQuotaExhausted : response.StatusCode switch
         {
             HttpStatusCode.TooManyRequests => AgentErrorCategory.ProviderRateLimit,   // 429
             HttpStatusCode.ServiceUnavailable => AgentErrorCategory.ProviderOverload,    // 503
@@ -404,7 +406,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
         {
             ExitCode = ExitCodes.GeneralFailure,
             OutputLines = [line],
-            ErrorCategory = category
+            ErrorCategory = category,
+            ProviderFailure = OpenCodeQuotaText.Failure(category, line)
         };
     }
 
@@ -457,11 +460,14 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
             _logger.Warning("OpenCode turn failed: {Error}", message);
             onOutputLine?.Invoke(StripAnsiEscapes(message));
             outputLines.Add(message);
+            var errorCategory = ClassifyError(error);
             return new AgentResult
             {
                 ExitCode = ExitCodes.GeneralFailure,
                 OutputLines = outputLines,
-                ErrorCategory = ClassifyError(error)
+                ErrorCategory = errorCategory,
+                ProviderFailure = OpenCodeQuotaText.Failure(errorCategory,
+                    string.IsNullOrWhiteSpace(error.Data?.ResponseBody) ? message : $"{message} {error.Data.ResponseBody}")
             };
         }
 
@@ -472,9 +478,14 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
         };
     }
 
-    /// <summary>Maps an OpenCode error on the assistant message to a provider-side failure category.</summary>
+    /// <summary>
+    /// Maps an OpenCode error on the assistant message to a provider-side failure category. Spec 056 req 5.4: the
+    /// message and the provider's response body are read for the quota codes and texts, not only the status code.
+    /// </summary>
     internal static AgentErrorCategory ClassifyError(OpenCodeError error)
     {
+        if (OpenCodeQuotaText.IsQuota(error.Data?.Message) || OpenCodeQuotaText.IsQuota(error.Data?.ResponseBody))
+            return AgentErrorCategory.ProviderQuotaExhausted;
         if (error.Name == "ProviderAuthError")
             return AgentErrorCategory.PermanentAuthFailure;
         return error.Data?.StatusCode switch

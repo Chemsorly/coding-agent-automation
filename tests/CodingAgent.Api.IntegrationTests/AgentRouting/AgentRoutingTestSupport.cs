@@ -23,15 +23,18 @@ internal static class AgentRoutingTestSupport
     public static PipelineDbContext NewDb(string? name = null) => InMemoryFactory.Create(name ?? Guid.NewGuid().ToString());
 
     /// <summary>
-    /// A <see cref="WorkItemRouter"/> over the routing table in <paramref name="dbFactory"/> (spec 053 task 4.0). With the
+    /// A <see cref="DispatchRouter"/> over the routing table and pauses in <paramref name="dbFactory"/> (spec 056). With the
     /// defaults, every task type routes to <see cref="AgentRoutingTestData.Profile"/> on
     /// <see cref="AgentRoutingTestData.DefaultJobTemplate"/> once the table is seeded (<see cref="SeedRouting"/>).
     /// </summary>
-    public static WorkItemRouter Router(
+    public static DispatchRouter Router(
         IDbContextFactory<PipelineDbContext> dbFactory,
         IReadOnlyList<AgentProfile>? profiles = null,
         IReadOnlyList<PipelineJobTemplate>? templates = null,
-        JobTemplateStore? jobTemplates = null)
+        JobTemplateStore? jobTemplates = null,
+        IOrchestratorRunService? runs = null,
+        TimeProvider? time = null,
+        Serilog.ILogger? logger = null)
     {
         var profileStore = new Mock<IAgentProfileStore>();
         profileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
@@ -39,9 +42,11 @@ internal static class AgentRoutingTestSupport
         var projectStore = new Mock<IProjectStore>();
         projectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates ?? []);
-        return new WorkItemRouter(
-            profileStore.Object, new AgentRoutingStore(dbFactory), projectStore.Object,
-            jobTemplates ?? AgentRoutingTestData.JobTemplates(), NullLogger<WorkItemRouter>.Instance);
+        return new DispatchRouter(
+            dbFactory, profileStore.Object, new AgentRoutingStore(dbFactory), projectStore.Object,
+            jobTemplates ?? AgentRoutingTestData.JobTemplates(),
+            new CredentialPauseStore(dbFactory, new SemaphoreLockProvider(), time ?? TimeProvider.System, Serilog.Core.Logger.None),
+            runs ?? new Mock<IOrchestratorRunService>().Object, time ?? TimeProvider.System, logger ?? Serilog.Core.Logger.None);
     }
 
     /// <summary>Stores <paramref name="routing"/> (by default <see cref="AgentRoutingTestData.Routing"/>) synchronously, for test constructors.</summary>

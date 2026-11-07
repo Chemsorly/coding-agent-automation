@@ -65,8 +65,8 @@ public sealed class AgentRoutingMoveTests
             }
             if (Fixture.ProfilesMovedDisabled.Contains(golden.ProfileId))
             {
-                // Req 7.2: its profile is moved disabled, so the work is refused with the reason (D15).
-                result.RefusalReason.Should().Be(AgentRouteRefusalReason.ProfileUnavailable, because);
+                // Req 7.2 moved the profile disabled; spec 056 req 1.4 retired the flag, so it no longer refuses the route.
+                result.RefusalReason.Should().NotBe(AgentRouteRefusalReason.ProfileUnavailable, because);
                 continue;
             }
 
@@ -212,7 +212,7 @@ public sealed class AgentRoutingMoveTests
         claude.McpServers.Select(s => s.Name).Should().Equal("grafana");
         moved.Profiles.Single(p => p.Id == Fixture.KiroOpusProfile).JobTemplate.Should().Be("dotnet,kiro");
 
-        moved.Profiles.Where(p => !p.Enabled).Select(p => p.Id).Should().BeEquivalentTo(
+        (await MovedDisabledAsync(db)).Should().BeEquivalentTo(
             [.. Fixture.ProfilesMovedDisabled, Fixture.DisabledProfile]);
         summary.ProfilesMoved.Should().Be(Fixture.WithDefaultLabels.ProfileJson.Count);
         summary.ProfilesDisabled.Should().Be(Fixture.ProfilesMovedDisabled.Count);
@@ -289,12 +289,12 @@ public sealed class AgentRoutingMoveTests
         pipeline.Configuration = JsonSerializer.Serialize(
             JsonSerializer.Deserialize<PipelineConfiguration>(pipeline.Configuration!, PipelineJsonOptions.Lenient), PipelineJsonOptions.Default);
         await db.SaveChangesAsync();
-        var enabledBefore = (await LoadAsync(db)).Profiles.Count(p => p.Enabled);
+        var disabledBefore = (await MovedDisabledAsync(db)).Count;
 
         var again = await AgentRoutingMove.RunAsync(db, Fixture.WithDefaultLabels.ToolsByKey, Logger(), CancellationToken.None);
 
         again.Should().BeNull();
-        (await LoadAsync(db)).Profiles.Count(p => p.Enabled).Should().Be(enabledBefore, "no profile is disabled by a second run");
+        (await MovedDisabledAsync(db)).Count.Should().Be(disabledBefore, "no profile is disabled by a second run");
     }
 
     [Fact]
@@ -317,7 +317,7 @@ public sealed class AgentRoutingMoveTests
         summary!.FullMove.Should().BeFalse();
         summary.ProfilesMoved.Should().Be(1);
         summary.ProfilesDisabled.Should().Be(1);
-        (await LoadAsync(db)).Profiles.Single(p => p.Id == lateProfile).Enabled.Should().BeFalse();
+        (await MovedDisabledAsync(db)).Should().Contain(lateProfile);
         (await db.KeyValueStore.SingleAsync(kv => kv.Key == RoutingTable.StorageKey)).Value.Should().Be(routingBefore);
         (await db.PipelineJobTemplates.AsNoTracking().Select(t => t.Configuration).ToListAsync()).Should().Equal(templatesBefore);
         Warnings().Should().Contain(m => m.Contains("\"Late\"", StringComparison.Ordinal) && m.Contains("moved disabled", StringComparison.Ordinal));
@@ -405,6 +405,16 @@ public sealed class AgentRoutingMoveTests
         var routing = await AgentRoutingStore.LoadAsync(db, CancellationToken.None) ?? RoutingTable.Empty;
         return new Moved(profiles, templates, routing);
     }
+
+    /// <summary>
+    /// The profiles the move wrote with <c>"enabled": false</c>. Spec 056 removed <c>AgentProfile.Enabled</c>; the move of
+    /// spec 053 still writes the legacy flag into the stored JSON, which the app now ignores and drops at the next save.
+    /// </summary>
+    private static async Task<List<string>> MovedDisabledAsync(PipelineDbContext db) =>
+        (await db.AgentProfiles.AsNoTracking().ToListAsync())
+            .Where(e => JsonNode.Parse(e.Configuration!)?["enabled"] is JsonValue flag && flag.TryGetValue<bool>(out var on) && !on)
+            .Select(e => e.Id.ToString())
+            .ToList();
 
     private static async Task<List<string?>> SnapshotAsync(PipelineDbContext db) =>
     [

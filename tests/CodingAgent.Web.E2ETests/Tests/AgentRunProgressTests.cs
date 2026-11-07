@@ -46,7 +46,6 @@ public sealed class AgentRunProgressTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Connect a fake agent
@@ -187,7 +186,6 @@ public sealed class AgentRunProgressTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Connect a fake agent

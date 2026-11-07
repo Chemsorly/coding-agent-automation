@@ -134,6 +134,65 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
+    public async Task<PipelineRun?> RequeueRunAsync(RunId runId, string reason, RequeueTarget target, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        ArgumentNullException.ThrowIfNull(target);
+
+        var run = _runService.RemoveRun(runId);
+        _runService.MarkRecentlyCompleted(
+            run?.IssueIdentifier ?? new IssueIdentifier(target.IssueIdentifier),
+            run?.IssueProviderConfigId ?? target.IssueProviderConfigId);
+        await ClearAgentStateAsync(run?.AgentId ?? target.AgentId);
+
+        if (run is not null)
+        {
+            run.FailureReason = reason;
+            run.FailureCategory = FailureReason.ProviderUnavailable;
+            run.MarkCompleted();
+            run.CurrentStep = PipelineStep.Failed;
+            try
+            {
+                await _historyService.AddRunToHistoryAsync(run, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Error(ex, "RequeueRunAsync: failed to persist run {RunId} to history", runId);
+            }
+        }
+        else
+        {
+            _logger.Warning("RequeueRunAsync: run {RunId} is no longer in memory; no history row is written", runId);
+        }
+
+        // The issue goes back to its queue (spec 056 req 6.3), never to agent:error; consolidation has no label.
+        if (QueueLabels.For(run?.RunType ?? target.RunType) is { } queueLabel)
+        {
+            if (run is not null)
+            {
+                await _labelService.TrySwapLabelAsync(run, queueLabel, _logger, "RunLifecycleManager.RequeueRunAsync", ct);
+            }
+            else
+            {
+                var review = target.RunType == PipelineRunType.Review;
+                await _labelService.TrySwapLabelAsync(
+                    new ProviderConfigId(review ? target.RepoProviderConfigId ?? "" : target.IssueProviderConfigId),
+                    new IssueIdentifier(target.IssueIdentifier), queueLabel,
+                    review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
+                    _logger, "RunLifecycleManager.RequeueRunAsync", ct);
+            }
+        }
+
+        if (_jobCleanup is not null)
+            await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
+
+        _logger.Information(
+            "RunLifecycleManager.RequeueRunAsync: run {RunId} ended for a requeue (issue {IssueIdentifier}, reason {Reason})",
+            runId, LogSanitizer.SanitizeForLog(target.IssueIdentifier), LogSanitizer.SanitizeForLog(reason));
+        return run;
+    }
+
+    /// <inheritdoc />
     public async Task<PipelineRun?> CompleteRunAsync(RunId runId, WorkItemStatus terminalStatus, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)
     {

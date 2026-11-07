@@ -31,6 +31,8 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     private volatile IProcessWrapper? _activeProcess;
     private volatile bool _lastRunStartedFreshSession;
     private volatile bool _lastRunRejectedConfiguration;
+    private volatile string? _lastRunQuotaExhausted;
+    private volatile bool _lastRunRateLimited;
     private volatile KiroToolLineCounter _toolCounter = new();
     private bool _disposed;
 
@@ -41,6 +43,12 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
     /// <inheritdoc />
     public bool LastRunRejectedConfiguration => _lastRunRejectedConfiguration;
+
+    /// <inheritdoc />
+    public string? LastRunQuotaExhausted => _lastRunQuotaExhausted;
+
+    /// <inheritdoc />
+    public bool LastRunRateLimited => _lastRunRateLimited;
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, KiroToolCallCount> LastRunToolCalls => _toolCounter.Snapshot();
@@ -144,6 +152,8 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
             _lastRunStartedFreshSession = false;
             _lastRunRejectedConfiguration = false;
+            _lastRunQuotaExhausted = null;
+            _lastRunRateLimited = false;
             _toolCounter = new KiroToolLineCounter();
             var (exitCode, sessionNotLoaded) = await RunProcessAsync(
                 prompt, workspaceDirectory, useResume, resumeSessionId, environmentVariables, channel?.Writer, cancellationToken);
@@ -202,10 +212,27 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             var outputParser = _outputParserFactory();
             var sessionLoadFailed = false;
             var configurationRejected = false;
+            // Spec 056 req 5.2: kiro-cli's own error lines (stdout or stderr) about the quota or throttling.
+            string? quotaLine = null;
+            var rateLimited = false;
+            void ClassifyErrorLine(string clean)
+            {
+                switch (KiroErrorText.Classify(clean))
+                {
+                    case KiroErrorKind.QuotaExhausted:
+                        quotaLine ??= clean.Trim();
+                        break;
+                    case KiroErrorKind.RateLimited:
+                        rateLimited = true;
+                        break;
+                }
+            }
 
             processWrapper.OutputReceived += (_, line) =>
             {
-                _logger.Information("Kiro: {Line}", AnsiStripper.Strip(line));
+                var cleanOut = AnsiStripper.Strip(line);
+                _logger.Information("Kiro: {Line}", cleanOut);
+                ClassifyErrorLine(cleanOut);
                 outputParser.ProcessLine(line);
                 output?.TryWrite(line);
             };
@@ -214,6 +241,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 var clean = AnsiStripper.Strip(line);
                 _logger.Debug("Kiro (stderr): {Line}", clean);
                 _toolCounter.ProcessLine(clean);
+                ClassifyErrorLine(clean);
                 outputParser.ProcessLine(line);
                 var trimmed = clean.TrimStart();
                 if (!trimmed.StartsWith(ErrorLinePrefix, StringComparison.OrdinalIgnoreCase))
@@ -234,6 +262,8 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
             var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId, environmentVariables);
             _lastRunRejectedConfiguration = exitCode != ExitCodes.Success && configurationRejected;
+            _lastRunQuotaExhausted = exitCode != ExitCodes.Success ? quotaLine : null;
+            _lastRunRateLimited = exitCode != ExitCodes.Success && rateLimited;
             return (exitCode, resumeSessionId is not null && exitCode != ExitCodes.Success && sessionLoadFailed);
         }
     }

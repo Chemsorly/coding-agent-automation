@@ -43,6 +43,7 @@ public sealed class FakeJobController : IAsyncDisposable
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly WorkItemTransitionService _transitions;
     private readonly ILabelSwapService _labelSwap;
+    private readonly CodingAgent.Api.Dispatch.DispatchRouter _router;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
 
@@ -90,6 +91,7 @@ public sealed class FakeJobController : IAsyncDisposable
         _dbFactory = dbFactory;
         _transitions = apiServices.GetRequiredService<WorkItemTransitionService>();
         _labelSwap = apiServices.GetRequiredService<ILabelSwapService>();
+        _router = apiServices.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>();
         _loop = Task.Run(() => PollAsync(_cts.Token));
     }
 
@@ -137,10 +139,18 @@ public sealed class FakeJobController : IAsyncDisposable
         // Postgres advisory lock, creates the Job, moves the item to Dispatched and posts
         // agent:in-progress. The harness has neither Postgres nor Kubernetes, so it produces the same
         // outcome in process: the API's own Pending→Dispatched compare-and-swap and label service.
-        var pending = await _workItems.GetPendingAsync(50, ct: ct);
+        // Routing writes the row (spec 056), so it runs only when an idle fake agent could take the item; otherwise a test
+        // that drives POST /dispatch itself (ProductionDispatchE2ETests) would race this pass on the same rows.
+        var pending = _registry.GetIdleAgents().Any(a => !a.Disabled)
+            ? await _workItems.GetPendingAsync(50, ct: ct)
+            : [];
         foreach (var item in pending)
         {
-            var agent = FindIdleAgentFor(item.AgentSelector);
+            // Spec 056 DD2: POST /dispatch routes the item first and holds what cannot start; a held item stays Pending.
+            var route = await _router.RouteAsync(item.Id, ct);
+            if (route.Status != CodingAgent.Api.Dispatch.DispatchRouteStatus.Routed) continue;
+
+            var agent = FindIdleAgentFor(route.TemplateKey!);
             if (agent is null) continue; // no capacity — the item stays Pending, as in production
 
             var dispatched = await _transitions.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched,
@@ -148,6 +158,10 @@ public sealed class FakeJobController : IAsyncDisposable
                 {
                     entity.AssignedAgentId = agent.AgentId.Value;
                     entity.DispatchedAt = DateTimeOffset.UtcNow;
+                    // As DispatchLifecycleService does (spec 056 DD7): a dispatched item no longer waits.
+                    entity.HoldReason = null;
+                    entity.HoldText = null;
+                    entity.HeldAt = null;
                 }, ct);
             if (!dispatched) continue; // another pass won the race
 

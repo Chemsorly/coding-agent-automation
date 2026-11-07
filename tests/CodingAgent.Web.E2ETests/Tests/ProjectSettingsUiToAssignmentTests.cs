@@ -78,7 +78,6 @@ public sealed class ProjectSettingsUiToAssignmentTests : E2ETestBase
             Id = "profile-ui-settings-e2e",
             DisplayName = "UI Settings Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
     }
 

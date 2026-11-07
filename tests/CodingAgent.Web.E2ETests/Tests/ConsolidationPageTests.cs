@@ -101,9 +101,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejectedMessage()
+    public async Task ConsolidationPage_TriggerWithNoRoute_QueuesAndSaysWhyItWaits()
     {
-        // Arrange: seed a template but do NOT connect any agent and seed no route, so the trigger is refused.
+        // Arrange: seed a template but do NOT connect any agent and seed no route: the run is queued and waits.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-consol-2",
@@ -122,12 +122,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: the refusal names its reason (spec 053 req 2.9): with no route, the API refuses to create the
-        // Pending WorkItem, and the page shows the routing text instead of a generic rejection.
+        // Assert (spec 056 DD1, DD12): without a route the run is still queued; the page says why it waits, not an error.
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText, message);
-        Assert.True(await page.IsStatusMessageErrorAsync());
+        Assert.Contains("queued. It waits: ", message);
+        Assert.Contains(HoldTexts.NoRoute(WorkItemTaskType.Consolidation), message);
+        Assert.False(await page.IsStatusMessageErrorAsync());
     }
 
 
@@ -157,9 +157,9 @@ public sealed class ConsolidationPageTests : E2ETestBase
     }
 
     [Fact]
-    public async Task ConsolidationPage_TriggerWithNoAgent_ShowsRejected_ForBrainConsolidation()
+    public async Task ConsolidationPage_TriggerWithNoRoute_QueuesAndSaysWhyItWaits_ForBrainConsolidation()
     {
-        // Arrange: seed a template but do NOT connect any agent and seed no route, so the trigger is refused.
+        // Arrange: seed a template but do NOT connect any agent and seed no route: the run is queued and waits.
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-consol-6",
@@ -183,12 +183,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for status message
         await page.WaitForStatusMessageAsync();
 
-        // Assert: the refusal names its reason (spec 053 req 2.9): with no route, the API refuses to create the
-        // Pending WorkItem, and the page shows the routing text instead of a generic rejection.
+        // Assert (spec 056 DD1, DD12): without a route the run is still queued; the page says why it waits, not an error.
         var message = await page.GetStatusMessageAsync();
         Assert.NotNull(message);
-        Assert.Contains(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText, message);
-        Assert.True(await page.IsStatusMessageErrorAsync());
+        Assert.Contains("queued. It waits: ", message);
+        Assert.Contains(HoldTexts.NoRoute(WorkItemTaskType.Consolidation), message);
+        Assert.False(await page.IsStatusMessageErrorAsync());
     }
 
     // ── Run-to-completion scenarios (issue #3088) ─────────────────────────────
@@ -220,7 +220,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s1",
             DisplayName = "S1 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-consol-s1");
@@ -322,7 +321,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s2",
             DisplayName = "S2 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-consol-s2");
@@ -432,7 +430,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s3b",
             DisplayName = "S3b Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-consol-s3b");
@@ -515,7 +512,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s5",
             DisplayName = "S5 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -597,7 +593,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s6",
             DisplayName = "S6 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         var page = new ConsolidationPage(Page, BaseUrl);

@@ -42,7 +42,6 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Id = "profile-fb",
             DisplayName = "Feedback Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-1", "e2e");
@@ -134,7 +133,6 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Id = "profile-fb-2",
             DisplayName = "Failure Feedback Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-2", "e2e");
@@ -222,7 +220,6 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Id = "profile-fb-3",
             DisplayName = "No Feedback Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-3", "e2e");
@@ -274,7 +271,6 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Id = "profile-fb-4",
             DisplayName = "Feedback UI Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-4", "e2e");
@@ -374,7 +370,6 @@ public sealed class FeedbackFlowTests : E2ETestBase
             Id = "profile-fb-5",
             DisplayName = "Full Feedback Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-5", "e2e");

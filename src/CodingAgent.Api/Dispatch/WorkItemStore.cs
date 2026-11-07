@@ -21,9 +21,33 @@ internal enum WorkItemCreateOutcome
 
     /// <summary>Another live work item exists for the same issue and issue provider.</summary>
     LiveItemExists,
+}
 
-    /// <summary>No agent route resolves, or the route cannot run (spec 053 DD2); nothing was written.</summary>
-    Refused,
+/// <summary>
+/// Spec 056 DD11 step 4: what a requeued work item carries over from the item it replaces, and the hold it starts with.
+/// </summary>
+internal sealed record WorkItemCreateOptions(
+    int RetryCount,
+    int PriorityWeight,
+    DateTimeOffset? OriginalEnqueuedAt,
+    string? HoldReason,
+    string? HoldText,
+    string? Credential,
+    DateTimeOffset HeldAt)
+{
+    public void ApplyTo(CodingAgent.Infrastructure.Persistence.Entities.WorkItemEntity entity)
+    {
+        entity.RetryCount = RetryCount;
+        entity.PriorityWeight = PriorityWeight;
+        entity.OriginalEnqueuedAt = OriginalEnqueuedAt;
+        entity.Credential = Credential;
+        if (HoldReason is not null)
+        {
+            entity.HoldReason = HoldReason;
+            entity.HoldText = HoldTexts.Cut(HoldText ?? "");
+            entity.HeldAt = HeldAt;
+        }
+    }
 }
 
 /// <summary>
@@ -33,17 +57,16 @@ internal enum WorkItemCreateOutcome
 /// </summary>
 internal sealed class WorkItemStore(
     IDbContextFactory<PipelineDbContext> dbFactory,
-    IOrchestratorRunService runService,
-    WorkItemRouter router)
+    IOrchestratorRunService runService)
 {
     /// <summary>
-    /// Routes the request (spec 053 DD1) and inserts it as a Pending work item, and shows its run in the UI at once.
-    /// The work item's ID is the request's <c>RunId</c> when it has one, so hub groups route by it. An idempotent
-    /// retry is answered before routing, so a retried create after a routing change finds its row (review-2 n5).
+    /// Inserts the request as a Pending work item and shows its run in the UI at once. The work item's ID is the
+    /// request's <c>RunId</c> when it has one, so hub groups route by it. Spec 056 DD1: creation never routes and never
+    /// refuses for routing; a route a caller sent is dropped, the dispatcher resolves it (req 3.2).
     /// </summary>
-    /// <returns>The outcome, the work item's ID, and the refusal text for <see cref="WorkItemCreateOutcome.Refused"/>.</returns>
-    public async Task<(WorkItemCreateOutcome Outcome, Guid WorkItemId, string? Reason)> CreateAsync(
-        JobDistributionRequest request, CancellationToken ct)
+    /// <returns>The outcome and the work item's ID.</returns>
+    public async Task<(WorkItemCreateOutcome Outcome, Guid WorkItemId)> CreateAsync(
+        JobDistributionRequest request, CancellationToken ct, WorkItemCreateOptions? options = null)
     {
         var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
             ? parsedRunId
@@ -57,14 +80,12 @@ internal sealed class WorkItemStore(
             // They are a TOCTOU (issue #3243); the unique-violation catch below is the race backstop.
             // 1. Idempotent PK retry: the same RunId was already created.
             if (await db.WorkItems.AnyAsync(w => w.Id == workItemId, ct))
-                return (WorkItemCreateOutcome.AlreadyCreated, workItemId, null);
+                return (WorkItemCreateOutcome.AlreadyCreated, workItemId);
 
-            // 2. The route (spec 053): pinned on the request, refused with its reason.
-            var routed = await router.RouteAsync(request, PipelineTelemetry.RoutingStages.Create, ct);
-            if (routed.IsRefused)
-                return (WorkItemCreateOutcome.Refused, workItemId, routed.RefusalText);
-            request = routed.Request!;
+            // 2. No route at creation (spec 056 DD1): the dispatcher routes every Pending item.
+            request = request with { Route = null, ResolvedProfileId = null, AgentSelector = "" };
             var entity = WorkItemEntityBuilder.BuildWorkItemEntity(request, workItemId);
+            options?.ApplyTo(entity);
 
             // 3. A live item for the same issue and provider (the partial unique index's predicate).
             var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
@@ -73,7 +94,7 @@ internal sealed class WorkItemStore(
                       && w.IssueProviderConfigId == entity.IssueProviderConfigId
                       && activeStatuses.Contains(w.Status),
                     ct))
-                return (WorkItemCreateOutcome.LiveItemExists, workItemId, null);
+                return (WorkItemCreateOutcome.LiveItemExists, workItemId);
 
             db.WorkItems.Add(entity);
             await db.SaveChangesAsync(ct);
@@ -84,8 +105,8 @@ internal sealed class WorkItemStore(
             // ID means an idempotent PK retry; otherwise a different run is already live for the issue.
             await using var freshDb = await dbFactory.CreateDbContextAsync(ct);
             return await freshDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct)
-                ? (WorkItemCreateOutcome.AlreadyCreated, workItemId, null)
-                : (WorkItemCreateOutcome.LiveItemExists, workItemId, null);
+                ? (WorkItemCreateOutcome.AlreadyCreated, workItemId)
+                : (WorkItemCreateOutcome.LiveItemExists, workItemId);
         }
 
         // The in-memory run lets the UI subscribe to hub events right away (Req 1a.1, Option A).
@@ -95,7 +116,7 @@ internal sealed class WorkItemStore(
         if (run is not null)
             runService.AddRun(run);
 
-        return (WorkItemCreateOutcome.Created, workItemId, null);
+        return (WorkItemCreateOutcome.Created, workItemId);
     }
 
     /// <summary>The work item's status, or null when it does not exist.</summary>

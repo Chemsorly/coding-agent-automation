@@ -47,7 +47,6 @@ public sealed class LoopControlTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Act: navigate
@@ -109,7 +108,6 @@ public sealed class LoopControlTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Act: navigate
@@ -166,7 +164,6 @@ public sealed class LoopControlTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Two extra providers are needed so the new template can use different providers than template-1
@@ -264,7 +261,6 @@ public sealed class LoopControlTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Act: navigate and start loop
@@ -318,7 +314,6 @@ public sealed class LoopControlTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);

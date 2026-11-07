@@ -34,7 +34,6 @@ public class ConfigurationLoadingPropertyTests
             {
                 Id = Guid.NewGuid().ToString(),
                 DisplayName = $"Profile-{i}",
-                Enabled = true,
             };
             store.SaveAgentProfileAsync(profile, CancellationToken.None).GetAwaiter().GetResult();
         }
@@ -62,7 +61,7 @@ public class ConfigurationLoadingPropertyTests
             var id = Guid.NewGuid().ToString();
             ids.Add(id);
             store.SaveAgentProfileAsync(
-                new AgentProfile { Id = id, DisplayName = $"Valid-{i}", Enabled = true },
+                new AgentProfile { Id = id, DisplayName = $"Valid-{i}" },
                 CancellationToken.None).GetAwaiter().GetResult();
         }
 

@@ -32,8 +32,10 @@ that was running, links and IDs (trace IDs, dashboards, a failed run, a ticket) 
 
 The side panel shows what the agent will use: the project's enabled repositories (the one that runs the job is
 marked), the MCP servers merged into the run (the routed agent profile and the project, by name), the context sources and the
-time limit. When the executor's Triage route does not resolve, the panel shows the reason, and starting the triage is
-refused with `400` and the same text (for example `No agent route: set the default route in Settings → Agents → Routing`). It also lists triages of the same project from the last 30 days whose titles share words with
+time limit. When the executor's Triage route does not resolve, the panel shows the reason; the triage still starts, its attempt
+waits in the queue with that reason, and the triage page says so (for example "The attempt is queued and waits: No
+agent route for Triage — set it in Settings → Agents → Routing"). The same applies while the route's credential is
+paused. It also lists triages of the same project from the last 30 days whose titles share words with
 yours, so you can open one instead of starting a duplicate.
 
 The job runs on the "start looking in" repository's template when you pick one, otherwise on the project's first

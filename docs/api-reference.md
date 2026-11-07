@@ -71,7 +71,7 @@ Retrieve the job assignment details for a work item. Agents call this after bein
 | 200 | Success — returns `JobAssignmentMessage` JSON |
 | 403 | An agent-derived key was used for a work item that is not assigned to that agent (its `AssignedAgentId` or `K8sJobName` does not match the `agentId`), or the key carries no agent identity |
 | 404 | Work item not found or has no payload |
-| 410 | Work item is in a terminal state (`Succeeded`, `Failed`, or `Cancelled`), or its agent route can no longer run. A refused route fails the work item with the reason as its error (`InfrastructureFailure`, and the reason code under `routeRefusal` in its payload, so a late `Running` report does not recover it). The reasons are `no_route`, `profile_unavailable` (the profile was deleted or disabled), `no_tool`, `template_missing`, `template_changed` (the profile's job template changed after the item was queued) and `config_collision`. The agent exits without retrying |
+| 410 | Work item is in a terminal state (`Succeeded`, `Failed`, or `Cancelled`), or its agent route can no longer run. A refused route fails the work item with the reason as its error (`InfrastructureFailure`, and the reason code under `routeRefusal` in its payload, so a late `Running` report does not recover it). The reasons are `no_route` (the item was dispatched without a pinned route), `profile_unavailable` (the profile was deleted), `no_tool`, `template_changed` (the profile's job template changed after the item was dispatched) and `config_collision`. The agent exits without retrying |
 | 503 | The assignment could not be enriched with fresh configuration (deleted provider, transient database failure). The agent retries; the work item stays `Dispatched` |
 
 **Example request:**
@@ -116,9 +116,8 @@ Queue a work item as `Pending`. The Scheduler calls this; the request names the 
 
 | Status | Description |
 |--------|-------------|
-| 201 | Queued — returns the work item's GUID |
+| 201 | Queued — returns the work item's GUID. The work item is never refused for its route: the route is resolved when it is dispatched (spec 056), and a route that cannot run makes it wait |
 | 409 | A live work item already exists for the issue |
-| 422 | No agent route resolves, or the route cannot run. ProblemDetails with the title `Work item refused` and the reason as its `detail`, for example `No agent route: set the default route in Settings → Agents → Routing`. No work item and no run are created |
 
 ### POST /api/work-items/{id}/dispatch
 
@@ -133,9 +132,9 @@ Start a `Pending` work item on a Kubernetes Job. The Scheduler's dispatch loop c
 
 | Status | Description |
 |--------|-------------|
-| 200 | `{ "dispatched": true, "reason": "none" }`, or `{ "dispatched": false, "reason": ... }` with `not_pending`, `no_template`, `concurrency_limit`, `global_concurrency_limit` or `no_route`. `concurrency_limit`: the item's job template is at its limit; the Scheduler stops that template for the cycle. `global_concurrency_limit`: the limit for all agents is reached; the Scheduler ends its cycle. A held item stays `Pending`. `no_route` is a work item queued by a previous release without an agent route whose route is refused now; it is failed with the reason |
+| 200 | `{ "dispatched": true, "reason": "none" }`, or `{ "dispatched": false, "reason", "holdText", "templateKey", "credential" }`: the item waits (stays `Pending`) and carries the reason as its hold, shown on the Work page. The API first resolves the item's route and pins it. Reasons: `no_route` (no row resolves, or the stored request cannot be read), `profile_unavailable`, `no_tool`, `no_template` (the profile's job template is not in the Helm values), `credential_paused` (the route's credential is paused), `concurrency_limit` (the job template is at its limit), `global_concurrency_limit` (the limit for all agents is reached; the Scheduler ends its cycle), `pvc_unavailable` (no Kiro credential PVC is free) and `not_pending`. `templateKey` and `credential` are what the item resolved to: the Scheduler skips the rest of the cycle's items of that template (`concurrency_limit`, `pvc_unavailable`) or credential (`credential_paused`); the routing waits stop nothing else. A wait that only an operator ends (`credential_paused`, `no_route`, `profile_unavailable`, `no_tool`, `no_template`) puts the item behind the other queued work |
 | 404 | Work item not found |
-| 503 | No PVC available, advisory lock timeout, running agents could not be counted (the Kubernetes Jobs could not be listed; dispatch attempt reason `agent_count_unavailable`), or Kubernetes Job creation failed. The item stays `Pending` and is retried next cycle |
+| 503 | Advisory lock timeout, running agents could not be counted (the Kubernetes Jobs could not be listed; dispatch attempt reason `agent_count_unavailable`), or Kubernetes Job creation failed. The item stays `Pending` and is retried next cycle |
 
 ---
 
@@ -373,7 +372,7 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
     {
       "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
       "name": "dotnet-standard",
-      "configuration": "{\"displayName\":\"dotnet-standard\",\"enabled\":true,\"jobTemplate\":\"dotnet\",\"settings\":{\"authMode\":\"subscription\"},\"mcpServers\":[]}"
+      "configuration": "{\"displayName\":\"dotnet-standard\",\"jobTemplate\":\"dotnet\",\"settings\":{\"authMode\":\"subscription\"},\"mcpServers\":[]}"
     }
   ],
   "qualityGateConfigs": [
@@ -622,7 +621,7 @@ Re-dispatch needs the `operator` role on the run's stored project, with the same
 
 | Path | Does |
 |---|---|
-| `POST /api/ui/runs/{runId}/redispatch` | Queues a new implementation run for the issue of a failed, cancelled or conflicted implementation run, with the run's providers and project. Returns `200` with the message to show, as a JSON string. Any other run, or an issue that already has queued or running work, is refused with `409` and the reason. Blocking labels such as `agent:error` are not cleared. |
+| `POST /api/ui/runs/{runId}/redispatch` | Queues a new implementation run for the issue of a failed, cancelled or conflicted implementation run, with the run's providers and project. Returns `200` with the message to show, as a JSON string. The message says why the run waits when it would wait now. Any other run, or an issue that already has queued or running work, is refused with `409` and the reason. Blocking labels such as `agent:error` are not cleared. |
 
 ### Backlog (any role)
 
@@ -646,7 +645,7 @@ The dispatch drawers browse a template's providers through `/api/ui/templates/{t
 
 The dispatch drawers enqueue work with `POST /api/ui/templates/{templateId}/…/dispatch`. The request names only the template and the issue or pull request. The API reads the item from the template's providers, with the stored credentials. The caller needs operator on the template's project, and a template of no project needs global operator. A template the user cannot read is `404`; one they can read but not operate is `403`.
 
-The answer is `200` with the message to show, as a JSON string. The work item is queued as `Pending`, and the Scheduler's dispatch loop starts it. A refusal is `409`, and a provider that is gone or fails is `502`; both carry the reason as a JSON string.
+The answer is `200` with the message to show, as a JSON string. The work item is queued as `Pending`, and the Scheduler's dispatch loop starts it. When it would wait now (no route, a paused credential, a limit), the message says why, for example `⏳ Queued #42. It waits: Kiro paused — quota used up, since …` (spec 056). A refusal is `409`, and a provider that is gone or fails is `502`; both carry the reason as a JSON string.
 
 | Path | Dispatches |
 |---|---|
@@ -661,14 +660,26 @@ The answer is `200` with the message to show, as a JSON string. The work item is
 | `GET /api/ui/agents` | The agent registry, in the same shape as `GET /api/agents`. A global reader gets every agent. A project-scoped user gets only the agents running work of their projects, so idle agents and other projects' runs are not shown to them. |
 | `GET /api/ui/agents/credential-pool` | `{ total, available, claimed }` for the Kiro credential pool. `claimed` counts the PVCs of active work items; a PVC a chat holds is not counted. `total` is `0` when pooling is not configured. Needs a global role. |
 
+### Agent credentials (spec 056)
+
+The pause of each agent credential (`kiro`, `claude-subscription`, `claude-api-key`, `opencode`): see [Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses).
+
+| Path | Does |
+|---|---|
+| `GET /api/ui/agent-credentials` | Any role. `{ credentials, heldByReason }`: every credential a profile uses, plus any paused one, as `{ credential, displayName, paused, reason, source, since, until, detail, pausedBy, text, heldItems, profiles }`. `reason` is `quota_exhausted`, `auth_failed` or `manual`; `source` is `auto` (an agent's report) or `manual`; `until` is null for a pause until resumed; `detail` is the provider's masked line or the operator's note; `text` is the pause text the waiting work shows; `heldItems` counts the queued items waiting for it. `heldByReason` counts the queued items with a stored hold per hold reason. |
+| `POST /api/ui/agent-credentials/{credential}/pause` | Global operator. Pauses the credential from `{ until, note }` (`until` null: until resumed; `note` at most 200 characters), replacing any pause. `204`. `400` for an end time in the past or a longer note, `404` for an unknown credential. Logged with the user. |
+| `POST /api/ui/agent-credentials/{credential}/resume` | Global operator. Ends the pause; the work waiting for it becomes eligible at once. `204`, also when it was not paused; `404` for an unknown credential. Logged with the user. |
+
+The Scheduler reads `GET /api/agents/credentials` (operator key): `[{ credential, paused }]` for the `pipeline.agent_credential.paused` gauge.
+
 ### Agent Chat (operator)
 
 Every path needs an operator role. A chat runs with the MCP servers, secrets and steering of the project it is launched for, so launching it needs operator on that project, and a chat without a project needs global operator. The API records who launched each chat. Only that user can prompt it, keep it alive or end it, as long as they can still operate on its project; an admin can use any chat. Anyone else gets `404`, as for a chat that does not exist, and so does any agent that was not launched here: pipeline agents cannot be prompted. Refusals carry the reason as a JSON string: `400` for a profile, model or effort that cannot be launched, `409` for a request that cannot be served or an agent limit set in the Helm chart, and `502` when the pod cannot be started.
 
 | Path | Does |
 |---|---|
-| `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the enabled agent profiles whose job template exists and has a tool, as `{ id, displayName, tool, models, efforts, defaultModel, defaultEffort }`. `models` is `auto`, the models routes name for the profile and the tool's built-in list; `efforts` are the efforts the tool accepts. The defaults are the global default route's model and effort when that route names the profile, otherwise `auto`. |
-| `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId, model, effort }` on the profile's job template, then waits until the pod connects (up to `connectTimeoutSeconds`). Without `model` or `effort` the profile's defaults are used. Returns `{ agentId, model }`. A disabled profile or one whose job template is gone, a model the options do not offer for the profile, or an effort its tool does not accept is refused with `400` and the reason. A chat counts toward the [agent limits](configuration.md#agent-capacity); a Helm limit that is reached refuses it with `409`, for example `4 of 4 agents are running for dotnet,kiro (limit set in the Helm chart). Try again when one finishes.` (for the all-agents limit: `4 of 4 agents are running (limit set in the Helm chart). …`). UI limits never refuse a chat. `502` when the running agents cannot be counted (`Could not check how many agents are running. Try again.`), when another agent start holds the lock for longer than a minute (`Another agent is starting. Try again.`), when no Kiro credential PVC is free (`No agent credentials available. Try again later.`), or when the pod does not connect in time. |
+| `GET /api/ui/chat/options` | Returns `{ profiles, connectTimeoutSeconds }`. `profiles` lists the agent profiles whose job template exists and has a tool, as `{ id, displayName, tool, models, efforts, defaultModel, defaultEffort, pausedText }`; `pausedText` is set when the profile's credential is paused (the profile stays listed; a launch answers `409` with that text). `models` is `auto`, the models routes name for the profile and the tool's built-in list; `efforts` are the efforts the tool accepts. The defaults are the global default route's model and effort when that route names the profile, otherwise `auto`. |
+| `POST /api/ui/chat` | Launches a chat pod from `{ profileId, projectId, model, effort }` on the profile's job template, then waits until the pod connects (up to `connectTimeoutSeconds`). Without `model` or `effort` the profile's defaults are used. Returns `{ agentId, model }`. A profile whose job template is gone, a model the options do not offer for the profile, or an effort its tool does not accept is refused with `400` and the reason. A profile whose credential is paused is refused with `409` and the pause text, for example `Kiro paused — quota used up, since 2026-11-02 06:26 UTC (until 2026-12-01 00:00 UTC)`, before the agent limits are checked. A chat counts toward the [agent limits](configuration.md#agent-capacity); a Helm limit that is reached refuses it with `409`, for example `4 of 4 agents are running for dotnet,kiro (limit set in the Helm chart). Try again when one finishes.` (for the all-agents limit: `4 of 4 agents are running (limit set in the Helm chart). …`). UI limits never refuse a chat. `502` when the running agents cannot be counted (`Could not check how many agents are running. Try again.`), when another agent start holds the lock for longer than a minute (`Another agent is starting. Try again.`), when no Kiro credential PVC is free (`No agent credentials available. Try again later.`), or when the pod does not connect in time. |
 | `POST /api/ui/chat/{agentId}/prompt` | Sends `{ sessionId, text }`. The API adds the profile's and project's MCP servers, and on the first prompt also the project's secrets and steering. The reply streams to the chat's group on the [UI hub](#ui-hub-hubsui), tagged with the `sessionId`. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/keepalive` | Resets the idle clock of the chat's pod. Returns `204`. |
 | `POST /api/ui/chat/{agentId}/terminate` | Ends the chat and stops its pod. Returns `204`. |
@@ -716,10 +727,10 @@ Agent profiles, routing and capacity:
 | Path | Does |
 |---|---|
 | `GET /agent-profiles` | `{ profiles, jobTemplates }`: the profiles with MCP server secrets masked, and the job templates of the Helm values as `{ key, tool }`. |
-| `PUT /agent-profiles` | Saves a profile. It needs a display name no other profile has, a job template the Helm values define with a tool, and tool settings; a body without tool settings comes from a page of an older release and is refused with `This page is out of date; reload`. A profile that routes name cannot be disabled. Refusals are `400` with the reason; a refusal because of routes names each row. |
+| `PUT /agent-profiles` | Saves a profile. It needs a display name no other profile has, a job template the Helm values define with a tool, and tool settings; a body without tool settings comes from a page of an older release and is refused with `This page is out of date; reload`. A Claude Code profile needs `authMode` `subscription` or `apiKey` (`Auth mode must be subscription or apiKey.`). A profile has no enabled flag (spec 056; an `enabled` field in the body is ignored). Refusals are `400` with the reason; a refusal because of routes names each row. |
 | `DELETE /agent-profiles/{id}` | Deletes a profile. A profile that routes name is refused with `400`, naming each row. |
-| `GET /agent-routing` | `{ routing, profiles, jobTemplates }`: the global table as `{ default, byTaskType }`, each route `{ profileId, model, effort }`; the profiles a route can name as `{ id, name, tool, jobTemplateKey, enabled }`; and the job templates. Repository rows are on the templates (`agentRoutes`). |
-| `PUT /agent-routing` | Replaces the global table. Every row is checked: the default row is required once a profile exists, the profile must exist and be enabled on a job template with a tool, the model must be set (`auto` lets the tool choose) and the effort one the tool accepts. An invalid table is refused with `400` and one line per invalid row. A body that names a task type twice is refused with `400`. |
+| `GET /agent-routing` | `{ routing, profiles, jobTemplates }`: the global table as `{ default, byTaskType }`, each route `{ profileId, model, effort }`; the profiles a route can name as `{ id, name, tool, jobTemplateKey, pausedText }` (`pausedText`: the pause of the profile's credential, if any); and the job templates. Repository rows are on the templates (`agentRoutes`). |
+| `PUT /agent-routing` | Replaces the global table. Every row is checked: the default row is required once a profile exists, the profile must exist on a job template with a tool, the model must be set (`auto` lets the tool choose) and the effort one the tool accepts. An invalid table is refused with `400` and one line per invalid row. A body that names a task type twice is refused with `400`. |
 | `GET /agent-capacity` | `{ all, templates, unknownTemplateRuns, unknownTemplateChats, countsAvailable }`: one row for all agents (`templateKey` null) and one per deployed job template, each `{ templateKey, tool, runningRuns, runningChats, helmLimit, uiLimit, effectiveLimit, effectiveSource }`. A limit of `0` means none; `effectiveSource` is `helm`, `ui` or null. When the agent Jobs cannot be listed, `countsAvailable` is `false` and the counts are `0`. See [Configuration — Agent Capacity](configuration.md#agent-capacity). |
 | `PUT /agent-capacity` | Replaces the UI limits from `{ maxConcurrentAgents, maxConcurrentByJobTemplate }`, each 0–100 (0 = no limit). Returns `204`. A value out of range, an invalid or repeated template key, or more than 100 entries is refused with `400` and one line per problem. Limits for templates that are not deployed and `0` values are dropped. Each changed value is logged with the user. |
 
@@ -806,7 +817,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/work-items` | OperatorApiKey | Queue a work item on its agent route (`422` when no route resolves) |
+| POST | `/api/work-items` | OperatorApiKey | Queue a work item (its route is resolved when it is dispatched) |
 | POST | `/api/work-items/{id}/dispatch` | OperatorApiKey | Start a pending work item |
 | GET | `/api/work-items/{id}/assignment` | AgentApiKey | Fetch job assignment |
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
@@ -831,6 +842,8 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/ui/templates/{templateId}/…/dispatch` | User token, operator of the template's project | Queue an issue, pull request or epic from the drawers |
 | GET | `/api/ui/agents` | User token | Agents (all for global readers; those running their projects' work for scoped users) |
 | GET | `/api/ui/agents/credential-pool` | User token, global read | Kiro credential pool usage |
+| GET | `/api/ui/agent-credentials` | User token, any role | Agent credentials and their pauses |
+| POST | `/api/ui/agent-credentials/{credential}/pause`, `/resume` | User token, global operator | Pause or resume an agent credential |
 | GET | `/api/agents/capacity` | OperatorApiKey | Running agents and the limits that apply, in total and per job template; the Scheduler's agent gauges read it |
 | GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
 | POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |

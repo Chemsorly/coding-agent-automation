@@ -129,7 +129,7 @@ public static class ApiInfrastructureServiceExtensions
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<CodingAgent.Api.Triage.TriageTrackerOperations>(),
-            sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemRouter>(),
+            sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>(),
             Serilog.Log.Logger));
         services.AddSingleton(sp => new CodingAgent.Api.Triage.TriageIssueCreator(
             sp.GetRequiredService<ITriageStore>(),

@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 
 namespace CodingAgent.Kubernetes;
@@ -52,4 +53,10 @@ public static class AgentStartTexts
             ? $"{decision.Running} of {decision.Limit} agents are running (limit set in the Helm chart). Try again when one finishes."
             : $"{decision.Running} of {decision.Limit} agents are running for {templateKey} (limit set in the Helm chart). Try again when one finishes.";
     }
+
+    /// <summary>
+    /// Spec 056 D15: the hold text of a work item a limit holds, for example "4 of 4 agents are running for dotnet,kiro
+    /// (limit set in Settings)".
+    /// </summary>
+    public static string WorkItemHold(AgentStartDecision decision, string templateKey) => HoldTexts.Limit(decision, templateKey);
 }

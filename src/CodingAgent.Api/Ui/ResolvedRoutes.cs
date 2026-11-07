@@ -16,13 +16,17 @@ internal static class ResolvedRoutes
         IEnumerable<PipelineJobTemplate> templates,
         AgentRouting routing,
         IReadOnlyList<AgentProfile> profiles,
-        IReadOnlyDictionary<string, string> toolsByKey) =>
-        templates.ToDictionary(
+        IReadOnlyDictionary<string, string> toolsByKey,
+        IReadOnlyList<AgentCredentialPause>? pauses = null)
+    {
+        var paused = (pauses ?? []).ToDictionary(p => p.Credential, StringComparer.Ordinal);
+        return templates.ToDictionary(
             t => t.Id,
             IReadOnlyList<UiResolvedRoute> (t) => AgentRouteLabels.TaskTypes
-                .Select(taskType => Resolve(taskType, t, routing, profiles, toolsByKey))
+                .Select(taskType => Resolve(taskType, t, routing, profiles, toolsByKey, paused))
                 .ToList(),
             StringComparer.Ordinal);
+    }
 
     /// <summary>
     /// One task type's route. A refusal sets only the problem. A route whose job template the Helm values do not define
@@ -33,7 +37,8 @@ internal static class ResolvedRoutes
         PipelineJobTemplate template,
         AgentRouting routing,
         IReadOnlyList<AgentProfile> profiles,
-        IReadOnlyDictionary<string, string> toolsByKey)
+        IReadOnlyDictionary<string, string> toolsByKey,
+        Dictionary<string, AgentCredentialPause> paused)
     {
         var result = AgentRouteResolver.Resolve(taskType, template, routing, profiles, toolsByKey);
         if (result.Snapshot is not { } route || result.Profile is not { } profile)
@@ -41,8 +46,12 @@ internal static class ResolvedRoutes
 
         var key = profile.JobTemplateKey();
         var problem = toolsByKey.Count > 0 && !toolsByKey.ContainsKey(key)
-            ? $"Job template {key} of agent profile '{profile.DisplayName}' does not exist in the Helm values"
+            ? HoldTexts.NoTemplate(key, profile.DisplayName)
             : null;
-        return new UiResolvedRoute(taskType, route.ProfileName, route.Tool, route.Model, route.Effort, route.Source, key, problem);
+        // Spec 056 req 4.3: a row whose credential is paused says so.
+        var pausedText = AgentCredentials.For(profile, toolsByKey) is { } credential && paused.TryGetValue(credential, out var pause)
+            ? HoldTexts.CredentialPaused(pause)
+            : null;
+        return new UiResolvedRoute(taskType, route.ProfileName, route.Tool, route.Model, route.Effort, route.Source, key, problem, pausedText);
     }
 }

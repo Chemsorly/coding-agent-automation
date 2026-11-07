@@ -25,6 +25,8 @@ public static class SettingsNodes
     public const string AgentRouting = "agent-routing";
     /// <summary>Spec 057: Settings → Agents → Capacity.</summary>
     public const string AgentCapacity = "agent-capacity";
+    /// <summary>Spec 056: Settings → Agents → Credentials.</summary>
+    public const string AgentCredentials = "agent-credentials";
     public const string QualityGateConfigs = "quality-gate-configs";
     public const string ReviewerConfigs = "reviewer-configs";
     public const string Projects = "projects";

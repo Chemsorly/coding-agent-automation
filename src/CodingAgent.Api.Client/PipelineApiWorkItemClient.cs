@@ -212,13 +212,13 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result.Count;
     }
 
-    public async Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
+    public async Task<DispatchPendingOutcome> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default)
     {
         using var response = await _http.PostAsync(
             $"/api/work-items/{workItemId}/dispatch",
             null,
             ct);
-        // 503 = transient failure (PVC exhausted, lock timeout, K8s failure — retry next poll cycle).
+        // 503 = transient failure (lock timeout, running agents not countable, K8s failure — retry next poll cycle).
         if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
             return DispatchPendingResult.Transient;
 
@@ -245,10 +245,11 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         // Transient (retry next cycle) or throwing, to make the failure mode visible.
         if (dto?.Dispatched == true)
             return DispatchPendingResult.Dispatched;
-        // Spec 057: the limit for all agents is reached — the Scheduler ends its cycle.
-        return dto?.Reason == GlobalConcurrencyLimitReason
-            ? DispatchPendingResult.GlobalLimitReached
-            : DispatchPendingResult.PermanentRejection;
+        // Spec 057: the limit for all agents is reached — the Scheduler ends its cycle. Spec 056 DD9: a hold names the
+        // template and credential the item resolved to.
+        return new DispatchPendingOutcome(
+            dto?.Reason == GlobalConcurrencyLimitReason ? DispatchPendingResult.GlobalLimitReached : DispatchPendingResult.PermanentRejection,
+            dto?.Reason, dto?.TemplateKey, dto?.Credential);
     }
 
     // Internal DTOs for response deserialization
@@ -270,7 +271,7 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     // Spec 057: the dispatch reason that ends the Scheduler's cycle (AgentCapacityRules.GlobalLimitReason in the API).
     private const string GlobalConcurrencyLimitReason = "global_concurrency_limit";
 
-    private sealed record DispatchPendingResponse(bool Dispatched, string? Reason);
+    private sealed record DispatchPendingResponse(bool Dispatched, string? Reason, string? TemplateKey = null, string? Credential = null);
 
     private sealed record ActiveDecompositionCountResponse(int Count);
 }

@@ -63,7 +63,6 @@ public sealed class SchedulerRecoveryE2ETests : HeadlessE2ETestBase
             Id = "watchdog-recovery-profile",
             DisplayName = "Watchdog Recovery Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true,
         });
 
         // Resolve the Scheduler host's InMemoryPipelineApiConfigClient and break config loading

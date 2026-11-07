@@ -523,6 +523,51 @@ public class QualityGateExecutorRetryTests
             It.IsAny<Action<string>?>()), Times.Once);
     }
 
+    // ── Spec 056 DD14: a used-up quota or a rejected login opens no draft PR ──────
+
+    [Theory]
+    [InlineData(AgentErrorCategory.ProviderQuotaExhausted, "The agent provider's quota is used up: monthly usage limit")]
+    [InlineData(AgentErrorCategory.PermanentAuthFailure, "The agent provider rejected the login: monthly usage limit")]
+    public async Task ProviderUnavailable_EndsTheRunFailed_WithoutFeedbackOrDraftPr_DD14(AgentErrorCategory category, string reason)
+    {
+        var config = CreateConfig(maxRetries: 3);
+        SetupValidatorAlwaysFails();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["error"],
+                ErrorCategory = category,
+                ProviderFailure = new AgentProviderFailure(AgentProviderFailure.QuotaExhausted, null, "monthly usage limit"),
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockCallbacks.Verify(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once, "no failure-feedback call asks the paused provider again");
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _run.FailureReason.Should().Be(reason);
+    }
+
+    // DD14 regression: a CLI that refused its configuration keeps today's draft PR.
+    [Fact]
+    public async Task ProviderMisconfigured_StillFinalizesTheDraftPr_DD14()
+    {
+        var config = CreateConfig(maxRetries: 3);
+        SetupValidatorAlwaysFails();
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Quality gates failed")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 4, OutputLines = ["refused"], ErrorCategory = AgentErrorCategory.ProviderMisconfigured });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()), Times.Once);
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
+    }
+
     /// <summary>
     /// RunRetryLoopAsync lines 230-248: when the agent returns ExitCode=0 but TotalTokens=0 and
     /// OutputLines is empty (dead/exhausted session), the loop must clear CodegenSessionId and

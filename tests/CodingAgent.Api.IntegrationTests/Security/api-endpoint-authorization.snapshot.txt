@@ -1,6 +1,7 @@
 GET /api/agents/ -> Service: OperatorApiKey
 GET /api/agents/capacity -> Service: OperatorApiKey
 GET /api/agents/credential-pool -> Service: OperatorApiKey
+GET /api/agents/credentials -> Service: OperatorApiKey
 GET /api/config/export -> Service: OperatorApiKey
 POST /api/config/import -> Service: OperatorApiKey
 GET /api/config/pipeline -> Service: OperatorApiKey
@@ -18,6 +19,9 @@ POST /api/pipeline-runs/ -> Service: OperatorApiKey
 GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey
 PUT /api/scheduler/loop-status -> Service: OperatorApiKey
 POST /api/scheduler/maintenance/retention-sweep -> Service: OperatorApiKey
+GET /api/ui/agent-credentials -> Ui: Ui.AnyAccess
+POST /api/ui/agent-credentials/{credential}/pause -> Ui: Ui.AnyAccess, Ui.GlobalOperate
+POST /api/ui/agent-credentials/{credential}/resume -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/agents -> Ui: Ui.AnyAccess
 GET /api/ui/agents/credential-pool -> Ui: Ui.AnyAccess, Ui.GlobalRead
 GET /api/ui/backlog -> Ui: Ui.AnyAccess

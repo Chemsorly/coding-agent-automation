@@ -168,16 +168,20 @@ public sealed class DispatchPendingWorkItemEndpointTests
     }
 
     /// <summary>
-    /// Rollout routing (spec 053 DD10) over the test database. Every item these tests seed carries a selector, so it
-    /// never routes; <c>RolloutRoutingTests</c> in Api.IntegrationTests covers the items stored without one.
+    /// Spec 056: the dispatch router over the test database, with the default route stored: every item routes to one
+    /// profile on the template store's first job template.
     /// </summary>
-    private static RolloutRouting CreateRolloutRouting(IDbContextFactory<PipelineDbContext> dbFactory, JobTemplateStore templateStore)
+    private static DispatchRouter CreateRouter(IDbContextFactory<PipelineDbContext> dbFactory, JobTemplateStore templateStore)
     {
-        var router = TestWorkItemRouter.Create(dbFactory, templateStore);
-        var transitions = new WorkItemStatusTransitionService(
-            new WorkItemTransitionService(dbFactory, Mock.Of<ILogger<WorkItemTransitionService>>()),
-            Mock.Of<IRunLifecycleManager>(), Mock.Of<ILogger<WorkItemStatusTransitionService>>(), dbFactory);
-        return new RolloutRouting(dbFactory, router, transitions);
+        AgentRoutingTestData.SeedRoutingAsync(dbFactory).GetAwaiter().GetResult();
+        return TestDispatchRouter.Create(dbFactory, templateStore);
+    }
+
+    /// <summary>The router with the default route to a profile on <paramref name="jobTemplateKey"/>, which may be missing.</summary>
+    private static DispatchRouter CreateRouterTo(IDbContextFactory<PipelineDbContext> dbFactory, JobTemplateStore templateStore, string jobTemplateKey)
+    {
+        AgentRoutingTestData.SeedRoutingAsync(dbFactory).GetAwaiter().GetResult();
+        return TestDispatchRouter.Create(dbFactory, templateStore, jobTemplateKey: jobTemplateKey);
     }
 
     /// <summary>
@@ -225,7 +229,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             AgentSelector = selector,
             TimeoutSeconds = 3600,
             CreatedAt = DateTimeOffset.UtcNow,
-            Payload = "{}",
+            Payload = WorkItemTestData.RoutablePayload(),
             ClaimedPvcName = claimedPvcName
         };
         await using var db = await dbFactory.CreateDbContextAsync();
@@ -250,7 +254,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             AgentSelector = selector,
             TimeoutSeconds = 3600,
             CreatedAt = DateTimeOffset.UtcNow,
-            Payload = "{}",
+            Payload = WorkItemTestData.RoutablePayload(),
             ClaimedPvcName = claimedPvcName
         });
         await db.SaveChangesAsync();
@@ -276,7 +280,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
@@ -308,7 +312,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var dbFactory = CreateDbFactory();
         var templateStore = CreateTemplateStore();
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
         var missingId = Guid.NewGuid();
 
@@ -331,7 +335,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore();
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         // Track whether the lock was acquired
         var lockAcquired = false;
@@ -362,7 +366,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var entity = await SeedPendingItemAsync(dbFactory, "opencode,java");
         var templateStore = CreateTemplateStore("kiro,dotnet"); // no template for "opencode,java"
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouterTo(dbFactory, templateStore, "opencode,java");
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
@@ -392,7 +396,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
@@ -411,7 +415,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
     // ── Test 7: No PVC available → 503; item remains Pending ─────────────────
 
     [Fact]
-    public async Task DispatchPendingWorkItem_NoPvcAvailable_Returns503_ItemRemainingPending()
+    public async Task DispatchPendingWorkItem_NoPvcAvailable_IsDeferred_ItemRemainingPending()
     {
         var dbFactory = CreateDbFactory();
         // Claim the only PVC in the pool via an active item
@@ -421,15 +425,14 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
         // Pool has only "pvc-0" which is already claimed
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
             entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull();
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable, "no PVC → 503");
+        // Spec 056 DD8: no free PVC is a deferral of the template, not a 503.
+        (result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)!.Value!.Reason.Should().Be("pvc_unavailable");
 
         await using var db = await dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
@@ -455,7 +458,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-a", "pvc-b"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // TODO [WARNING]: The "BeSameAs" assertion below is vacuously true when availableCallbackBefore
@@ -517,7 +520,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-solo"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // TODO [WARNING]: The "BeSameAs" assertion below is vacuously true when availableCallbackBefore
@@ -543,9 +546,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
             entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
 
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
-            "PVC exhaustion must return 503");
+        (result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)!.Value!.Reason.Should().Be("pvc_unavailable",
+            "spec 056 DD8: PVC exhaustion is a deferral");
 
         var availableCallbackAfter = typeof(WorkDistributionTelemetry)
             .GetField("_credentialPoolAvailableCallback", BindingFlags.NonPublic | BindingFlags.Static)!
@@ -598,7 +600,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Callback(() => Interlocked.Increment(ref k8sCallCount));
         // Single PVC so second caller (if it reaches the lifecycle) can't get a PVC
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         // Real in-process lock provider — serialises concurrent calls
         var lockProvider = new InProcessDistributedLockProvider();
 
@@ -672,7 +674,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Returns(Task.CompletedTask);
         // Empty PVC pool — confirms PVC gate is not involved in the result
         var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         // Mock lock provider that simulates the race: during AcquireAsync (after the fast-path
         // check has already confirmed Pending), transition the item to Dispatched in the DB.
@@ -759,7 +761,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // Act — first call with K8s failing
@@ -822,7 +824,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         // for its transition calls, so the endpoint's own reads through dbFactory are not counted.
         var countingLifecycleFactory = new CountingDbContextFactory(CreateDbFactory());
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"], lifecycleDbFactory: countingLifecycleFactory);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
@@ -893,7 +895,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         // Non-kiro template: PVC gate is skipped entirely, so no PVC cleanup SaveChangesAsync
         // runs in the catch block — we test only the FailWorkItemAsync throw path.
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5, providerType: "opencode");
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // Capture Serilog events by injecting a capturing logger directly into the faulted lifecycle.
@@ -985,7 +987,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var lifecycle = CreateLifecycleService(k8sMock.Object, pvcPool: []);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         var result = await CreateDispatchService(templateStore, lockProvider).DispatchPendingWorkItemAsync(
@@ -1020,7 +1022,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             itemId = entity.Id;
             var ts = CreateTemplateStore("kiro,dotnet");
             var lc = CreateLifecycleService();
-            var rollout = CreateRolloutRouting(dbFactory, ts);
+            var rollout = CreateRouterTo(dbFactory, ts, "opencode,java");
             result = await CreateDispatchService(ts, CreateNoOpLockProvider()).DispatchPendingWorkItemAsync(
                 itemId, dbFactory, lc, rollout, CancellationToken.None);
         }
@@ -1032,7 +1034,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             itemId = entity.Id;
             var ts = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
             var lc = CreateLifecycleService();
-            var rollout = CreateRolloutRouting(dbFactory, ts);
+            var rollout = CreateRouter(dbFactory, ts);
             result = await CreateDispatchService(ts, CreateNoOpLockProvider()).DispatchPendingWorkItemAsync(
                 itemId, dbFactory, lc, rollout, CancellationToken.None);
         }
@@ -1043,7 +1045,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             itemId = entity.Id;
             var ts = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
             var lc = CreateLifecycleService(pvcPool: ["pvc-0"]);
-            var rollout = CreateRolloutRouting(dbFactory, ts);
+            var rollout = CreateRouter(dbFactory, ts);
             result = await CreateDispatchService(ts, CreateNoOpLockProvider()).DispatchPendingWorkItemAsync(
                 itemId, dbFactory, lc, rollout, CancellationToken.None);
         }
@@ -1070,7 +1072,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore();
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         // Lock provider that throws TimeoutException from AcquireAsync
         var timeoutLockMock = new Mock<IDistributedLockProvider>();
@@ -1110,7 +1112,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         // Template store has no template matching the malicious selector → triggers the no-template 409 path
         var templateStore = CreateTemplateStore("other,selector");
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouterTo(dbFactory, templateStore, maliciousSelector);
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
@@ -1123,18 +1125,8 @@ public sealed class DispatchPendingWorkItemEndpointTests
         deferredResult!.Value!.Dispatched.Should().BeFalse();
         deferredResult.Value.Reason.Should().Be("no_template");
 
-        // The sanitizer must not inject raw CRLF into the reason string
-        // (the reason is a fixed constant, not the selector, so CRLF is not a risk here).
-        // For completeness, verify the sanitized selector was logged (not reflected directly in the response body).
-        // TODO [WARNING]: The CRLF assertions below are vacuous — Reason is the compile-time constant
-        // "no_template", which can never contain CR or LF regardless of endpoint behaviour. The
-        // original test verified that user-supplied input (the malicious selector) was sanitised before
-        // being reflected in the response body. That property is no longer testable via this code path
-        // because the endpoint no longer reflects the selector in the response at all. If the endpoint
-        // is ever changed to include selector information in the response, the sanitisation requirement
-        // should be anchored by a new test that asserts on the selector-derived field, not the fixed reason.
-        deferredResult.Value.Reason.Should().NotContain("\r", "reason value must not contain raw CR");
-        deferredResult.Value.Reason.Should().NotContain("\n", "reason value must not contain raw LF");
+        // Spec 056: the hold text names the configured job template key; it carries no raw line break.
+        deferredResult.Value.HoldText.Should().Contain("INJECTED").And.NotContain("\r").And.NotContain("\n");
     }
 
     // ── Test 16: Log injection — concurrency Conflict body does not reflect raw CRLF ─
@@ -1176,7 +1168,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             """;
         var templateStore = JobTemplateStore.LoadFromJson(templateJson);
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
@@ -1235,7 +1227,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
         // PVC pool contains only "pvc-0", which is already claimed → zero available PVCs.
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // Subscribe to PvcPoolExhaustions on the static meter before calling the endpoint.
@@ -1300,7 +1292,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
     /// This verifies the fix did not break the correct path.
     /// </summary>
     [Fact]
-    public async Task DispatchPendingWorkItem_PvcPoolEmpty_ConcurrencyBelow_Returns503_AndIncrementsPvcPoolExhaustions()
+    public async Task DispatchPendingWorkItem_PvcPoolEmpty_ConcurrencyBelow_IsDeferred_AndIncrementsPvcPoolExhaustions()
     {
         var dbFactory = CreateDbFactory();
         // Claim the only PVC but stay below maxConcurrent=5 → concurrency gate passes, PVC gate fires.
@@ -1309,7 +1301,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         long exhaustionCount = 0;
@@ -1338,11 +1330,9 @@ public sealed class DispatchPendingWorkItemEndpointTests
             entity.Id, dbFactory, lifecycle, rollout, CancellationToken.None);
         counting = false;
 
-        // PVC gate fires → 503.
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull();
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
-            "zero available PVCs with concurrency below limit must return 503");
+        // PVC gate fires → deferred pvc_unavailable (spec 056 DD8).
+        (result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)!.Value!.Reason.Should().Be("pvc_unavailable",
+            "zero available PVCs with concurrency below limit defer the item");
 
         // Counter must have been incremented exactly once.
         Interlocked.Read(ref exhaustionCount).Should().Be(1,
@@ -1366,7 +1356,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 2);
         // PVCs are available — only the concurrency gate fires.
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0", "pvc-1"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         long exhaustionCount = 0;
@@ -1445,7 +1435,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Non-kiro template — PVC gate is skipped, no PVC involvement.
         var templateStore = CreateTemplateStore("opencode,python", maxConcurrent: 5, providerType: "opencode");
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // K8s mock: during CreateJobAsync, transition the item to Dispatched in the DB to simulate
@@ -1537,7 +1527,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
                 AgentSelector = "kiro,dotnet",
                 TimeoutSeconds = 3600,
                 CreatedAt = DateTimeOffset.UtcNow,
-                Payload = "{}",
+                Payload = WorkItemTestData.RoutablePayload(),
                 TraceParent = expectedTraceParent   // ← the value that must reach the K8s Job
             });
             await seedDb.SaveChangesAsync();
@@ -1560,7 +1550,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .Callback<k8s.Models.V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var lockProvider = CreateNoOpLockProvider();
 
         // Act
@@ -1605,7 +1595,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
         var lockProvider = CreateNoOpLockProvider();
         var dispatchService = CreateDispatchService(templateStore);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         // Act — call through the static endpoint handler (not the service method directly)
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
@@ -1631,7 +1621,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService();
         var lockProvider = CreateNoOpLockProvider();
         var dispatchService = CreateDispatchService(templateStore);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
         var missingId = Guid.NewGuid();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
@@ -1658,7 +1648,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
                 AgentSelector = "kiro,dotnet",
                 TimeoutSeconds = 3600,
                 CreatedAt = DateTimeOffset.UtcNow,
-                Payload = "{}"
+                Payload = WorkItemTestData.RoutablePayload()
             });
             await db.SaveChangesAsync();
         }
@@ -1676,7 +1666,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService();
         var lockProvider = CreateNoOpLockProvider();
         var dispatchService = CreateDispatchService(templateStore);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
@@ -1698,7 +1688,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService();
         var lockProvider = CreateNoOpLockProvider();
         var dispatchService = CreateDispatchService(templateStore);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouterTo(dbFactory, templateStore, "kiro,dotnet");
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
@@ -1723,7 +1713,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService();
         var lockProvider = CreateNoOpLockProvider();
         var dispatchService = CreateDispatchService(templateStore);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
@@ -1735,7 +1725,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
     }
 
     [Fact]
-    public async Task DispatchPendingWorkItemEndpoint_NoPvcAvailable_Returns503()
+    public async Task DispatchPendingWorkItemEndpoint_NoPvcAvailable_IsDeferred()
     {
         var dbFactory = CreateDbFactory();
         await SeedActiveItemAsync(dbFactory, "kiro,dotnet", claimedPvcName: "pvc-0");
@@ -1745,14 +1735,15 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var lifecycle = CreateLifecycleService(pvcPool: ["pvc-0"]);
         var lockProvider = CreateNoOpLockProvider();
         var dispatchService = CreateDispatchService(templateStore);
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, dispatchService, rollout, CancellationToken.None);
 
-        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
-        statusResult.Should().NotBeNull("PVC exhaustion must return 503 via endpoint wrapper");
-        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        deferred.Should().NotBeNull("spec 056 DD8: PVC exhaustion is a 200 deferral via the endpoint wrapper");
+        deferred!.Value!.Reason.Should().Be("pvc_unavailable");
+        deferred.Value.TemplateKey.Should().Be("dotnet,kiro");
     }
 
     [Fact]
@@ -1763,7 +1754,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var templateStore = CreateTemplateStore();
         var lifecycle = CreateLifecycleService();
-        var rollout = CreateRolloutRouting(dbFactory, templateStore);
+        var rollout = CreateRouter(dbFactory, templateStore);
 
         // Lock provider that throws TimeoutException
         var timeoutLock = new Mock<IDistributedLockProvider>();
@@ -1856,7 +1847,7 @@ public sealed class UniqueViolationIdempotentRetryTests
         var runService = CreateRunService();
         var templateStore = CreateTemplateStore();
         await AgentRoutingTestData.SeedRoutingAsync(dbFactory);
-        var store = new WorkItemStore(dbFactory, runService, TestWorkItemRouter.Create(dbFactory, templateStore));
+        var store = new WorkItemStore(dbFactory, runService);
         var runId = Guid.NewGuid().ToString();
         var request = MakeRequest(runId: runId);
 
@@ -1915,7 +1906,7 @@ public sealed class UniqueViolationIdempotentRetryTests
         // The router reads the routing table from its own, working database.
         var routingDb = CreateDbFactory();
         await AgentRoutingTestData.SeedRoutingAsync(routingDb);
-        var store = new WorkItemStore(dbFactory, runService, TestWorkItemRouter.Create(routingDb, CreateTemplateStore()));
+        var store = new WorkItemStore(dbFactory, runService);
         var request = MakeRequest(runId: runId);
 
         // Act
@@ -2006,7 +1997,7 @@ public sealed class ExtractedHelperIsolationTests
             AgentSelector = "kiro,dotnet",
             TimeoutSeconds = 3600,
             CreatedAt = DateTimeOffset.UtcNow,
-            Payload = "{}"
+            Payload = WorkItemTestData.RoutablePayload()
         };
         await using var db = await dbFactory.CreateDbContextAsync();
         db.WorkItems.Add(entity);

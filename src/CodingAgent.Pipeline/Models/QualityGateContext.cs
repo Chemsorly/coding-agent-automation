@@ -53,4 +53,13 @@ public sealed record QualityGateContext : PipelineContextBase
     /// Null in contexts where no server-side reporting is wired (e.g., tests).
     /// </summary>
     public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
+
+    /// <summary>
+    /// Spec 056 DD14: the category of the fix-agent result that aborted the retry loop (a permanent provider failure),
+    /// and the provider's text. Set by the loop; null while it has not aborted.
+    /// </summary>
+    public AgentErrorCategory? AbortCategory { get; set; }
+
+    /// <summary>The provider's text of <see cref="AbortCategory"/>.</summary>
+    public string? AbortDetail { get; set; }
 }

@@ -224,11 +224,32 @@ public class QualityGateExecutorRetryDecisionTests
             Times.Once,
             "loop must break after the first auth-abort — retry prompt must be sent exactly once");
 
-        // ShouldBreak → draft PR finalized.
+        // Spec 056 DD14: a rejected login ends the run Failed without a draft PR.
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
-            Times.Once,
-            "ShouldBreak path must finalize as draft PR");
+            c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a permanent provider failure opens no draft PR (DD14)");
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
+    }
+
+    // Spec 056 req 9.4: the provider's line becomes the run's failure text, which leaves the pod; key-shaped strings are masked.
+    [Fact]
+    public async Task QuotaAbort_MasksAKeyInTheProviderLine_InTheRunsFailureText()
+    {
+        var config = CreateConfig(maxRetries: 3);
+        var key = string.Concat("sk-ant-", "api03-", new string('K', 24)); // built at runtime: no key-shaped literal
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["billing_error"],
+                ErrorCategory = AgentErrorCategory.ProviderQuotaExhausted,
+                ProviderFailure = AgentProviderFailure.Create(AgentProviderFailure.QuotaExhausted, null, $"credit balance too low for key {key}"),
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        _run.FailureReason.Should().Contain("credit balance too low").And.NotContain(key);
     }
 
     // ── Test 3: RestartSession → ShouldContinue, RetryCount == 1 ─────────────

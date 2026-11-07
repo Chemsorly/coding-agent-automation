@@ -42,10 +42,13 @@ public sealed class ChatServiceTests
     private readonly AgentRoutingTestSupport.InMemoryFactory _db = new(Guid.NewGuid().ToString());
     private readonly ChatSessionStore _sessions = new(null, TimeSpan.FromHours(1));
     private readonly List<ChatPromptMessage> _delivered = [];
+    private static readonly DateTimeOffset Now = new(2026, 11, 2, 6, 26, 0, TimeSpan.Zero);
+    private readonly CredentialPauseStore _pauses;
     private readonly ChatService _sut;
 
     public ChatServiceTests()
     {
+        _pauses = new CredentialPauseStore(_db, new AgentRoutingTestSupport.SemaphoreLockProvider(), new CredentialPause.SettableTime(Now), Serilog.Core.Logger.None);
         UseProfiles(Profile(ProfileId, "dotnet,kiro"));
         AgentRoutingTestSupport.SeedRouting(_db, AgentRoutingTestData.Routing(ProfileId, DefaultModel, "high"));
         _dispatcher.Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -69,12 +72,13 @@ public sealed class ChatServiceTests
                 ("dotnet,python", "")),
             _dispatcher.Object, _sessions, _registry.Object, hub.Object,
             new DispatchServiceOptions { ChatPodConnectTimeoutSeconds = 90 },
-            NullLogger<ChatService>.Instance);
+            NullLogger<ChatService>.Instance,
+            _pauses);
     }
 
     private static AgentProfile Profile(
-        string id, string jobTemplate, bool enabled = true, IReadOnlyDictionary<string, string>? settings = null) =>
-        AgentRoutingTestData.Profile(id, jobTemplate, $"{id} profile", enabled, settings);
+        string id, string jobTemplate, IReadOnlyDictionary<string, string>? settings = null) =>
+        AgentRoutingTestData.Profile(id, jobTemplate, $"{id} profile", settings);
 
     private void UseProfiles(params AgentProfile[] profiles) =>
         _profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(profiles);
@@ -94,17 +98,17 @@ public sealed class ChatServiceTests
     // ── Options ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Options_OfferOnlyEnabledProfilesWhoseJobTemplateHasATool()
+    public async Task Options_OfferEveryProfileWhoseJobTemplateHasATool_Spec056()
     {
         UseProfiles(
             Profile("kiro", "dotnet,kiro"),
-            Profile("claude-disabled", "claude,dotnet", enabled: false),
+            Profile("claude-second", "claude,dotnet"),
             Profile("no-template", "java,spring"),
             Profile("no-tool", "dotnet,python"));
 
         var options = await _sut.GetOptionsAsync([], CancellationToken.None);
 
-        options.Profiles.Select(p => p.Id).Should().Equal("kiro");
+        options.Profiles.Select(p => p.Id).Should().Equal("claude-second", "kiro");
         options.ConnectTimeoutSeconds.Should().Be(90);
     }
 
@@ -195,9 +199,9 @@ public sealed class ChatServiceTests
     [Fact]
     public async Task Start_AProfileThatCannotBeLaunched_IsRefusedWith400WithoutDispatching()
     {
-        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("disabled", "dotnet,kiro", enabled: false), Profile("no-tool", "dotnet,python"));
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("no-tool", "dotnet,python"));
 
-        foreach (var profileId in new[] { "gone", "disabled", "no-tool" })
+        foreach (var profileId in new[] { "gone", "no-tool" })
         {
             var act = () => StartAsync(profileId);
 
@@ -244,6 +248,104 @@ public sealed class ChatServiceTests
         { new AgentCountUnavailableException(new HttpRequestException("api server down")), "Could not check how many agents are running. Try again." },
         { new TimeoutException("lock timed out"), "Another agent is starting. Try again." },
     };
+
+    // ── Spec 056 DD15, req 4.5: a paused credential ─────────────────────────────
+
+    private const string KiroPausedText = "Kiro paused — quota used up, since 2026-11-02 05:00 UTC (until 2026-12-01 00:00 UTC)";
+
+    private Task<AgentCredentialPause?> PauseKiroAsync() => _pauses.PauseAsync(new AgentCredentialPause(
+        AgentCredentials.Kiro, CredentialPauseReasons.QuotaExhausted, CredentialPauseSources.Auto,
+        new DateTimeOffset(2026, 11, 2, 5, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero),
+        "monthly usage limit reached"), CancellationToken.None);
+
+    [Fact]
+    public async Task Start_OnAPausedCredential_Answers409WithThePauseText_BeforeTheAgentStartGate()
+    {
+        await PauseKiroAsync();
+        var refusals = new System.Collections.Concurrent.ConcurrentBag<(string? Selector, string? Reason)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Name == "workdistribution.chat.launch_refusals")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string? selector = null, reason = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "agent_selector") selector = tag.Value as string;
+                if (tag.Key == "reason") reason = tag.Value as string;
+            }
+            refusals.Add((selector, reason));
+        });
+        listener.Start();
+
+        var act = () => StartAsync();
+
+        (await act.Should().ThrowAsync<ChatRequestException>())
+            .Which.Should().BeEquivalentTo(new { StatusCode = StatusCodes.Status409Conflict, Message = KiroPausedText });
+        refusals.Should().Contain(("dotnet_kiro", "credential_paused"));
+        _dispatcher.VerifyNoOtherCalls(); // the dispatcher holds the gate: never entered
+        (await _sessions.FindAsync(AgentId)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Start_OnAPausedCredential_WhenAHelmLimitIsAlsoReached_ThePauseTextWins()
+    {
+        await PauseKiroAsync();
+        var decision = new AgentStartDecision(false, LimitScope.Template, LimitSource.Helm, 4, 4);
+        _dispatcher.Setup(d => d.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AgentLimitReachedException(decision, "4 of 4 agents are running"));
+
+        var act = () => StartAsync();
+
+        (await act.Should().ThrowAsync<ChatRequestException>()).Which.Message.Should().Be(KiroPausedText);
+    }
+
+    [Fact]
+    public async Task Start_OnAnotherCredential_LaunchesWhileKiroIsPaused()
+    {
+        await PauseKiroAsync();
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("opencode", "java,opencode"));
+
+        var session = await StartAsync("opencode", model: "auto", effort: "auto");
+
+        session.AgentId.Should().Be(AgentId);
+    }
+
+    [Fact]
+    public async Task Start_AfterThePauseEnds_Launches()
+    {
+        await PauseKiroAsync();
+        await _pauses.ResumeAsync(AgentCredentials.Kiro, "adrian", CancellationToken.None);
+
+        var session = await StartAsync();
+
+        session.AgentId.Should().Be(AgentId);
+    }
+
+    [Fact]
+    public async Task Options_StillOfferAPausedProfile_WithThePauseText()
+    {
+        await PauseKiroAsync();
+        UseProfiles(Profile(ProfileId, "dotnet,kiro"), Profile("opencode", "java,opencode"));
+
+        var options = await _sut.GetOptionsAsync([], CancellationToken.None);
+
+        options.Profiles.Single(p => p.Id == ProfileId).PausedText.Should().Be(KiroPausedText);
+        options.Profiles.Single(p => p.Id == "opencode").PausedText.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Prompt_InAChatThatIsRunning_IsNotRefusedAfterAPause_D2()
+    {
+        await PauseKiroAsync();
+
+        await _sut.SendPromptAsync(Session(), new UiChatPromptRequest("s1", "hello"), CancellationToken.None);
+
+        _delivered.Should().ContainSingle();
+    }
 
     // Spec 057 req 4.1: a Helm agent limit refuses the chat with 409 and the dispatcher's text.
     [Fact]

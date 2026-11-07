@@ -73,13 +73,37 @@ public static class ApiDispatchServiceExtensions
         // WorkItemStore backs the /api/work-items enqueue, status and dedup handlers. ApiWorkDistributor
         // is IWorkDistributor in this process, over the same store, for the dispatch logic that moves
         // into the API; nothing here resolved an IWorkDistributor before.
-        // Spec 053: the routing table, and the router that pins a route on every work item when it is created.
+        // Spec 053: the routing table. Spec 056: the router resolves it when an item is dispatched.
         services.AddSingleton<AgentRoutingStore>();
         // Spec 057: the UI agent capacity limits, read at every agent start.
         services.AddSingleton<AgentCapacityStore>();
-        services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemRouter>();
+        // Spec 056: the pause of each agent credential, written under its own advisory lock.
+        services.AddSingleton(sp => new CredentialPauseStore(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IDistributedLockProvider>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            Log.Logger));
+        services.AddSingleton(sp => new CodingAgent.Api.Dispatch.DispatchRouter(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<AgentRoutingStore>(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            sp.GetRequiredService<CredentialPauseStore>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            Log.Logger));
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
+        // Spec 056 DD11: a run that hits its credential's quota is ended, the credential paused, the work queued again.
+        services.AddSingleton<IProviderFailureHandler>(sp => new CodingAgent.Api.Dispatch.ProviderFailureHandler(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<CredentialPauseStore>(),
+            sp.GetRequiredService<IRunLifecycleManager>(),
+            sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemStore>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            Log.Logger));
 
         // ── Browse (spec 051 2.3b) ─────────────────────────────────────────────
         // The pages' provider browsing runs here with the stored credentials.
@@ -111,7 +135,6 @@ public static class ApiDispatchServiceExtensions
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
-            sp.GetRequiredService<AgentRoutingStore>(),
             sp.GetRequiredService<JobTemplateStore>(),
             Log.Logger,
             new ConsolidationRunContextSources(
@@ -135,8 +158,6 @@ public static class ApiDispatchServiceExtensions
                 sp.GetRequiredService<WorkItemTransitionService>(),
                 options);
         });
-        // Spec 053 DD10: routes a Pending item a previous-release API stored without a selector.
-        services.AddSingleton<CodingAgent.Api.Dispatch.RolloutRouting>();
 
         // ── Agent start gate (spec 057) ──────────────────────────────────────────────────────
         // One lock for every agent start (work-item dispatch and chat launch), the running-agent count from the
@@ -154,7 +175,9 @@ public static class ApiDispatchServiceExtensions
             sp.GetRequiredService<JobTemplateStore>(),
             sp.GetRequiredService<DispatchServiceOptions>(),
             sp.GetRequiredService<AgentCapacityStore>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<CredentialPauseStore>()));
 
         // ── DispatchWorkItemService (issue #2743) ─────────────────────────────────────────────
         // The dispatch of a Pending item (DispatchPendingWorkItem): the agent start gate, the PVC gate and the

@@ -56,21 +56,23 @@ public class ClaudeCodeCredentialsTests
     [InlineData(null)]
     [InlineData("auto")]
     [InlineData("nonsense")]
-    public void Resolve_AutoMode_PrefersApiKey(string? mode)
+    // Spec 056 D8: the former auto mode, an empty and an unknown one are the subscription, even when an API key is set.
+    public void Resolve_FormerAutoOrUnknownMode_UsesTheSubscription(string? mode)
     {
         var credential = ClaudeCodeCredentials.Resolve(
             mode, Env((AgentDefaults.EnvClaudeApiKey, "key"), (AgentDefaults.EnvClaudeOAuthToken, "oauth")));
 
-        credential!.BillingMode.Should().Be(AgentBillingModes.Api);
+        credential!.BillingMode.Should().Be(AgentBillingModes.Subscription);
     }
 
     [Fact]
-    public void Resolve_AutoMode_FallsBackToSubscription()
+    // Spec 056: exactly the named credential; no fallback to the other one.
+    public void Resolve_ApiKeyMode_WithOnlyASubscriptionToken_ReturnsNull()
     {
         var credential = ClaudeCodeCredentials.Resolve(
-            ClaudeCodeAuthModes.Auto, Env((AgentDefaults.EnvClaudeOAuthToken, "oauth")));
+            ClaudeCodeAuthModes.ApiKey, Env((AgentDefaults.EnvClaudeOAuthToken, "oauth")));
 
-        credential!.BillingMode.Should().Be(AgentBillingModes.Subscription);
+        credential.Should().BeNull();
     }
 
     [Theory]

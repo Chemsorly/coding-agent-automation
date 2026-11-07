@@ -8,7 +8,7 @@
         Which agent profile runs each task type, with which model and effort. A task type without its own row uses the
         default row. A repository can set its own rows on its page (Binding card).
     </p>
-    <p class="form-hint" data-testid="routing-applies-note">Changes apply to work created after saving. Queued and running work keeps its route.</p>
+    <p class="form-hint" data-testid="routing-applies-note">Changes apply to queued work at its next dispatch. Running work keeps its route.</p>
 
     @if (_page is null)
     {

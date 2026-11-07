@@ -48,8 +48,8 @@ internal static class ClaudeCodeCredentials
     /// win; the CLI's own variables are the fallback for agents run outside Kubernetes.
     /// </summary>
     /// <returns>
-    /// The credential, or null when the mode's credential is not configured. In auto mode null means
-    /// neither is configured and the CLI falls back to a stored <c>/login</c>, if any.
+    /// The credential of exactly the named mode, or null when it is not configured (spec 056: no fallback to the other
+    /// credential; an unknown or former <c>auto</c> mode is the subscription).
     /// </returns>
     internal static ClaudeCredential? Resolve(string? authMode, Func<string, string?> getEnvironmentVariable)
     {
@@ -65,12 +65,7 @@ internal static class ClaudeCodeCredentials
             ? null
             : new ClaudeCredential(ClaudeCodeOAuthToken, oauthToken, AgentBillingModes.Subscription);
 
-        return ClaudeCodeAuthModes.Normalize(authMode) switch
-        {
-            ClaudeCodeAuthModes.ApiKey => apiKeyCredential,
-            ClaudeCodeAuthModes.Subscription => subscriptionCredential,
-            _ => apiKeyCredential ?? subscriptionCredential
-        };
+        return ClaudeCodeAuthModes.Normalize(authMode) == ClaudeCodeAuthModes.ApiKey ? apiKeyCredential : subscriptionCredential;
     }
 
     /// <summary>

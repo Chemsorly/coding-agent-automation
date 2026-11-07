@@ -18,14 +18,13 @@ using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
-// ── Spec 053 / issue #3642: CreateWorkItem routes the request, and refuses what cannot run ──
+// ── Spec 056 DD1: CreateWorkItem never routes and never refuses for routing ──
 
 /// <summary>
-/// <see cref="WorkItemDispatchEndpoints.CreateWorkItem"/> routes every request when it creates the work item (spec 053
-/// DD1): the row carries the routed profile's job template as its selector and the route in its payload. A request no
-/// route resolves for is answered 422 with the reason as ProblemDetails <c>detail</c>, before any row or in-memory run
-/// exists (D15). A consolidation run whose routed profile has no job template is refused the same way, because the
-/// dispatcher could never start it (#3642); other task types are not checked against the job templates.
+/// <see cref="WorkItemDispatchEndpoints.CreateWorkItem"/> inserts every request as a Pending work item without a route
+/// (req 3.2): the dispatcher resolves the route when it dispatches the item and holds it when it cannot run. A route a
+/// caller sent is dropped. This replaces spec 053's creation-time routing, its 422 and the consolidation
+/// <c>template_missing</c> refusal (#3642).
 /// </summary>
 public sealed class CreateWorkItemRoutingTests
 {
@@ -55,10 +54,10 @@ public sealed class CreateWorkItemRoutingTests
     };
 
     private Task<IResult> CreateAsync(
-        JobDistributionRequest request, IOrchestratorRunService runService, JobTemplateStore? jobTemplates = null) =>
+        JobDistributionRequest request, IOrchestratorRunService runService) =>
         WorkItemDispatchEndpoints.CreateWorkItem(
             request,
-            new WorkItemStore(CreateDbFactory(), runService, TestWorkItemRouter.Create(CreateDbFactory(), jobTemplates)),
+            new WorkItemStore(CreateDbFactory(), runService),
             CancellationToken.None);
 
     private async Task<int> CountWorkItemsAsync()
@@ -67,97 +66,47 @@ public sealed class CreateWorkItemRoutingTests
         return await db.WorkItems.CountAsync();
     }
 
-    private static string ShouldBeRefused(IResult result)
-    {
-        var problem = result as ProblemHttpResult;
-        problem.Should().NotBeNull("a refused request is answered with ProblemDetails");
-        problem!.StatusCode.Should().Be(StatusCodes.Status422UnprocessableEntity);
-        return problem.ProblemDetails.Detail!;
-    }
-
-    // ── 422: no route, no row, no run (D15) ──────────────────────────────────
-
+    // req 3.2: no route resolves, yet the item is created (the dispatcher holds it as no_route).
     [Theory]
     [InlineData(WorkItemTaskType.Implementation)]
     [InlineData(WorkItemTaskType.Review)]
     [InlineData(WorkItemTaskType.Decomposition)]
     [InlineData(WorkItemTaskType.Triage)]
     [InlineData(WorkItemTaskType.Consolidation)]
-    public async Task NoRoute_Returns422WithTheReason_AndInsertsNoRowAndRegistersNoRun(WorkItemTaskType taskType)
+    public async Task NoRoute_Returns201_AndInsertsTheRowAndRegistersTheRun(WorkItemTaskType taskType)
     {
         var runService = CreateRunService();
         var request = MakeRequest(taskType);
 
         var result = await CreateAsync(request, runService);
 
-        ShouldBeRefused(result).Should().Be(AgentRouteRefusalReason.NoRouteText);
-        (await CountWorkItemsAsync()).Should().Be(0, "the refusal comes before any row is inserted");
-        runService.GetRun(new RunId(request.RunId!)).Should().BeNull("no in-memory run may be registered for a refused request");
-        runService.GetActiveRuns().Should().BeEmpty();
+        result.Should().BeOfType<Created<Guid>>("creation never refuses for routing (spec 056 DD1)");
+        (await CountWorkItemsAsync()).Should().Be(1);
+        runService.GetRun(new RunId(request.RunId!)).Should().NotBeNull();
     }
 
-    // ── 422: a consolidation run whose job template is missing ───────────────
-
+    // req 3.2, 3.7: a route the caller sent is not stored; the dispatcher resolves it.
     [Fact]
-    public async Task Consolidation_RoutedProfileHasNoJobTemplate_Returns422_AndInsertsNoRow()
+    public async Task ARouteTheCallerSent_IsDropped()
     {
         await AgentRoutingTestData.SeedRoutingAsync(CreateDbFactory());
-        var runService = CreateRunService();
+        var request = MakeRequest(WorkItemTaskType.Implementation) with
+        {
+            AgentSelector = "dotnet,kiro",
+            ResolvedProfileId = "profile-kiro",
+            Route = new AgentRouteSnapshot("profile-kiro", "profile-kiro", JobTemplateProviderType.Kiro, "opus", "high", AgentRouteSource.GlobalDefault),
+        };
 
-        // The routed profile runs on "dotnet,kiro"; the Helm values only have "java,opencode".
-        var result = await CreateAsync(
-            MakeRequest(WorkItemTaskType.Consolidation), runService,
-            AgentRoutingTestData.JobTemplates(("java,opencode", JobTemplateProviderType.Opencode)));
+        var result = await CreateAsync(request, CreateRunService());
 
-        ShouldBeRefused(result).Should().Contain("dotnet,kiro").And.Contain("does not exist in the Helm values");
-        (await CountWorkItemsAsync()).Should().Be(0);
-        runService.GetActiveRuns().Should().BeEmpty();
-    }
-
-    // ── 201: routed ──────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Routed_Returns201_AndStoresTheProfilesJobTemplateAndTheRoute()
-    {
-        await AgentRoutingTestData.SeedRoutingAsync(
-            CreateDbFactory(), AgentRoutingTestData.Routing(model: "claude-opus-4", effort: "high"));
-        var runService = CreateRunService();
-        var request = MakeRequest(WorkItemTaskType.Consolidation);
-
-        var result = await CreateAsync(request, runService);
-
-        var created = result as Created<Guid>;
-        created.Should().NotBeNull("a routed consolidation run with a job template is enqueued");
-        created!.Value.Should().Be(Guid.Parse(request.RunId!));
-        runService.GetRun(new RunId(request.RunId!)).Should().NotBeNull("the run is registered so the Consolidation page shows it");
-
+        result.Should().BeOfType<Created<Guid>>();
         await using var db = await CreateDbFactory().CreateDbContextAsync();
         var row = await db.WorkItems.SingleAsync();
-        row.AgentSelector.Should().Be(AgentRoutingTestData.DefaultJobTemplate);
+        row.AgentSelector.Should().BeEmpty();
+        row.HoldReason.Should().BeNull();
         var payload = JsonSerializer.Deserialize<JobDistributionRequest>(row.Payload!, PipelineJsonOptions.Default)!;
-        payload.ResolvedProfileId.Should().Be("profile-kiro");
-        payload.Route.Should().BeEquivalentTo(new AgentRouteSnapshot(
-            "profile-kiro", "profile-kiro", JobTemplateProviderType.Kiro, "claude-opus-4", "high", AgentRouteSource.GlobalDefault));
-    }
-
-    // ── Other task types: the job template is not checked at creation ────────
-
-    [Theory]
-    [InlineData(WorkItemTaskType.Implementation)]
-    [InlineData(WorkItemTaskType.Review)]
-    [InlineData(WorkItemTaskType.Decomposition)]
-    [InlineData(WorkItemTaskType.Triage)]
-    public async Task NonConsolidationTaskTypes_WithTheJobTemplateMissing_StillReturn201(WorkItemTaskType taskType)
-    {
-        // They follow the pending-dispatch path, which defers work without a job template and alerts.
-        await AgentRoutingTestData.SeedRoutingAsync(CreateDbFactory());
-
-        var result = await CreateAsync(
-            MakeRequest(taskType), CreateRunService(),
-            AgentRoutingTestData.JobTemplates(("java,opencode", JobTemplateProviderType.Opencode)));
-
-        result.Should().BeOfType<Created<Guid>>($"{taskType} must be enqueued as Pending regardless of template availability");
-        (await CountWorkItemsAsync()).Should().Be(1);
+        payload.Route.Should().BeNull();
+        payload.ResolvedProfileId.Should().BeNull();
     }
 }
 

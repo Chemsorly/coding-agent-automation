@@ -1059,7 +1059,7 @@ public sealed class WorkItemEndpointTests
     /// <c>ConsolidationEnqueueEndpointTests</c> and <c>CreateWorkItemRoutingTests</c>.
     /// </summary>
     [Fact]
-    public async Task CreateWorkItem_WithoutARoute_Returns422WithTheReason_AndInsertsNoRow()
+    public async Task CreateWorkItem_WithoutARoute_Returns201_AndInsertsAPendingRow()
     {
         using (var routingDb = _factory.CreateDbContext())
         {
@@ -1078,11 +1078,10 @@ public sealed class WorkItemEndpointTests
 
         var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
 
-        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
-        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
-        problem!.Detail.Should().Be(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText);
+        // Spec 056 DD1: creation never refuses for routing; the dispatcher holds the item as no_route.
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
         using var db = _factory.CreateDbContext();
-        db.WorkItems.Where(w => w.IssueIdentifier == request.IssueIdentifier.Value).Should().BeEmpty();
+        db.WorkItems.Single(w => w.IssueIdentifier == request.IssueIdentifier.Value).Status.Should().Be(WorkItemStatus.Pending);
     }
 
     /// <summary>

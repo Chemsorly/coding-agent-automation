@@ -41,7 +41,6 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
             Id = "profile-ui-monitor",
             DisplayName = "UI Monitor Profile",
             JobTemplate = E2ERouting.Key(labels),
-            Enabled = true
         });
     }
 

@@ -128,9 +128,10 @@ public static class PipelineRunFactory
 
     /// <summary>
     /// Spec 053 req 8.1: the run records the profile, the model and the effort of the work item's pinned route. The
-    /// model is the route's, <c>auto</c> included; the agent's report does not replace it with null.
+    /// model is the route's, <c>auto</c> included; the agent's report does not replace it with null. Spec 056: the
+    /// dispatcher applies it when it pins a route at dispatch.
     /// </summary>
-    private static void ApplyRoute(PipelineRun run, AgentRouteSnapshot? route)
+    public static void ApplyRoute(PipelineRun run, AgentRouteSnapshot? route)
     {
         if (route is null)
             return;

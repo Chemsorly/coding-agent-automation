@@ -54,6 +54,15 @@ public interface IRunLifecycleManager
     Task<PipelineRun?> FailRunWithLabelAsync(RunId runId, string failureReason, string? resolvedFinalLabel, CancellationToken ct, FailureReason? failureReasonEnum = null, IReadOnlyList<string>? podLogTail = null);
 
     /// <summary>
+    /// Spec 056 DD11 step 3: ends a run whose credential could not be used, after the caller ended its work item (Failed,
+    /// <c>ProviderUnavailable</c>) and before it queues the work again: removes the in-memory run, marks the issue
+    /// recently completed, clears the agent's state, writes the history row (only when the run is still known), puts the
+    /// issue's queue label back instead of <c>agent:error</c> (none for consolidation) and deletes the Job. The steps that
+    /// need only <paramref name="target"/> run without the in-memory run.
+    /// </summary>
+    Task<PipelineRun?> RequeueRunAsync(RunId runId, string reason, RequeueTarget target, CancellationToken ct);
+
+    /// <summary>
     /// 1. Removes from in-memory active runs
     /// 2. Transitions the DB WorkItem to the given terminal status
     /// 3. Persists to run history
@@ -104,3 +113,16 @@ public interface IRunLifecycleManager
     Task TransitionWorkItemToFailedAsync(RunId runId, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);
 }
+
+/// <summary>Spec 056 DD11: what a requeue needs of the ended work item when its in-memory run is gone.</summary>
+/// <param name="RunType">The run type (gives the queue label).</param>
+/// <param name="IssueIdentifier">The issue (a review's pull request).</param>
+/// <param name="IssueProviderConfigId">The issue provider.</param>
+/// <param name="RepoProviderConfigId">The repository provider (a review's labels live there).</param>
+/// <param name="AgentId">The agent that ran it (its state is cleared).</param>
+public sealed record RequeueTarget(
+    PipelineRunType RunType,
+    string IssueIdentifier,
+    string IssueProviderConfigId,
+    string? RepoProviderConfigId,
+    string? AgentId);

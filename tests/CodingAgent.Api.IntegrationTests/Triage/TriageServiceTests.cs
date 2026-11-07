@@ -104,7 +104,8 @@ public sealed class TriageServiceTests
         workItem.TaskType.Should().Be(WorkItemTaskType.Triage);
         workItem.TimeoutSeconds.Should().Be(45 * 60, "the project's AgentTimeout override applies");
         workItem.PriorityWeight.Should().Be(100, "an operator triage is a manual dispatch");
-        workItem.AgentSelector.Should().Be(AgentRoutingTestData.DefaultJobTemplate, "the routed profile's job template runs it");
+        workItem.AgentSelector.Should().BeEmpty("spec 056 DD1: the dispatcher routes it");
+        detail.WaitText.Should().BeNull("the routing table routes triage, so it would start");
         detail.Record.Attempts.Single().WorkItemId.Should().Be(workItem.Id.ToString());
 
         var payload = JsonSerializer.Deserialize<JobDistributionRequest>(workItem.Payload!, PipelineJsonOptions.Lenient)!;
@@ -115,24 +116,22 @@ public sealed class TriageServiceTests
     }
 
     [Fact]
-    public async Task Create_WithoutAnAgentRoute_IsRefusedWithTheReason_AndInsertsNothing()
+    public async Task Create_WithoutAnAgentRoute_StartsTheTriage_AndSaysWhyItWaits()
     {
-        // Spec 053 req 2.9, 4.12: nothing picks a profile no route names.
+        // Spec 056 DD1, DD12: the start is never refused for routing; the answer says why the attempt waits.
         await using (var db = new Factory(_db).CreateDbContext())
         {
             db.KeyValueStore.RemoveRange(db.KeyValueStore);
             await db.SaveChangesAsync();
         }
 
-        var act = () => Service().CreateAsync(Request(), CancellationToken.None);
+        var detail = await Service().CreateAsync(Request(), CancellationToken.None);
 
-        var refusal = (await act.Should().ThrowAsync<TriageRequestException>()).Which;
-        refusal.StatusCode.Should().Be(400);
-        refusal.Message.Should().Contain(AgentRouteRefusalReason.NoRouteText);
+        detail.WaitText.Should().Be("No agent route for Triage — set it in Settings → Agents → Routing");
         await using var check = new Factory(_db).CreateDbContext();
-        (await check.Triages.AnyAsync()).Should().BeFalse();
-        (await check.WorkItems.AnyAsync()).Should().BeFalse();
-        _runs.Verify(r => r.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+        (await check.Triages.CountAsync()).Should().Be(1);
+        (await check.WorkItems.CountAsync()).Should().Be(1);
+        _runs.Verify(r => r.AddRun(It.IsAny<PipelineRun>()), Times.Once);
     }
 
     [Fact]

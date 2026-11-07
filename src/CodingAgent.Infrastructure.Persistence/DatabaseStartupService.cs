@@ -187,6 +187,7 @@ public sealed class DatabaseStartupService
     ///   <item>Reparents orphaned templates to the Default project (<see cref="ClaimOrphanedTemplatesAsync"/>).</item>
     ///   <item>Moves repository settings from connections to templates (<see cref="MoveRepositorySettingsToTemplatesAsync"/>).</item>
     ///   <item>Moves label routing to agent routing (<see cref="AgentRoutingMove.RunWithLockAsync"/>, spec 053).</item>
+    ///   <item>Converts Claude Code auth mode <c>auto</c> to <c>subscription</c> (<see cref="ClaudeAuthModeConversion.RunWithLockAsync"/>, spec 056).</item>
     /// </list>
     /// Idempotent — safe to run on every startup. Step 1 must precede step 3 because
     /// <see cref="ClaimOrphanedTemplatesAsync"/> skips repair when the Default project is absent.
@@ -207,6 +208,7 @@ public sealed class DatabaseStartupService
         await ClaimOrphanedTemplatesAsync(ct);
         await MoveRepositorySettingsToTemplatesAsync(ct);
         await AgentRoutingMove.RunWithLockAsync(_dbFactory, _lockProvider, toolsByKey, _logger, ct);
+        await ClaudeAuthModeConversion.RunWithLockAsync(_dbFactory, _lockProvider, toolsByKey, _logger, ct);
     }
 
     /// <summary>

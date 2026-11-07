@@ -24,7 +24,8 @@ internal sealed class ManualDispatchService(
     IProviderConfigStore providerConfigs,
     IProviderFactory providerFactory,
     IDependencyChecker dependencyChecker,
-    IDispatchOrchestrationService orchestration)
+    IDispatchOrchestrationService orchestration,
+    DispatchRouter router)
 {
     private const string ProvidersGone = "Template references providers that no longer exist.";
 
@@ -79,7 +80,7 @@ internal sealed class ManualDispatchService(
             Project = ProjectOf(target)
         }, ct);
         await DistributeAsync(request, "Could not dispatch — distribution failed.", ct);
-        return $"⏳ Queued #{issue.Identifier} — the job controller will start an agent pod for it";
+        return await QueuedAsync($"⏳ Queued #{issue.Identifier}", request!, ct);
     }
 
     /// <summary>Dispatches an open pull request of the template's repository for review.</summary>
@@ -109,7 +110,7 @@ internal sealed class ManualDispatchService(
             InitiatedBy = InitiatedByConstants.Manual
         }, ProjectOf(target), ct);
         await DistributeAsync(request, $"PR #{pr.Identifier} is already being processed or queued.", ct);
-        return $"⏳ Queued PR #{pr.Identifier} for review — the job controller will start an agent pod for it";
+        return await QueuedAsync($"⏳ Queued PR #{pr.Identifier} for review", request!, ct);
     }
 
     /// <summary>
@@ -145,7 +146,7 @@ internal sealed class ManualDispatchService(
             Project = ProjectOf(target)
         }, ct);
         await DistributeAsync(request, "Could not dispatch — epic is already being processed or queued, or no agents are available.", ct);
-        return $"⏳ Queued epic #{epic.Identifier} for {phaseLabel} — the job controller will start an agent pod for it";
+        return await QueuedAsync($"⏳ Queued epic #{epic.Identifier} for {phaseLabel}", request!, ct);
     }
 
     /// <summary>
@@ -180,7 +181,7 @@ internal sealed class ManualDispatchService(
         var outcome = await DistributeAsync(request, "Could not dispatch — distribution failed.", ct);
         if (outcome.AlreadyExists)
             throw new DispatchRefusedException($"Issue #{run.IssueIdentifier} already has queued or running work.");
-        return $"⏳ Queued #{run.IssueIdentifier} — the job controller will start an agent pod for it";
+        return await QueuedAsync($"⏳ Queued #{run.IssueIdentifier}", request!, ct);
     }
 
     /// <summary>Whether a run can be re-dispatched: a failed, cancelled or conflicted implementation run whose providers are known.</summary>
@@ -244,6 +245,27 @@ internal sealed class ManualDispatchService(
         if (!outcome.Success)
             throw new DispatchRefusedException(outcome is { IsRefused: true, ErrorMessage: { } reason } ? reason : distributionFailed);
         return outcome;
+    }
+
+    /// <summary>
+    /// Spec 056 DD12 (req 4.4): the queued message, and why the work waits when dispatch would hold it now, for example
+    /// "⏳ Queued #42. It waits: Kiro paused — quota used up, since …". The preview writes nothing; when it fails the
+    /// message says only that the work was queued.
+    /// </summary>
+    private async Task<string> QueuedAsync(string queued, JobDistributionRequest request, CancellationToken ct)
+    {
+        string? waits = null;
+        try
+        {
+            waits = await router.PreviewAsync(request, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "ManualDispatchService: could not preview the route of issue {IssueIdentifier}", request.IssueIdentifier);
+        }
+        return waits is null
+            ? $"{queued} — the job controller will start an agent pod for it"
+            : $"{queued}. It waits: {waits}";
     }
 
     /// <summary>The orchestration needs a project; a template of no project dispatches under an unnamed one.</summary>

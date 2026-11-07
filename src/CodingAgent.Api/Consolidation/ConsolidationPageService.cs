@@ -21,9 +21,7 @@ internal sealed class ConsolidationPageService(
     IPipelineConfigStore configStore,
     IConsolidationService consolidation,
     ConsolidationStalenessService staleness,
-    AgentRoutingStore routing,
-    IAgentProfileStore profiles,
-    JobTemplateStore jobTemplates)
+    DispatchRouter router)
 {
     private const string PausedText = "auto paused: the last run failed";
 
@@ -124,7 +122,6 @@ internal sealed class ConsolidationPageService(
         var refactoringCounters = new Dictionary<string, UiAutoCounter>(StringComparer.Ordinal);
         if (config.AutoBrainConsolidationAfterRuns <= 0 && config.AutoRefactoringScanAfterClosedIssues <= 0)
             return new UiConsolidationAutoCounters(brainCounters, refactoringCounters);
-        var routes = await RoutesAsync(enabledPairs.Select(x => x.Template), ct);
 
         // ── Brain counters ────────────────────────────────────────────────────
         if (config.AutoBrainConsolidationAfterRuns > 0)
@@ -137,14 +134,11 @@ internal sealed class ConsolidationPageService(
             // which contradicts the "share a brain → share the count" invariant. Fix: compute IsPaused
             // once per brain id alongside the count, or accept that per-template errors are independent.
             var seenBrainCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-            // The template the Scheduler routes a brain's run by: the first of its group, in this order.
-            var routedBy = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (_, template) in enabledPairs.Where(x =>
                 ConsolidationTemplateFilter.SupportsBrainConsolidation(x.Template) &&
                 !ConsolidationTemplateFilter.IsBrainReadOnly(x.Template, x.Project, config)))
             {
                 var brainId = template.BrainProviderId!;
-                routedBy.TryAdd(brainId, template.Id);
                 var scopeKey = ConsolidationService.ScopeKey(ConsolidationRunType.BrainConsolidation, brainId, null);
                 try
                 {
@@ -157,7 +151,7 @@ internal sealed class ConsolidationPageService(
                     brainCounters[template.Id] = new UiAutoCounter(
                         count,
                         config.AutoBrainConsolidationAfterRuns,
-                        RefusedOrPaused(ConsolidationRouteProblem(routes, routedBy[brainId]), paused));
+                        paused ? PausedText : null);
                 }
                 catch (Exception ex)
                 {
@@ -176,7 +170,7 @@ internal sealed class ConsolidationPageService(
                 try
                 {
                     var paused = await staleness.IsPausedAsync(scopeKey, ct);
-                    var blocked = RefusedOrPaused(ConsolidationRouteProblem(routes, template.Id), paused);
+                    var blocked = paused ? PausedText : null;
                     if (blocked is null)
                     {
                         // Apply the same project-override logic as AutoConsolidationService.
@@ -202,60 +196,23 @@ internal sealed class ConsolidationPageService(
     }
 
     /// <summary>
-    /// The resolved routes of <paramref name="templates"/>. When the routing cannot be read, none: the counters still
-    /// show, without a route refusal.
-    /// </summary>
-    private async Task<IReadOnlyDictionary<string, IReadOnlyList<UiResolvedRoute>>> RoutesAsync(
-        IEnumerable<PipelineJobTemplate> templates, CancellationToken ct)
-    {
-        try
-        {
-            return ResolvedRoutes.For(
-                templates, await routing.LoadAsync(ct) ?? AgentRouting.Empty,
-                await profiles.LoadAgentProfilesAsync(ct), jobTemplates.ToolsByKey());
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Log.Warning(ex, "Consolidation page: failed to load the agent routing; the counters show no route refusal");
-            return new Dictionary<string, IReadOnlyList<UiResolvedRoute>>();
-        }
-    }
-
-    /// <summary>The problem of the Consolidation route of <paramref name="templateId"/>, or null when it routes.</summary>
-    private static string? ConsolidationRouteProblem(
-        IReadOnlyDictionary<string, IReadOnlyList<UiResolvedRoute>> routes, string templateId) =>
-        routes.GetValueOrDefault(templateId)?.FirstOrDefault(r => r.TaskType == WorkItemTaskType.Consolidation)?.Problem;
-
-    /// <summary>Why an automatic start does not run: its route is refused (first, it is what to fix), or the scope is paused.</summary>
-    private static string? RefusedOrPaused(string? routeProblem, bool paused)
-    {
-        if (routeProblem is not null)
-            return $"auto refused: {routeProblem}";
-        return paused ? PausedText : null;
-    }
-
-    /// <summary>
-    /// Queues the run and returns the message to show. A refused trigger throws <see cref="DispatchRefusedException"/>:
-    /// with the API's reason when the work item was refused (no agent route, or one that cannot run, spec 053
-    /// req 2.9), otherwise with the possible causes (already running, a configuration error, an unknown template;
-    /// <see cref="IConsolidationService"/> logs which).
+    /// Queues the run and returns the message to show, with why it waits when dispatch would hold it now (spec 056
+    /// DD12). A refused trigger throws <see cref="DispatchRefusedException"/> with the possible causes (already running,
+    /// a configuration error, an unknown template; <see cref="IConsolidationService"/> logs which).
     /// </summary>
     public async Task<string> TriggerAsync(UiConsolidationTriggerRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
         TemplateId? templateId = string.IsNullOrEmpty(request.TemplateId) ? (TemplateId?)null : new TemplateId(request.TemplateId);
 
-        ConsolidationTriggerResult? run;
-        try
-        {
-            run = await consolidation.TriggerAsync(request.Type, templateId, ct, request.AutoDispatch, request.RefactoringFocus);
-        }
-        catch (WorkItemRefusedException ex)
-        {
-            throw new DispatchRefusedException(ex.Message);
-        }
+        var run = await consolidation.TriggerAsync(request.Type, templateId, ct, request.AutoDispatch, request.RefactoringFocus);
         if (run is not null)
-            return $"{FormatRunType(request.Type)} queued — waiting for an idle agent.";
+        {
+            var waits = await WaitTextAsync(request.TemplateId, ct);
+            return waits is null
+                ? $"{FormatRunType(request.Type)} queued — waiting for an idle agent."
+                : $"{FormatRunType(request.Type)} queued. It waits: {waits}";
+        }
 
         string? templateName = request.TemplateId is null
             ? null
@@ -266,6 +223,32 @@ internal sealed class ConsolidationPageService(
             ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running, a configuration error occurred, or template not found.",
             _ => "Consolidation rejected.",
         });
+    }
+
+    /// <summary>
+    /// Spec 056 DD12: why a consolidation of <paramref name="templateId"/> would wait now (its route cannot run, or its
+    /// credential is paused); null when it would start, or when the preview fails.
+    /// </summary>
+    private async Task<string?> WaitTextAsync(string? templateId, CancellationToken ct)
+    {
+        try
+        {
+            return await router.PreviewAsync(new JobDistributionRequest
+            {
+                IssueIdentifier = new IssueIdentifier("consolidation"),
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                RepoProviderConfigId = "",
+                InitiatedBy = InitiatedByConstants.Manual,
+                TaskType = WorkItemTaskType.Consolidation,
+                TimeoutSeconds = 0,
+                ConsolidationTemplateId = templateId,
+            }, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "Consolidation page: could not preview the consolidation route of template {TemplateId}", templateId);
+            return null;
+        }
     }
 
     private static string FormatRunType(ConsolidationRunType type) => type switch

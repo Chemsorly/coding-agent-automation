@@ -55,6 +55,21 @@ public sealed class RoutingTelemetryTests
         PayloadSchemaVersion = 1,
     };
 
+    /// <summary>A Pending item with a readable request of <paramref name="taskType"/>, for the dispatch router.</summary>
+    private Guid SeedPending(WorkItemTaskType taskType)
+    {
+        var id = Guid.NewGuid();
+        using var db = _db.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = id, TaskType = taskType, IssueIdentifier = $"telemetry-{id:N}", IssueProviderConfigId = "ip-1",
+            Status = WorkItemStatus.Pending, AgentSelector = "", TimeoutSeconds = 3600, CreatedAt = DateTimeOffset.UtcNow,
+            Payload = JsonSerializer.Serialize(Request(taskType), PipelineJsonOptions.Default),
+        });
+        db.SaveChanges();
+        return id;
+    }
+
     // ── Listeners ────────────────────────────────────────────────────────────
 
     /// <summary>The measurements of one instrument of <paramref name="meterName"/> while it is alive.</summary>
@@ -133,56 +148,22 @@ public sealed class RoutingTelemetryTests
 
     // ── pipeline.routing.refusals ────────────────────────────────────────────
 
+    // Spec 056 req 7.2: a route that does not resolve at dispatch holds the item; it is no refusal and is not counted
+    // (it would count every held item every cycle). The span carries the hold.
     [Fact]
-    public async Task TheRouter_CountsACreateRefusal_WithTheReason_AndMarksTheSpan()
+    public async Task TheRouter_HoldsAnUnroutedItem_WithoutCountingARefusal_AndTagsTheSpan()
     {
         using var refusals = new InstrumentListener("pipeline.routing.refusals");
         using var span = new RecordedSpan();
+        var id = SeedPending(WorkItemTaskType.Review);
 
-        var result = await AgentRoutingTestSupport.Router(_db).RouteAsync(
-            Request(WorkItemTaskType.Review), PipelineTelemetry.RoutingStages.Create, CancellationToken.None);
+        var outcome = await AgentRoutingTestSupport.Router(_db).RouteAsync(id, CancellationToken.None);
 
-        result.IsRefused.Should().BeTrue();
-        refusals.Measurements.Should().ContainSingle().Which.Should().Contain(new Dictionary<string, string>
-        {
-            ["task_type"] = nameof(WorkItemTaskType.Review),
-            ["stage"] = "create",
-            ["reason"] = AgentRouteRefusalReason.NoRoute,
-        });
-        span.Activity.GetTagItem(PipelineTelemetry.RoutingAttributes.RouteRefusal).Should().Be(AgentRouteRefusalReason.NoRoute);
-        span.Activity.Status.Should().Be(ActivityStatusCode.Error);
-    }
-
-    [Fact]
-    public async Task TheRolloutRouting_CountsADispatchRefusal()
-    {
-        using var refusals = new InstrumentListener("pipeline.routing.refusals");
-        using var attempts = new InstrumentListener("workdistribution.dispatch.attempts", WorkDistributionTelemetry.MeterName);
-        var id = Guid.NewGuid();
-        using (var db = _db.CreateDbContext())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = id, TaskType = WorkItemTaskType.Triage, IssueIdentifier = $"rollout-{id:N}", IssueProviderConfigId = "ip-1",
-                Status = WorkItemStatus.Pending, AgentSelector = "", TimeoutSeconds = 3600, CreatedAt = DateTimeOffset.UtcNow,
-                Payload = JsonSerializer.Serialize(Request(WorkItemTaskType.Triage), PipelineJsonOptions.Default),
-            });
-            db.SaveChanges();
-        }
-        var rollout = new RolloutRouting(_db, AgentRoutingTestSupport.Router(_db), new WorkItemStatusTransitionService(
-            new WorkItemTransitionService(_db, NullLogger<WorkItemTransitionService>.Instance),
-            new Mock<IRunLifecycleManager>().Object, NullLogger<WorkItemStatusTransitionService>.Instance, _db));
-
-        await rollout.RouteAsync(id, CancellationToken.None);
-
-        refusals.Measurements.Should().ContainSingle().Which.Should().Contain(new Dictionary<string, string>
-        {
-            ["task_type"] = nameof(WorkItemTaskType.Triage),
-            ["stage"] = "dispatch",
-            ["reason"] = AgentRouteRefusalReason.NoRoute,
-        });
-        attempts.Measurements.Should().ContainSingle(m => m["reason"] == "no_route", "req 9.12: the dispatch attempt names the refusal")
-            .Which.Should().Contain("result", "deferred");
+        outcome.Status.Should().Be(DispatchRouteStatus.Held);
+        outcome.HoldReason.Should().Be(AgentRouteRefusalReason.NoRoute);
+        refusals.Measurements.Should().BeEmpty();
+        span.Activity.GetTagItem(PipelineTelemetry.CredentialAttributes.HoldReason).Should().Be(AgentRouteRefusalReason.NoRoute);
+        span.Activity.GetTagItem(PipelineTelemetry.CredentialAttributes.HoldText).Should().Be("No agent route for PR review — set it in Settings → Agents → Routing");
     }
 
     [Fact]
@@ -213,12 +194,13 @@ public sealed class RoutingTelemetryTests
     // ── Route attributes ─────────────────────────────────────────────────────
 
     [Fact]
-    public async Task TheRouter_SetsTheRouteAttributesOnTheCreationSpan()
+    public async Task TheRouter_SetsTheRouteAttributesOnTheDispatchSpan()
     {
         AgentRoutingTestSupport.SeedRouting(_db, AgentRoutingTestData.Routing(model: "opus", effort: "high"));
+        var id = SeedPending(WorkItemTaskType.Implementation);
         using var span = new RecordedSpan();
 
-        await AgentRoutingTestSupport.Router(_db).RouteAsync(Request(), PipelineTelemetry.RoutingStages.Create, CancellationToken.None);
+        await AgentRoutingTestSupport.Router(_db).RouteAsync(id, CancellationToken.None);
 
         span.Activity.GetTagItem(PipelineTelemetry.RoutingAttributes.AgentProfile).Should().Be("profile-kiro");
         span.Activity.GetTagItem(PipelineTelemetry.RoutingAttributes.Model).Should().Be("opus");
@@ -252,18 +234,21 @@ public sealed class RoutingTelemetryTests
     public async Task NoLogLine_CarriesAToolSettingOrAnMcpEnvValue()
     {
         AgentRoutingTestSupport.SeedRouting(_db);
-        var routerLog = new CapturingLogger<WorkItemRouter>();
-        var router = new WorkItemRouter(
-            Profiles(SecretHolder), new AgentRoutingStore(_db), Templates(), AgentRoutingTestData.JobTemplates(), routerLog);
+        var routerEvents = new List<LogEvent>();
+        var router = AgentRoutingTestSupport.Router(_db, profiles: [SecretHolder], logger: AgentRoutingTestSupport.Logger(routerEvents));
         var claimEvents = new List<LogEvent>();
         var enricher = Enricher(profiles: [SecretHolder], logger: AgentRoutingTestSupport.Logger(claimEvents));
+        var id = SeedPending(WorkItemTaskType.Implementation);
 
-        var routed = (await router.RouteAsync(Request(), PipelineTelemetry.RoutingStages.Create, CancellationToken.None)).Request!;
+        await router.RouteAsync(id, CancellationToken.None);
+        JobDistributionRequest routed;
+        using (var db = _db.CreateDbContext())
+            routed = JsonSerializer.Deserialize<JobDistributionRequest>(db.WorkItems.Single(w => w.Id == id).Payload!, PipelineJsonOptions.Lenient)!;
         await enricher.EnrichAsync(routed with { Route = null }, new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "P" }, CancellationToken.None);
         await enricher.EnrichAsync(routed with { Route = routed.Route! with { ProfileId = "gone" } },
             new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "P" }, CancellationToken.None);
 
-        var lines = routerLog.Lines.Concat(claimEvents.Select(e => e.RenderMessage() + " " + string.Join(" ", e.Properties.Values))).ToList();
+        var lines = routerEvents.Concat(claimEvents).Select(e => e.RenderMessage() + " " + string.Join(" ", e.Properties.Values)).ToList();
         lines.Should().NotBeEmpty();
         lines.Should().NotContain(l => l.Contains(SettingSecret, StringComparison.Ordinal) || l.Contains(McpSecret, StringComparison.Ordinal));
     }
@@ -325,12 +310,12 @@ public sealed class RoutingTelemetryTests
     }
 
     /// <summary>A real enricher over the test routing table, with the dispatch preparation stubbed.</summary>
-    private AssignmentEnricher Enricher(IReadOnlyList<AgentProfile> profiles, Serilog.ILogger logger, bool throwFromCore = false)
+    private static AssignmentEnricher Enricher(IReadOnlyList<AgentProfile> profiles, Serilog.ILogger logger, bool throwFromCore = false)
     {
         var projects = Templates();
         return new AssignmentEnricher(
             new StubInfrastructure(throwFromCore), Profiles([.. profiles]), Mock.Of<IConsolidationJobPreparationService>(), projects,
-            new ConsolidationTemplateResolver(projects), new AgentRoutingStore(_db), AgentRoutingTestData.JobTemplates(), logger);
+            new ConsolidationTemplateResolver(projects), AgentRoutingTestData.JobTemplates(), logger);
     }
 
     private sealed class StubInfrastructure(bool throwFromCore) : DispatchInfrastructure()

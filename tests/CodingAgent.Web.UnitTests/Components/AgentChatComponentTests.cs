@@ -131,6 +131,21 @@ public class AgentChatComponentTests : AgentChatTestBase
         cut.Markup.Should().NotContain("No enabled agent profile runs on a job template with a tool");
     }
 
+    // Spec 056 req 4.5: a paused profile stays offered and says why a launch would be refused.
+    [Fact]
+    public async Task AgentChat_APausedProfile_ShowsThePauseText()
+    {
+        const string text = "Kiro paused — quota used up, since 2026-11-02 05:00 UTC";
+        Chat.Setup(c => c.GetOptionsAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiChatOptions([new UiChatProfile(ProfileId, "Chat profile", JobTemplateProviderType.Kiro, ["auto"], ["auto"], "auto", "auto", text)], 120));
+
+        var cut = Render<AgentChat>();
+        await cut.InvokeAsync(() => cut.Find("select#profile-select").Change(ProfileId));
+
+        cut.Find("[data-testid='chat-profile-paused']").TextContent.Should().Contain(text);
+        cut.FindAll("#profile-select option").Select(o => o.GetAttribute("value")).Should().Contain(ProfileId);
+    }
+
     [Fact]
     public void AgentChat_ShowsHint_WhenNoProfileCanBeLaunched()
     {
@@ -138,7 +153,7 @@ public class AgentChatComponentTests : AgentChatTestBase
 
         var cut = Render<AgentChat>();
 
-        cut.Markup.Should().Contain("No enabled agent profile runs on a job template with a tool");
+        cut.Markup.Should().Contain("No agent profile runs on a job template with a tool");
         cut.FindAll("#profile-select option").Should().ContainSingle();
     }
 

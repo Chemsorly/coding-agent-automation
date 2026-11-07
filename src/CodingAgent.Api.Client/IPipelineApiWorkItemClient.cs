@@ -70,16 +70,15 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     /// <list type="bullet">
     ///   <item><see cref="DispatchPendingResult.Dispatched"/> — item dispatched successfully
     ///     (200 OK with <c>{ "dispatched": true }</c>).</item>
-    ///   <item><see cref="DispatchPendingResult.PermanentRejection"/> — item not Pending, concurrency
-    ///     limit reached, or no template for selector
-    ///     (200 OK with <c>{ "dispatched": false, "reason": "..." }</c>). Do not retry this item in
-    ///     the current cycle.</item>
-    ///   <item><see cref="DispatchPendingResult.Transient"/> — PVC unavailable, advisory lock timeout,
+    ///   <item><see cref="DispatchPendingResult.PermanentRejection"/> — the item is held or not Pending
+    ///     (200 OK with <c>{ "dispatched": false, "reason": "..." }</c>); the outcome names the reason, template and
+    ///     credential (spec 056 DD9).</item>
+    ///   <item><see cref="DispatchPendingResult.Transient"/> — advisory lock timeout, running agents not countable,
     ///     or K8s failure (503 Service Unavailable). Retry in the next poll cycle.</item>
     /// </list>
     /// Throws <see cref="System.Net.Http.HttpRequestException"/> for all other unexpected status codes.
     /// </summary>
-    Task<DispatchPendingResult> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default);
+    Task<DispatchPendingOutcome> DispatchPendingAsync(Guid workItemId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -93,17 +92,14 @@ public enum DispatchPendingResult
     Dispatched,
 
     /// <summary>
-    /// Permanent rejection: item is not in Pending state (<c>not_pending</c>), the concurrency limit of the item's
-    /// job template is reached (<c>concurrency_limit</c>), no job template matches the selector (<c>no_template</c>),
-    /// or the item had no route (<c>no_route</c>).
-    /// Returned when the API responds 200 with <c>{ "dispatched": false }</c>.
-    /// Do not retry in the current cycle; the Scheduler poller treats this as a stop signal
-    /// for the item's AgentSelector.
+    /// The item was not started: it is held (spec 056: a route that cannot run, a paused credential, a reached limit,
+    /// no free PVC) or no longer Pending. Returned when the API responds 200 with <c>{ "dispatched": false }</c>. The
+    /// Scheduler stops what <see cref="DispatchPendingOutcome"/> names for the cycle.
     /// </summary>
     PermanentRejection,
 
     /// <summary>
-    /// Transient failure (503 Service Unavailable): no PVC available, advisory lock timeout, or K8s failure.
+    /// Transient failure (503 Service Unavailable): advisory lock timeout, running agents not countable, or K8s failure.
     /// Retry in the next poll cycle.
     /// </summary>
     Transient,
@@ -113,4 +109,20 @@ public enum DispatchPendingResult
     /// start either, so the Scheduler ends the dispatch cycle.
     /// </summary>
     GlobalLimitReached,
+}
+
+/// <summary>
+/// Spec 056 DD9: the outcome of <c>POST /api/work-items/{id}/dispatch</c> with what the API resolved: the hold reason, and
+/// the job template key and credential the item resolved to. The Scheduler stops the template (<c>concurrency_limit</c>,
+/// <c>pvc_unavailable</c>) or the credential (<c>credential_paused</c>) for the cycle. An API of an earlier release sends
+/// no template or credential.
+/// </summary>
+public readonly record struct DispatchPendingOutcome(
+    DispatchPendingResult Result,
+    string? Reason = null,
+    string? TemplateKey = null,
+    string? Credential = null)
+{
+    /// <summary>An outcome without reason, template or credential.</summary>
+    public static implicit operator DispatchPendingOutcome(DispatchPendingResult result) => new(result);
 }

@@ -128,7 +128,7 @@ public sealed class ConsolidationPageServiceTests
 
     /// <summary>
     /// The page service over the given stores. The routing table routes every task type to the default test profile
-    /// unless <paramref name="routing"/> says otherwise (spec 053: a refused Consolidation route shows on the counter).
+    /// unless <paramref name="routing"/> says otherwise (spec 056: the trigger says why a run would wait).
     /// </summary>
     private static ConsolidationPageService BuildService(
         Mock<ConsolidationStalenessService> mockStaleness,
@@ -153,25 +153,19 @@ public sealed class ConsolidationPageServiceTests
 
         var db = new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString());
         AgentRoutingTestSupport.SeedRouting(db, routing);
-        var mockProfiles = new Mock<IAgentProfileStore>();
-        mockProfiles
-            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([AgentRoutingTestData.Profile()]);
-
         return new ConsolidationPageService(
             mockProjectStore.Object,
             mockConfigStore.Object,
             consolidation ?? new Mock<IConsolidationService>().Object,
             mockStaleness.Object,
-            new AgentRoutingStore(db),
-            mockProfiles.Object,
-            AgentRoutingTestData.JobTemplates());
+            AgentRoutingTestSupport.Router(db, profiles: [AgentRoutingTestData.Profile()], templates: templates.ToList()));
     }
 
+    // Spec 056 DD1: an automatic start is never refused for routing (it is held at dispatch), so a route that cannot run
+    // is no counter reason; a pause still is.
     [Fact]
-    public async Task GetAutoCounters_ARefusedConsolidationRoute_IsTheReason_BeforeAPause()
+    public async Task GetAutoCounters_ARouteThatCannotRun_IsNoReason_APauseStillIs()
     {
-        // Spec 053: a refused automatic start creates no run, so nothing pauses the scope; the counter names the route.
         var config = new PipelineConfiguration { AutoRefactoringScanAfterClosedIssues = 10, MaxRefactoringProposals = 3 };
         var mockStaleness = new Mock<ConsolidationStalenessService>();
         mockStaleness.Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
@@ -184,34 +178,7 @@ public sealed class ConsolidationPageServiceTests
 
         var result = await service.GetAutoCountersAsync(CancellationToken.None);
 
-        result.RefactoringCounters["t1"].Should().Be(
-            new UiAutoCounter(4, 10, $"auto refused: {AgentRouteRefusalReason.NoRouteText}"));
-    }
-
-    [Fact]
-    public async Task GetAutoCounters_ABrainsRefusal_IsTheRouteOfTheTemplateTheSchedulerUses()
-    {
-        // The Scheduler routes a shared brain's run by the first template of its group; t2's own row does not count.
-        var config = new PipelineConfiguration { AutoBrainConsolidationAfterRuns = 20 };
-        var mockStaleness = new Mock<ConsolidationStalenessService>();
-        mockStaleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("brain-1", It.IsAny<CancellationToken>())).ReturnsAsync(3);
-        mockStaleness.Setup(s => s.IsPausedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
-        var routedT2 = Template("t2") with
-        {
-            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
-            {
-                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route(),
-            },
-        };
-
-        var service = BuildService(mockStaleness, config,
-            [Project("p", templateIds: ["t1", "t2"])], [Template("t1"), routedT2],
-            routing: CodingAgent.Pipeline.Models.AgentRouting.Empty);
-
-        var result = await service.GetAutoCountersAsync(CancellationToken.None);
-
-        result.BrainCounters.Values.Should().AllSatisfy(c => c.Blocked.Should().StartWith("auto refused: "),
-            "both cards show the brain's run, which routes by t1");
+        result.RefactoringCounters["t1"].Should().Be(new UiAutoCounter(4, 10, "auto paused: the last run failed"));
     }
 
     [Fact]
@@ -362,22 +329,41 @@ public sealed class ConsolidationPageServiceTests
             "refactoring counter must still be populated even when the brain counter threw");
     }
 
+    // Spec 056 DD12 (req 4.4): the trigger queues the run and says why it waits when dispatch would hold it now.
     [Fact]
-    public async Task Trigger_ARefusedWorkItem_ShowsTheApisReason()
+    public async Task Trigger_WhenTheRouteCannotRunNow_QueuesAndSaysWhyItWaits()
     {
-        // Spec 053 req 2.9: the Consolidation page shows why the run cannot start.
         var consolidation = new Mock<IConsolidationService>();
         consolidation.Setup(c => c.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(),
                 It.IsAny<bool>(), It.IsAny<RefactoringScanFocus>()))
-            .ThrowsAsync(new WorkItemRefusedException(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText));
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                Guid.NewGuid().ToString(), ConsolidationRunType.BrainConsolidation, "t1", "t1-name", "p", "p", DateTimeOffset.UtcNow, null));
+        var service = BuildService(new Mock<ConsolidationStalenessService>(), new PipelineConfiguration(),
+            [Project("p", templateIds: ["t1"])], [Template("t1")], consolidation.Object,
+            routing: CodingAgent.Pipeline.Models.AgentRouting.Empty);
+
+        var message = await service.TriggerAsync(
+            new UiConsolidationTriggerRequest(ConsolidationRunType.BrainConsolidation, "t1", false), CancellationToken.None);
+
+        message.Should().Be("Brain Consolidation queued. It waits: No agent route for Consolidation — set it in Settings → Agents → Routing");
+    }
+
+    [Fact]
+    public async Task Trigger_WhenTheRouteRuns_SaysItWaitsForAnAgent()
+    {
+        var consolidation = new Mock<IConsolidationService>();
+        consolidation.Setup(c => c.TriggerAsync(
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(),
+                It.IsAny<bool>(), It.IsAny<RefactoringScanFocus>()))
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                Guid.NewGuid().ToString(), ConsolidationRunType.BrainConsolidation, "t1", "t1-name", "p", "p", DateTimeOffset.UtcNow, null));
         var service = BuildService(new Mock<ConsolidationStalenessService>(), new PipelineConfiguration(),
             [Project("p", templateIds: ["t1"])], [Template("t1")], consolidation.Object);
 
-        var act = () => service.TriggerAsync(
+        var message = await service.TriggerAsync(
             new UiConsolidationTriggerRequest(ConsolidationRunType.BrainConsolidation, "t1", false), CancellationToken.None);
 
-        (await act.Should().ThrowAsync<CodingAgent.Api.Dispatch.DispatchRefusedException>())
-            .WithMessage(CodingAgent.Pipeline.Services.AgentRouteRefusalReason.NoRouteText);
+        message.Should().Be("Brain Consolidation queued — waiting for an idle agent.");
     }
 }

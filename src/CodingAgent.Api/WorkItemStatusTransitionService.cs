@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -7,6 +6,7 @@ using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -56,12 +56,14 @@ public sealed partial class WorkItemStatusTransitionService
     private readonly IRunLifecycleManager _runLifecycleManager;
     private readonly ILogger<WorkItemStatusTransitionService> _logger;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
+    private readonly IProviderFailureHandler? _providerFailures;
 
     public WorkItemStatusTransitionService(
         WorkItemTransitionService transitionService,
         IRunLifecycleManager runLifecycleManager,
         ILogger<WorkItemStatusTransitionService> logger,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null)
+        IDbContextFactory<PipelineDbContext>? dbFactory = null,
+        IProviderFailureHandler? providerFailures = null)
     {
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(runLifecycleManager);
@@ -71,6 +73,7 @@ public sealed partial class WorkItemStatusTransitionService
         _runLifecycleManager = runLifecycleManager;
         _logger = logger;
         _dbFactory = dbFactory;
+        _providerFailures = providerFailures;
     }
 
     /// <summary>
@@ -92,9 +95,16 @@ public sealed partial class WorkItemStatusTransitionService
         Guid id,
         WorkItemStatusRequest request,
         CancellationToken ct,
-        bool awaitTelemetry = false)
+        bool awaitTelemetry = false,
+        string? agentCaller = null)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        // ── Spec 056 DD11: a provider failure from the agent that runs the item ───────────────────
+        // Handled first and never falls through: the item is ended and queued again, exactly once. A provider failure
+        // posted with the operator key is ignored (agentCaller null): the request is handled as a plain Failed.
+        if (await TryHandleProviderFailureAsync(id, request, agentCaller, ct) is { } providerOutcome)
+            return providerOutcome;
 
         // TODO: [WARNING] id is not validated for Guid.Empty. Passing Guid.Empty flows through to
         // TryRecoverFromInfrastructureFailureAsync and then TransitionDetailedAsync, which will issue
@@ -169,6 +179,36 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
+
+    /// <summary>The handler's outcome for an agent's Failed status carrying a provider failure; null otherwise.</summary>
+    private async Task<StatusTransitionOutcome?> TryHandleProviderFailureAsync(
+        Guid id, WorkItemStatusRequest request, string? agentCaller, CancellationToken ct)
+    {
+        if (request.Status != WorkItemStatus.Failed || agentCaller is null || _providerFailures is null
+            || ReadProviderFailure(request.Result) is not { } providerFailure)
+        {
+            return null;
+        }
+
+        return await _providerFailures.HandleAsync(id, agentCaller, providerFailure, ct)
+            ? StatusTransitionOutcome.Transitioned
+            : StatusTransitionOutcome.AlreadyAtTarget;
+    }
+
+    /// <summary>The provider failure of a completion payload; null when absent or the payload cannot be read.</summary>
+    private static AgentProviderFailure? ReadProviderFailure(string? resultJson)
+    {
+        if (string.IsNullOrEmpty(resultJson))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<JobCompletionPayload>(resultJson, PipelineJsonOptions.Lenient)?.ProviderFailure;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static bool IsTerminal(WorkItemStatus? status)
         => status is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded or WorkItemStatus.Failed;
@@ -618,7 +658,7 @@ public sealed partial class WorkItemStatusTransitionService
     /// Caps a pod log tail to the last 100 lines, truncates each line to 1000 characters,
     /// and redacts common secret patterns. Returns null for null or empty input.
     /// </summary>
-    // TODO: [WARNING] AWS_ACCESS_KEY_ID values are not redacted by any of the three patterns.
+    // TODO: [WARNING] AWS_ACCESS_KEY_ID values are not redacted by any SecretPatternRedactor pattern.
     // KeyValueSecretRegex matches keywords token/password/passwd/secret/api[_-]?key/authorization;
     // ACCESS_KEY_ID contains none of those words. AWS_SECRET_ACCESS_KEY is caught by the 'secret'
     // keyword, but the corresponding key ID is not. If an agent pod is configured with
@@ -636,23 +676,10 @@ public sealed partial class WorkItemStatusTransitionService
         foreach (var raw in tail)
         {
             var line = raw.Length > 1000 ? raw[..1000] : raw;
-            try { line = KeyValueSecretRegex().Replace(line, "$1$2***"); }
-            catch (RegexMatchTimeoutException) { continue; }
-            try { line = BearerTokenRegex().Replace(line, "Bearer ***"); }
-            catch (RegexMatchTimeoutException) { continue; }
-            try { line = GitHubTokenRegex().Replace(line, "***"); }
-            catch (RegexMatchTimeoutException) { continue; }
-            result.Add(line);
+            // A line whose redaction timed out is dropped rather than kept unredacted.
+            if (SecretPatternRedactor.TryRedact(line) is { } redacted)
+                result.Add(redacted);
         }
         return result.Count > 0 ? result : null;
     }
-
-    [GeneratedRegex(@"(?i)(token|password|passwd|secret|api[_\-]?key|authorization)(\s*[=:]\s*)(bearer\s+)?\S+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex KeyValueSecretRegex();
-
-    [GeneratedRegex(@"(?i)\bbearer\s+\S+", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex BearerTokenRegex();
-
-    [GeneratedRegex(@"\bgh[pousr]_[A-Za-z0-9]{20,}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex GitHubTokenRegex();
 }

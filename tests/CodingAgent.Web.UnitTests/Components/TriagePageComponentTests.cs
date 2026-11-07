@@ -19,6 +19,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class TriagePageComponentTests : BunitContext
 {
+    private readonly CodingAgent.Web.Services.CockpitState _state = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiTriageClient> _triages = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiConfigClient> _config = new();
     private readonly Mock<CodingAgent.Web.Ui.IUiRunClient> _runHistory = new();
@@ -38,6 +39,7 @@ public class TriagePageComponentTests : BunitContext
         Services.AddSingleton(_triages.Object);
         Services.AddSingleton(_config.Object);
         Services.AddSingleton(_runHistory.Object);
+        Services.AddSingleton(_state);
         Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
@@ -52,6 +54,20 @@ public class TriagePageComponentTests : BunitContext
 
     private static TriageDetail CauseFoundDetail() =>
         Detail(OperatorRecord(ShopProjectId, Attempt("wi-1", CauseFound(Draft("d1", "Ack after the update"), Draft("d2", "Raise the memory limit")))));
+
+    // Spec 056 DD12: a new triage whose attempt cannot start now says why on its page, once.
+    [Fact]
+    public void ANewTriageWhoseAttemptWaits_ShowsWhyOnce()
+    {
+        Returns(CauseFoundDetail());
+        _state.SetNotice($"triage/{TriageId}", CodingAgent.Web.UiFormatters.TriageWaitNotice("Kiro paused — quota used up, since 2026-11-02 05:00 UTC"));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-testid='triage-notice']").TextContent.Should()
+            .Be("The attempt is queued and waits: Kiro paused — quota used up, since 2026-11-02 05:00 UTC");
+        _state.TakeNotice($"triage/{TriageId}").Should().BeNull("the notice is shown once");
+    }
 
     [Fact]
     public void Report_TablesHaveTriageReportTableClass()

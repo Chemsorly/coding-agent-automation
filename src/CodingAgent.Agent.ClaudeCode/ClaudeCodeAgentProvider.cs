@@ -156,7 +156,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         ArgumentNullException.ThrowIfNull(request);
 
         var credential = ClaudeCodeCredentials.Resolve(_authMode, _getEnvironmentVariable);
-        if (credential is null && _authMode != ClaudeCodeAuthModes.Auto)
+        if (credential is null)
             return MissingCredentialResult();
 
         var workspacePath = Path.GetFullPath(request.WorkspacePath);
@@ -232,6 +232,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             Cost = cost,
             UsageDetails = details,
             ErrorCategory = errorCategory,
+            ProviderFailure = state.ProviderFailure(errorCategory),
             ToolCalls = state.ToolCalls.Count > 0
                 ? new Dictionary<string, McpCallCounts>(state.ToolCalls)
                 : null,
@@ -248,10 +249,13 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     /// </remarks>
     public async Task ValidateAsync(CancellationToken ct)
     {
-        if (_authMode != ClaudeCodeAuthModes.Auto && ClaudeCodeCredentials.Resolve(_authMode, _getEnvironmentVariable) is null)
+        if (ClaudeCodeCredentials.Resolve(_authMode, _getEnvironmentVariable) is null)
         {
+            // Spec 056 DD16: typed, so the provider failure decorator records auth_failed and the credential is paused.
             _logger.Error("Claude Code auth mode {AuthMode} is selected but its credential is not configured", _authMode);
-            throw new InvalidOperationException(MissingCredentialMessage());
+            throw new ProviderCredentialMissingException(
+                _authMode == ClaudeCodeAuthModes.ApiKey ? AgentCredentials.ClaudeApiKey : AgentCredentials.ClaudeSubscription,
+                MissingCredentialMessage());
         }
 
         var startInfo = CreateStartInfo(Environment.CurrentDirectory);

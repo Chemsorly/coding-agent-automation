@@ -15,7 +15,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class AgentRoutingSectionComponentTests : BunitContext
 {
-    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro", true);
+    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro");
 
     private readonly Mock<IUiSettingsClient> _settings = new();
     private readonly Mock<IUiProviderClient> _providers = new();
@@ -43,11 +43,11 @@ public class AgentRoutingSectionComponentTests : BunitContext
             .Add(s => s.OnShowStatus, (ValueTuple<string, bool> s) => _statuses.Add(s)));
 
     [Fact]
-    public void ThePage_SaysThatAChangeAppliesToWorkCreatedAfterSaving()
+    public void ThePage_SaysThatAChangeAppliesToQueuedWorkAtItsNextDispatch_Spec056()
     {
         var cut = RenderSection();
 
-        cut.Find("[data-testid='routing-applies-note']").TextContent.Should().Contain("Changes apply to work created after saving");
+        cut.Find("[data-testid='routing-applies-note']").TextContent.Should().Contain("Changes apply to queued work at its next dispatch");
         cut.FindAll("[data-testid='route-table'] tbody tr").Should().HaveCount(6);
     }
 

@@ -48,6 +48,10 @@ public sealed class WorkItemCountsService : BackgroundService
     // its failure resets only the two agent gauges, and a failure of the other polls does not blank them.
     private AgentCapacityStatus? _cachedCapacity;
 
+    // Spec 056: each credential in use and whether it is paused (GET /api/agents/credentials), polled in its own
+    // try/catch next to capacity; null = no successful poll yet or the last one failed.
+    private IReadOnlyList<AgentCredentialStatus>? _cachedCredentials;
+
     public WorkItemCountsService(
         IServiceScopeFactory scopeFactory,
         ILeaderGate? leaderGate,
@@ -111,6 +115,9 @@ public sealed class WorkItemCountsService : BackgroundService
 
         // Spec 057: the agent capacity gauges (leader-gated inside the callbacks).
         WorkDistributionTelemetry.RegisterAgentCapacityCallbacks(RunningMeasurements, LimitMeasurements);
+
+        // Spec 056: the paused-credential gauge (leader-gated inside the callback).
+        PipelineTelemetry.RegisterAgentCredentialCallbacks(CredentialPausedMeasurements);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -199,6 +206,17 @@ public sealed class WorkItemCountsService : BackgroundService
             _logger.Warning(ex, "WorkItemCountsService: failed to fetch agent capacity — agent gauges reset");
             Volatile.Write(ref _cachedCapacity, null);
         }
+
+        try
+        {
+            Volatile.Write(ref _cachedCredentials, await apiClient.GetAgentCredentialsAsync(ct));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "WorkItemCountsService: failed to fetch agent credentials — credential gauge reset");
+            Volatile.Write(ref _cachedCredentials, null);
+        }
     }
 
     /// <summary>
@@ -235,6 +253,20 @@ public sealed class WorkItemCountsService : BackgroundService
             .Select(r => new Measurement<int>(r.EffectiveLimit!.Value,
                 new KeyValuePair<string, object?>("agent_selector", r.TemplateKey ?? "all"),
                 new KeyValuePair<string, object?>("source", r.EffectiveSource)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Spec 056 req 8.1: <c>pipeline.agent_credential.paused</c> — 1 per paused credential, 0 per available one in use;
+    /// nothing before the first successful poll, after a failed one, or on a non-leader.
+    /// </summary>
+    internal IEnumerable<Measurement<long>> CredentialPausedMeasurements()
+    {
+        if (!(_leaderGate is null || _leaderGate.IsLeader)) return [];
+        var credentials = Volatile.Read(ref _cachedCredentials);
+        if (credentials is null) return [];
+        return credentials
+            .Select(c => new Measurement<long>(c.Paused ? 1 : 0, new KeyValuePair<string, object?>("credential", c.Credential)))
             .ToList();
     }
 

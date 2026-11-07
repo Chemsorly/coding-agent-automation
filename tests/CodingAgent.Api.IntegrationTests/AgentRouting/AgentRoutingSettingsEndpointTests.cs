@@ -57,7 +57,8 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
     private const string KiroProfileId = "0e5e0000-0000-4000-8000-000000000531";
     private const string ClaudeProfileId = "0e5e0000-0000-4000-8000-000000000532";
     private const string OpenCodeProfileId = "0e5e0000-0000-4000-8000-000000000533";
-    private const string DisabledProfileId = "0e5e0000-0000-4000-8000-000000000534";
+    private const string SpareProfileId = "0e5e0000-0000-4000-8000-000000000534";
+    private const string MissingProfileId = "0e5e0000-0000-4000-8000-0000000005ff";
     private const string RoutingUrl = "/api/ui/settings/agent-routing";
     private const string ProfilesUrl = "/api/ui/settings/agent-profiles";
     private const string TemplatesUrl = $"/api/ui/settings/projects/{ProjectId}/templates";
@@ -97,7 +98,7 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
                      AgentRoutingTestData.Profile(KiroProfileId, AgentRoutingSettingsFactory.KiroTemplate, "Kiro agent"),
                      AgentRoutingTestData.Profile(ClaudeProfileId, AgentRoutingSettingsFactory.ClaudeTemplate, "Claude agent"),
                      AgentRoutingTestData.Profile(OpenCodeProfileId, AgentRoutingSettingsFactory.OpenCodeTemplate, "OpenCode agent"),
-                     AgentRoutingTestData.Profile(DisabledProfileId, AgentRoutingSettingsFactory.KiroTemplate, "Disabled agent", enabled: false),
+                     AgentRoutingTestData.Profile(SpareProfileId, AgentRoutingSettingsFactory.KiroTemplate, "Spare agent"),
                  })
         {
             await Profiles.SaveAgentProfileAsync(profile, Ct);
@@ -154,9 +155,9 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
 
         page!.Routing.Should().BeEquivalentTo(routing);
         page.Profiles.Should().Contain(new UiRoutingProfile(
-            ClaudeProfileId, "Claude agent", JobTemplateProviderType.Claude, AgentRoutingSettingsFactory.ClaudeTemplate, true));
+            ClaudeProfileId, "Claude agent", JobTemplateProviderType.Claude, AgentRoutingSettingsFactory.ClaudeTemplate));
         page.Profiles.Should().Contain(new UiRoutingProfile(
-            DisabledProfileId, "Disabled agent", JobTemplateProviderType.Kiro, AgentRoutingSettingsFactory.KiroTemplate, false));
+            SpareProfileId, "Spare agent", JobTemplateProviderType.Kiro, AgentRoutingSettingsFactory.KiroTemplate));
         page.JobTemplates.Should().Contain(new UiJobTemplate(AgentRoutingSettingsFactory.KiroTemplate, JobTemplateProviderType.Kiro))
             .And.Contain(new UiJobTemplate(AgentRoutingSettingsFactory.TemplateWithoutTool, ""));
     }
@@ -187,7 +188,7 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
                 [WorkItemTaskType.Decomposition] = AgentRoutingTestData.Route(ClaudeProfileId, model: " "),
                 [WorkItemTaskType.Review] = AgentRoutingTestData.Route(KiroProfileId, effort: "xhigh"),
                 [WorkItemTaskType.Triage] = AgentRoutingTestData.Route(OpenCodeProfileId, effort: "high"),
-                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route(DisabledProfileId),
+                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route(MissingProfileId),
             },
         };
 
@@ -198,7 +199,7 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
             "Decomposition: model is required (auto lets the tool choose)",
             "PR review: Kiro does not accept effort 'xhigh' (use auto, low, medium, high, max)",
             "Triage: OpenCode has no effort setting; use auto",
-            "Consolidation: agent profile 'Disabled agent' is disabled");
+            $"Consolidation: agent profile '{MissingProfileId}' does not exist");
         (await Routing.LoadAsync(Ct)).Should().BeEquivalentTo(stored, "an invalid table stores nothing, not even its valid rows");
     }
 
@@ -282,24 +283,18 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
     }
 
     [Fact]
-    public async Task DisablingOrDeletingAProfileThatRoutesName_IsRefused_WithTheRoutes()
+    public async Task DeletingAProfileThatRoutesName_IsRefused_WithTheRoutes()
     {
         await SeedAsync(
             AgentRoutingTestData.Routing(KiroProfileId, "auto", "auto",
                 (WorkItemTaskType.Decomposition, AgentRoutingTestData.Route(ClaudeProfileId))),
             Rows(WorkItemTaskType.Implementation, AgentRoutingTestData.Route(ClaudeProfileId, "claude-opus-5-5")));
-        var claude = (await Profiles.LoadAgentProfilesAsync(Ct)).Single(p => p.Id == ClaudeProfileId);
 
-        var disable = await Admin.PutAsJsonAsync(ProfilesUrl, claude with { Enabled = false }, Json);
         var delete = await Admin.DeleteAsync($"{ProfilesUrl}/{ClaudeProfileId}");
 
-        disable.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (await ReasonAsync(disable)).Should().Be(
-            "Agent profile 'Claude agent' cannot be disabled while routes name it: Global · Decomposition, " +
-            "Repository routing-api · Implementation. Change those routes first.");
         delete.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await ReasonAsync(delete)).Should().Contain("cannot be deleted while routes name it: Global · Decomposition");
-        (await Profiles.LoadAgentProfilesAsync(Ct)).Single(p => p.Id == ClaudeProfileId).Enabled.Should().BeTrue();
+        (await Profiles.LoadAgentProfilesAsync(Ct)).Should().Contain(p => p.Id == ClaudeProfileId);
     }
 
     [Fact]
@@ -324,15 +319,45 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
             .Should().Be(AgentRoutingSettingsFactory.ClaudeTemplate);
     }
 
+    // Spec 056 DD16: Claude Code runs with exactly the named credential; auto and unknown modes are refused.
+    [Theory]
+    [InlineData("auto")]
+    [InlineData("")]
+    [InlineData("oauth")]
+    public async Task SavingAClaudeProfileWithoutAKnownAuthMode_IsRefused(string authMode)
+    {
+        await SeedAsync();
+        var claude = (await Profiles.LoadAgentProfilesAsync(Ct)).Single(p => p.Id == ClaudeProfileId);
+
+        var response = await Admin.PutAsJsonAsync(ProfilesUrl,
+            claude with { Settings = new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = authMode } }, Json);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ReasonAsync(response)).Should().Be("Auth mode must be subscription or apiKey.");
+    }
+
+    [Theory]
+    [InlineData("subscription")]
+    [InlineData("apiKey")]
+    public async Task SavingAClaudeProfileWithAKnownAuthMode_IsAccepted(string authMode)
+    {
+        await SeedAsync();
+        var claude = (await Profiles.LoadAgentProfilesAsync(Ct)).Single(p => p.Id == ClaudeProfileId);
+
+        var response = await Admin.PutAsJsonAsync(ProfilesUrl,
+            claude with { Settings = new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = authMode } }, Json);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
     [Fact]
-    public async Task AProfileNoRouteNames_CanBeDisabledAndDeleted()
+    public async Task AProfileNoRouteNames_CanBeDeleted()
     {
         await SeedAsync();
         var id = NewProfileId();
         var profile = AgentRoutingTestData.Profile(id, AgentRoutingSettingsFactory.KiroTemplate, $"Spare {id[..8]}");
         await Profiles.SaveAgentProfileAsync(profile, Ct);
 
-        (await Admin.PutAsJsonAsync(ProfilesUrl, profile with { Enabled = false }, Json)).StatusCode.Should().Be(HttpStatusCode.OK);
         (await Admin.DeleteAsync($"{ProfilesUrl}/{id}")).StatusCode.Should().Be(HttpStatusCode.OK);
 
         (await Profiles.LoadAgentProfilesAsync(Ct)).Should().NotContain(p => p.Id == id);
@@ -502,7 +527,6 @@ public sealed class AgentRoutingSettingsEndpointTests : IClassFixture<AgentRouti
                 { RoutingUrl, Table(kiro, $"{{\"99\":{kiro}}}") },
                 { RoutingUrl, Table(kiro, $"{{\"Implementation\":{kiro},\"Implementation\":{kiro}}}") },
                 { RoutingUrl, Table(Route(Guid.Empty.ToString())) },
-                { RoutingUrl, Table(Route(DisabledProfileId)) },
                 { RoutingUrl, Table(Route(KiroProfileId, new string('m', 201))) },
                 { RoutingUrl, Table(Route(KiroProfileId, "sonnet; rm -rf /")) },
                 { RoutingUrl, Table(Route(OpenCodeProfileId, effort: "high")) },

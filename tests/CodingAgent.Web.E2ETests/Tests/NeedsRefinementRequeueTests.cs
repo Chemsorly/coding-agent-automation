@@ -54,7 +54,6 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
             Id = $"profile-staleness-{agentLabel}",
             DisplayName = $"Staleness Profile ({agentLabel})",
             JobTemplate = E2ERouting.Key(agentLabel),
-            Enabled = true
         });
     }
 
@@ -280,7 +279,6 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
             Id = "profile-staleness-s5",
             DisplayName = "Staleness Profile (s5)",
             JobTemplate = E2ERouting.Key("staleness-s5"),
-            Enabled = true
         });
 
         // Issue has BOTH agent:next and agent:needs-refinement — the loop must skip it.

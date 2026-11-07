@@ -171,7 +171,6 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
             Id = "profile-relay-5",
             DisplayName = "Relay Test Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("relay-agent-1", "e2e");

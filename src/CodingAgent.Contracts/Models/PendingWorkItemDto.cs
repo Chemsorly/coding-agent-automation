@@ -52,4 +52,21 @@ public sealed record PendingWorkItemDto
     /// worker spans attach to the originating API trace rather than starting a new root trace.
     /// </summary>
     public string? TraceParent { get; init; }
+
+    // ── Spec 056: why the item waits ─────────────────────────────────────
+
+    /// <summary>The reason of the item's latest hold (<see cref="HoldReasons"/>); null when it was never held.</summary>
+    public string? HoldReason { get; init; }
+
+    /// <summary>
+    /// The text of the item's latest hold, or a text derived for an item the dispatcher has not looked at since the
+    /// cause appeared (a paused credential, a reached limit). Null when nothing holds it.
+    /// </summary>
+    public string? HoldText { get; init; }
+
+    /// <summary>When the latest hold reason first appeared.</summary>
+    public DateTimeOffset? HeldAt { get; init; }
+
+    /// <summary>The credential of the item's last route resolution (<see cref="AgentCredentials"/>); null before it.</summary>
+    public string? Credential { get; init; }
 }

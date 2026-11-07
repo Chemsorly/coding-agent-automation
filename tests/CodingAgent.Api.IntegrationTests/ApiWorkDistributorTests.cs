@@ -95,9 +95,9 @@ public sealed class ApiWorkDistributorTests(ApiWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task Distribute_WithoutARoute_IsAPermanentFailureWithTheReason()
+    public async Task Distribute_WithoutARoute_IsQueued()
     {
-        // Spec 053 task 4.2: the Scheduler shows the reason and does not retry.
+        // Spec 056 DD1: creation never refuses for routing; the dispatcher holds the item.
         var distributor = Distributor;
         await using (var db = factory.CreateDbContext())
         {
@@ -107,7 +107,8 @@ public sealed class ApiWorkDistributorTests(ApiWebApplicationFactory factory)
 
         var result = await distributor.DistributeAsync(Request(), CancellationToken.None);
 
-        result.Should().BeEquivalentTo(new DistributionResult(false, null, AgentRouteRefusalReason.NoRouteText, IsPermanentFailure: true));
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeTrue();
     }
 
     [Fact]

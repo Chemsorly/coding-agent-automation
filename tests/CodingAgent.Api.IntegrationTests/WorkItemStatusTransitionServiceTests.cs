@@ -8,6 +8,7 @@ using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -1418,14 +1419,15 @@ public sealed class WorkItemStatusTransitionServiceTests
 
     /// <summary>
     /// Returns the Regex singleton for the named private static partial method on
-    /// <see cref="WorkItemStatusTransitionService"/> so its timeout can be temporarily altered.
+    /// <see cref="SecretPatternRedactor"/> (which <see cref="WorkItemStatusTransitionService.SanitizePodLogTail"/> uses) so its
+    /// timeout can be temporarily altered.
     /// </summary>
     private static Regex GetRegexSingleton(string methodName)
     {
-        var method = typeof(WorkItemStatusTransitionService)
+        var method = typeof(SecretPatternRedactor)
             .GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
         method.Should().NotBeNull(
-            $"{methodName}() must be a private static method on WorkItemStatusTransitionService; " +
+            $"{methodName}() must be a private static method on SecretPatternRedactor; " +
             "update this call if it was renamed");
         return (Regex)method!.Invoke(null, null)!;
     }

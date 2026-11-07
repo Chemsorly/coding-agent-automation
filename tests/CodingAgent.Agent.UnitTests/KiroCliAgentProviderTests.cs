@@ -489,6 +489,32 @@ public class KiroCliAgentProviderTests
         result.ErrorCategory.Should().Be(expected);
     }
 
+    // Spec 056 req 5.2 (task 3.1): the monthly usage limit pauses Kiro; throttling is transient.
+    [Theory]
+    [InlineData("error: The monthly usage limit has been reached", false, AgentErrorCategory.ProviderQuotaExhausted)]
+    [InlineData(null, true, AgentErrorCategory.ProviderRateLimit)]
+    [InlineData(null, false, AgentErrorCategory.None)]
+    public async Task ExecuteAsync_MapsTheQuotaLineAndThrottling(string? quotaLine, bool throttled, AgentErrorCategory expected)
+    {
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(1);
+        _mockOrchestrator.Setup(o => o.LastRunQuotaExhausted).Returns(quotaLine);
+        _mockOrchestrator.Setup(o => o.LastRunRateLimited).Returns(throttled);
+
+        var result = await _provider.ExecuteAsync(
+            new AgentRequest { Prompt = "analyse", WorkspacePath = "/ws", Timeout = TimeSpan.FromMinutes(1), UseResume = true },
+            CancellationToken.None);
+
+        result.ErrorCategory.Should().Be(expected);
+        if (quotaLine is null)
+            result.ProviderFailure.Should().BeNull();
+        else
+            result.ProviderFailure.Should().Be(new AgentProviderFailure(AgentProviderFailure.QuotaExhausted, null, quotaLine));
+    }
+
     // --- ExecuteAsync timeout tests ---
 
     [Fact]

@@ -121,6 +121,10 @@
                         SettingsClient="SettingsClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.AgentCredentials:
+                    @* Spec 056 req 4.2: the same card as on Fleet, with the profiles per credential. *@
+                    <AgentCredentialsCard ShowProfiles="true" />
+                    break;
                 case SettingsNodes.QualityGateConfigs:
                     <QualityGateConfigSection
                         ConfigClient="SettingsClient"
@@ -194,6 +198,7 @@
         section == SettingsNodes.AgentProfiles ||
         section == SettingsNodes.AgentRouting ||
         section == SettingsNodes.AgentCapacity ||
+        section == SettingsNodes.AgentCredentials ||
         section == SettingsNodes.QualityGateConfigs ||
         section == SettingsNodes.ReviewerConfigs ||
         section == SettingsNodes.Projects ||

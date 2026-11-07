@@ -458,6 +458,13 @@ public sealed record JobCompletionPayload
     /// <summary>Web link of the commit that added or last rewrote the inbox file (D22). Wire-compat: additive.</summary>
     [Key(35)]
     public string? BrainInboxFileUrl { get; init; }
+
+    /// <summary>
+    /// Spec 056: set on a Failed completion when the run stopped because its credential's quota is used up or its
+    /// login was rejected. The API then pauses the credential and queues the work again. Wire-compat: additive.
+    /// </summary>
+    [Key(36)]
+    public AgentProviderFailure? ProviderFailure { get; init; }
 }
 
 /// <summary>

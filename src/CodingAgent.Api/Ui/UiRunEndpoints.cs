@@ -89,10 +89,11 @@ internal static class UiRunEndpoints
     /// <summary>GET /api/ui/work-items/pending — the queue, in dispatch order.</summary>
     internal static async Task<IResult> GetPendingWorkItems(
         IUserAccess access, IDbContextFactory<PipelineDbContext> dbFactory, IPipelineConfigStore configStore,
+        [AsParameters] PendingHoldSources holds,
         CancellationToken ct, int maxResults = 50, string? projectId = null)
     {
         access.DemandList(projectId);
-        return await WorkItemQueryEndpoints.GetPendingWorkItems(dbFactory, configStore, maxResults, projectId, ct);
+        return await WorkItemQueryEndpoints.QueryPendingWorkItemsAsync(dbFactory, configStore, maxResults, projectId, holds, ct);
     }
 
     /// <summary>GET /api/ui/work-items/active — dispatched and running work items.</summary>

@@ -46,4 +46,10 @@ public interface ISchedulerApiClient
     /// <c>workdistribution.agents.running</c> and <c>workdistribution.agents.limit</c> gauges. Null on a null body.
     /// </summary>
     Task<AgentCapacityStatus?> GetAgentCapacityAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /api/agents/credentials on the API (spec 056) — each credential in use and whether it is paused, for the
+    /// <c>pipeline.agent_credential.paused</c> gauge. Null on a null body.
+    /// </summary>
+    Task<IReadOnlyList<AgentCredentialStatus>?> GetAgentCredentialsAsync(CancellationToken ct = default);
 }

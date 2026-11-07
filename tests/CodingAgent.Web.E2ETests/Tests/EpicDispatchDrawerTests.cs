@@ -52,7 +52,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("epic-agent-1", "e2e");
@@ -141,7 +140,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("epic-agent-2", "e2e");
@@ -281,7 +279,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("decomp-gate-agent", "e2e");
@@ -427,7 +424,6 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Two agents, both with the same label. The scheduler selects agents based on label

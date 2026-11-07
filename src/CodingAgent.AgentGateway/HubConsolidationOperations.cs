@@ -55,6 +55,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
     private readonly IRunLifecycleManager _lifecycleManager;
     private readonly IOrchestratorRunService _runService;
     private readonly ILogger _logger;
+    private readonly IProviderFailureHandler? _providerFailures;
 
     public HubConsolidationOperations(
         ModelFetchService modelFetchService,
@@ -62,8 +63,10 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         IChangeNotifier changeNotifier,
         IRunLifecycleManager lifecycleManager,
         IOrchestratorRunService runService,
-        ILogger logger)
+        ILogger logger,
+        IProviderFailureHandler? providerFailures = null)
     {
+        _providerFailures = providerFailures;
         ArgumentNullException.ThrowIfNull(modelFetchService);
         ArgumentNullException.ThrowIfNull(badgeService);
         ArgumentNullException.ThrowIfNull(changeNotifier);
@@ -197,7 +200,14 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
                     result.JobId);
             }
 
-            if (result.Success)
+            // Spec 056 DD11: a provider failure ends the run, pauses the credential and queues the work again;
+            // it never falls through to FailRunAsync (a lost race does nothing more).
+            if (!result.Success && result.ProviderFailure is { } providerFailure && _providerFailures is not null
+                && agent is not null && Guid.TryParse(result.JobId, out var workItemId))
+            {
+                await _providerFailures.HandleAsync(workItemId, agent.AgentId.Value, providerFailure, ct);
+            }
+            else if (result.Success)
             {
                 await _lifecycleManager.CompleteRunAsync(runId, WorkItemStatus.Succeeded, ct);
                 _logger.Information("Consolidation run {JobId} CompleteRunAsync completed", result.JobId);

@@ -26,4 +26,5 @@ public sealed record AgentJobLifecycleServiceDependencies(
     IChangeNotifier ChangeNotifier,
     IHostApplicationLifetime AppLifetime,
     IFeedbackCommentOutbox Outbox,
-    ILogger Logger);
+    ILogger Logger,
+    IProviderFailureHandler? ProviderFailures = null);

@@ -11,6 +11,7 @@ namespace CodingAgent.Contracts.Ui;
 /// <param name="UiLimit">The UI limit; 0 = none.</param>
 /// <param name="EffectiveLimit">The limit that applies (the lowest set); null when none.</param>
 /// <param name="EffectiveSource">Where the limit that applies comes from: <c>helm</c>, <c>ui</c>, or null.</param>
+/// <param name="CredentialPausedText">Spec 056: the pause text when the template's credential is paused; null otherwise.</param>
 public sealed record UiAgentCapacityRow(
     string? TemplateKey,
     string Tool,
@@ -19,7 +20,8 @@ public sealed record UiAgentCapacityRow(
     int HelmLimit,
     int UiLimit,
     int? EffectiveLimit,
-    string? EffectiveSource);
+    string? EffectiveSource,
+    string? CredentialPausedText = null);
 
 /// <summary>Spec 057: what the Capacity page shows.</summary>
 /// <param name="All">The row for all agents together.</param>

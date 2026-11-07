@@ -6,14 +6,14 @@ namespace CodingAgent.Pipeline.UnitTests.Models;
 /// <summary>
 /// Tests for <see cref="ProviderUnavailableException.IsPermanentProviderFailure"/>.
 /// No test existed for this method before; these tests also cover the new
-/// <see cref="AgentErrorCategory.ProviderBillingLimit"/> value (issue #3860).
+/// <see cref="AgentErrorCategory.ProviderQuotaExhausted"/> value (issue #3860).
 /// </summary>
 public class ProviderUnavailableExceptionTests
 {
     [Theory]
     [InlineData(AgentErrorCategory.PermanentAuthFailure)]
     [InlineData(AgentErrorCategory.ProviderMisconfigured)]
-    [InlineData(AgentErrorCategory.ProviderBillingLimit)]
+    [InlineData(AgentErrorCategory.ProviderQuotaExhausted)]
     public void IsPermanentProviderFailure_PermanentCategories_ReturnsTrue(AgentErrorCategory category)
     {
         ProviderUnavailableException.IsPermanentProviderFailure(category).Should().BeTrue(

@@ -64,7 +64,6 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
                 Id = "profile-edge-e2e",
                 DisplayName = "Edge Case Agent Profile",
                 JobTemplate = E2ERouting.Key("edge-e2e"),
-                Enabled = true
             });
         }
     }
@@ -385,7 +384,6 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
             Id = "profile-special-e2e",
             DisplayName = "Special Label Profile",
             JobTemplate = E2ERouting.Key("special-label"),
-            Enabled = true
         });
 
         // Seed template that requires "special-label" (via RequiredLabels on repo provider config)

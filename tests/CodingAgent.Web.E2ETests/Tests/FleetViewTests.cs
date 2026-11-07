@@ -38,7 +38,6 @@ public sealed class FleetViewTests : E2ETestBase
             Id = "profile-fleet",
             DisplayName = "Fleet E2E Profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail

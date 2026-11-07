@@ -23,6 +23,8 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         _workspace = Path.Combine(_tempDir, "workspace");
         Directory.CreateDirectory(_workspace);
         _mcpConfigPath = Path.Combine(_tempDir, "pipeline-mcp.json");
+        // Spec 056: the default auth mode is the subscription; tests that need no credential clear it.
+        _env[AgentDefaults.EnvClaudeOAuthToken] = "oauth-test";
     }
 
     public void Dispose()
@@ -33,7 +35,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     }
 
     private ClaudeCodeAgentProvider CreateProvider(
-        string? authMode = ClaudeCodeAuthModes.Auto,
+        string? authMode = ClaudeCodeAuthModes.Subscription,
         string? model = "claude-opus-5-5",
         AgentEffortLevel effort = AgentEffortLevel.High,
         ClaudeExitTimings? timings = null) =>
@@ -153,15 +155,22 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         environment["ANTHROPIC_API_KEY"].Should().Be("sk-agent");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_AutoModeWithoutCredential_StillRunsTheCli()
+    // Spec 056 D8: the former auto mode (and any unknown value) is the subscription, even when an API key is set.
+    [Theory]
+    [InlineData("auto")]
+    [InlineData("")]
+    [InlineData("something")]
+    public async Task ExecuteAsync_FormerAutoOrUnknownMode_UsesTheSubscriptionToken(string authMode)
     {
+        _env[AgentDefaults.EnvClaudeApiKey] = "sk-key";
         _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
 
-        var result = await CreateProvider(ClaudeCodeAuthModes.Auto).ExecuteAsync(Request(), CancellationToken.None);
+        var result = await CreateProvider(authMode).ExecuteAsync(Request(), CancellationToken.None);
 
         result.ExitCode.Should().Be(ExitCodes.Success);
-        result.UsageDetails!.BillingMode.Should().Be(AgentBillingModes.Unknown);
+        result.UsageDetails!.BillingMode.Should().Be(AgentBillingModes.Subscription);
+        _launcher.Started[0].Environment["CLAUDE_CODE_OAUTH_TOKEN"].Should().Be("oauth-test");
+        _launcher.Started[0].Environment.Should().NotContainKey("ANTHROPIC_API_KEY");
     }
 
     [Theory]
@@ -169,6 +178,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     [InlineData(ClaudeCodeAuthModes.Subscription)]
     public async Task ExecuteAsync_ExplicitModeWithoutItsCredential_FailsWithoutStartingTheCli(string authMode)
     {
+        _env.Clear();
         var result = await CreateProvider(authMode).ExecuteAsync(Request(), CancellationToken.None);
 
         result.ExitCode.Should().Be(ExitCodes.GeneralFailure);
@@ -645,11 +655,17 @@ public class ClaudeCodeAgentProviderTests : IDisposable
             .Should().ThrowAsync<InvalidOperationException>().WithMessage("*exited with code 1*");
     }
 
-    [Fact]
-    public async Task ValidateAsync_ExplicitModeWithoutCredential_Throws()
+    // Spec 056 DD16: typed, so the provider failure decorator records auth_failed and pauses that credential.
+    [Theory]
+    [InlineData(ClaudeCodeAuthModes.ApiKey, AgentCredentials.ClaudeApiKey, "*claude-api-key*")]
+    [InlineData(ClaudeCodeAuthModes.Subscription, AgentCredentials.ClaudeSubscription, "*claude-oauth-token*")]
+    public async Task ValidateAsync_ModeWithoutItsCredential_ThrowsProviderCredentialMissing(string authMode, string credential, string message)
     {
-        await CreateProvider(ClaudeCodeAuthModes.ApiKey).Invoking(p => p.ValidateAsync(CancellationToken.None))
-            .Should().ThrowAsync<InvalidOperationException>().WithMessage("*claude-api-key*");
+        _env.Clear();
+
+        (await CreateProvider(authMode).Invoking(p => p.ValidateAsync(CancellationToken.None))
+                .Should().ThrowAsync<ProviderCredentialMissingException>().WithMessage(message))
+            .Which.Credential.Should().Be(credential);
         _launcher.Started.Should().BeEmpty();
     }
 
@@ -701,7 +717,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     // ── MCP tool call counting ───────────────────────────────────────────
 
     private (ClaudeCodeAgentProvider Provider, Mock<Serilog.ILogger> LoggerMock) CreateProviderWithMock(
-        string? authMode = ClaudeCodeAuthModes.Auto)
+        string? authMode = ClaudeCodeAuthModes.Subscription)
     {
         var loggerMock = new Mock<Serilog.ILogger>();
         var provider = new ClaudeCodeAgentProvider(

@@ -86,7 +86,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-override-e2e",
             DisplayName = "Override Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         // Issue "52": dispatched with the project that has MaxRetries = 5.
@@ -181,7 +180,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-deepmerge-e2e",
             DisplayName = "Deep Merge Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -247,7 +245,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-snapshot-e2e",
             DisplayName = "Snapshot Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -309,7 +306,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-mcp-e2e",
             DisplayName = "MCP Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true,
             McpServers = new[]
             {
                 new McpServerConfig { Name = "a", Type = "http", Url = "http://profile-a" },
@@ -429,7 +425,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-secrets-merge-e2e",
             DisplayName = "Secrets Merge Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -503,7 +498,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-brain-ro-e2e",
             DisplayName = "BrainReadOnly Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -564,7 +558,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-brain-ro2-e2e",
             DisplayName = "BrainReadOnly B Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -647,7 +640,6 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
             Id = "profile-project-review-e2e",
             DisplayName = "Project Review Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail

@@ -40,6 +40,14 @@ public partial class QualityGateExecutor
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
+            // Spec 056 DD14: a used-up quota or a rejected login opens no draft PR and asks the provider nothing more;
+            // the API pauses the credential and queues the work again.
+            if (context.AbortCategory is AgentErrorCategory.ProviderQuotaExhausted or AgentErrorCategory.PermanentAuthFailure)
+            {
+                await FailOnProviderUnavailableAsync(context);
+                return;
+            }
+
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, report, linkedCt);
             else
@@ -292,6 +300,28 @@ public partial class QualityGateExecutor
         DateTime notBefore,
         CancellationToken ct)
         => _ciPollingCoordinator.WaitForPostPrCiAsync(context, report, notBefore, ct);
+
+    /// <summary>
+    /// Spec 056 DD14: the fix agent's provider refused further calls (quota used up or login rejected). The run ends
+    /// Failed with the provider's text; no failure feedback call, no push, no draft PR. The API turns the category into
+    /// <c>ProviderUnavailable</c> when the completion carries the provider failure.
+    /// </summary>
+    private async Task FailOnProviderUnavailableAsync(QualityGateContext context)
+    {
+        var run = context.Run;
+        var reason = context.AbortCategory == AgentErrorCategory.PermanentAuthFailure
+            ? "The agent provider rejected the login"
+            : "The agent provider's quota is used up";
+        var text = string.IsNullOrWhiteSpace(context.AbortDetail) ? reason : $"{reason}: {context.AbortDetail}";
+
+        _logger.Warning("Pipeline {RunId}: {Reason}; ending the run without a draft PR", run.RunId, reason);
+        context.Callbacks.EmitOutputLine($"⛔ {reason}. The run ends here and is queued again once the credential is available.");
+        run.FailureReason = text;
+        run.FailureCategory = FailureReason.InfrastructureFailure;
+        run.MarkCompleted();
+        context.Callbacks.TransitionTo(PipelineStep.Failed);
+        await context.Callbacks.AddRunToHistoryAsync(run);
+    }
 
     /// <summary>
     /// Encapsulates the draft-PR finalization pattern: log a warning, emit a UI line,
@@ -574,7 +604,7 @@ public partial class QualityGateExecutor
             var decision = outcome switch
             {
                 RetryOutcome.TransientWait => await HandleTransientAsync(run, config, consecutiveTransientRetries, ct),
-                RetryOutcome.AbortAuth => await HandleAuthAbortAsync(run, consecutiveTransientRetries),
+                RetryOutcome.AbortAuth => await HandleAuthAbortAsync(context, agentResult!, consecutiveTransientRetries),
                 RetryOutcome.RestartSession => await HandleSessionRestartAsync(run, consecutiveTransientRetries),
                 _ => await HandleDefaultRetryAsync(run, agentResult, context.RepoProvider)
             };
@@ -656,8 +686,13 @@ public partial class QualityGateExecutor
     /// Does not consume a retry-budget slot (<c>RetryCountDelta: 0</c>), consistent with
     /// <see cref="HandleTransientAsync"/> and <see cref="HandleSessionRestartAsync"/>.
     /// </summary>
-    private Task<RetryDecision> HandleAuthAbortAsync(PipelineRun run, int consecutiveTransientRetries)
+    private Task<RetryDecision> HandleAuthAbortAsync(QualityGateContext context, AgentResult agentResult, int consecutiveTransientRetries)
     {
+        var run = context.Run;
+        // Spec 056 DD14: remembered so the run ends Failed without a draft PR when the provider cannot be used.
+        context.AbortCategory = agentResult.ErrorCategory;
+        // Key-shaped strings are masked here too: the detail becomes the run's failure text, which leaves the pod (req 9.4).
+        context.AbortDetail = agentResult.ProviderFailure?.Detail is { } detail ? SecretPatternRedactor.Redact(detail) : null;
         _logger.Error(
             "Pipeline {RunId} retry {RetryCount}: permanent provider failure (rejected credentials or configuration), aborting retry loop",
             run.RunId, run.RetryCount);

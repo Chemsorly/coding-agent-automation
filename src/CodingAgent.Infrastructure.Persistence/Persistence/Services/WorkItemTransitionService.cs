@@ -190,15 +190,31 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         Action<WorkItemEntity>? mutate = null,
         CancellationToken ct = default)
     {
+        return await TransitionIfAsync(workItemId, item => item.Status == expectedCurrent, target, mutate, ct);
+    }
+
+    /// <summary>
+    /// Atomic compare-and-swap transition on a row predicate (spec 056 DD11): succeeds only when <paramref name="matches"/>
+    /// holds for the current row (for example its status is one of several and its Job is the reporter). Never idempotent;
+    /// two concurrent callers see exactly one succeed (the row version is the concurrency token).
+    /// </summary>
+    public async Task<bool> TransitionIfAsync(
+        Guid workItemId,
+        Func<WorkItemEntity, bool> matches,
+        WorkItemStatus target,
+        Action<WorkItemEntity>? mutate = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
         if (_resiliencePipeline is not null)
             return await _resiliencePipeline.ExecuteAsync(
-                async token => await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, 3, token), ct);
+                async token => await TransitionIfCoreAsync(workItemId, matches, target, mutate, 3, token), ct);
 
-        return await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, 3, ct);
+        return await TransitionIfCoreAsync(workItemId, matches, target, mutate, 3, ct);
     }
 
     private async Task<bool> TransitionIfCoreAsync(
-        Guid workItemId, WorkItemStatus expectedCurrent, WorkItemStatus target,
+        Guid workItemId, Func<WorkItemEntity, bool> matches, WorkItemStatus target,
         Action<WorkItemEntity>? mutate, int maxRetries, CancellationToken ct)
     {
         for (int attempt = 0; attempt <= maxRetries; attempt++)
@@ -214,8 +230,8 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             // Not idempotent — fail if already at target
             if (item.Status == target) return false;
 
-            // CAS guard — fail if current != expected
-            if (item.Status != expectedCurrent) return false;
+            // CAS guard — fail if the row does not match
+            if (!matches(item)) return false;
 
             // Standard transition validation
             if (!IsValidTransition(item.Status, target))

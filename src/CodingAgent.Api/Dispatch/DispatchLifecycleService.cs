@@ -199,6 +199,8 @@ internal sealed class DispatchLifecycleService : IDisposable
         // earlier workItem reference was detached when HandleOrphanedJobIfRaceDetectedAsync
         // called db.ChangeTracker.Clear() before re-fetching from the DB.
         workItem.ClaimedPvcName = claimedPvc;
+        // Spec 056 DD7: a dispatched item is held no more; cleared in the same save as Dispatched.
+        WorkItemHolds.Clear(workItem);
 
         await FinalizeDispatchAsync(ctx, workItem, onDispatchSuccess, _log, ct);
     }

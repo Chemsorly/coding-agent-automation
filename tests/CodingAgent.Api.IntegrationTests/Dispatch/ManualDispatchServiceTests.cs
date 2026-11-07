@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Api.Browse;
 using CodingAgent.Api.Dispatch;
+using CodingAgent.Api.IntegrationTests.AgentRouting;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -58,7 +59,18 @@ public class ManualDispatchServiceTests
         Distributes(success: true);
     }
 
-    private ManualDispatchService Service() => new(_projects.Object, _configs.Object, _factory.Object, _dependencies.Object, _orchestration.Object);
+    private readonly AgentRoutingTestSupport.InMemoryFactory _routingDb = Seeded();
+
+    /// <summary>The routing table routes every task type, so the queued messages carry no wait text.</summary>
+    private static AgentRoutingTestSupport.InMemoryFactory Seeded()
+    {
+        var db = new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString());
+        AgentRoutingTestSupport.SeedRouting(db);
+        return db;
+    }
+
+    private ManualDispatchService Service() => new(_projects.Object, _configs.Object, _factory.Object, _dependencies.Object,
+        _orchestration.Object, AgentRoutingTestSupport.Router(_routingDb));
 
     private static BrowseTemplate Target(PipelineProject? project = null) => new(Template, project ?? Project);
 

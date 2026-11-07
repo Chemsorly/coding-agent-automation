@@ -47,7 +47,7 @@ public sealed class ScriptedAgentProviderTests
             provider.Enqueue(new CodeGenScript
             {
                 ExitCode = 2,
-                ErrorCategory = AgentErrorCategory.ProviderBillingLimit,
+                ErrorCategory = AgentErrorCategory.ProviderQuotaExhausted,
                 OutputLines = ["line-1"],
                 Usage = new TokenUsage { InputTokens = 5 },
                 Cost = 0.5m
@@ -59,7 +59,7 @@ public sealed class ScriptedAgentProviderTests
 
             result.ExitCode.Should().Be(2);
             result.Success.Should().BeFalse();
-            result.ErrorCategory.Should().Be(AgentErrorCategory.ProviderBillingLimit);
+            result.ErrorCategory.Should().Be(AgentErrorCategory.ProviderQuotaExhausted);
             result.OutputLines.Should().Contain("line-1");
             result.Usage!.InputTokens.Should().Be(5);
             result.Cost.Should().Be(0.5m);

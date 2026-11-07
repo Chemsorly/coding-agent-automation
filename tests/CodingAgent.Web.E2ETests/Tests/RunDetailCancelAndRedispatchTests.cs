@@ -57,7 +57,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Id = "run-page-profile",
             DisplayName = "Run Page E2E Profile",
             JobTemplate = E2ERouting.Key(s_e2eMatchLabels),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -449,7 +448,6 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Id = "review-profile-4b",
             DisplayName = "E2E Review Profile 4b",
             JobTemplate = E2ERouting.Key(s_e2eMatchLabels),
-            Enabled = true
         });
 
         // Seed a PR in the repository provider

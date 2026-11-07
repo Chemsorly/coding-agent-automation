@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using System.Reflection;
 using Bunit;
 using Moq;
@@ -44,6 +45,8 @@ public class SettingsPageComponentTests : BunitContext
             new CodingAgent.Contracts.Ui.UiAgentCapacityRow(null, "", 0, 0, 0, 0, null, null), [], 0, 0, true));
         Services.AddSingleton(settings.Object);
         Services.AddScoped<NotificationService>();
+        Services.AddTestAccess(); // spec 056: the credential banner and card read CurrentAccess and IAccessGuard
+        Services.AddNoCredentials();
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
         Services.AddSingleton<JobTemplateStore>(JobTemplateStore.CreateEmpty());
         // ModelFetchJobService: resolved via IServiceProvider.GetService<> in Settings.razor

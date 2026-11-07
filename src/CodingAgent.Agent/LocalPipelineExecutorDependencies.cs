@@ -24,4 +24,6 @@ public sealed record LocalPipelineExecutorDependencies(
     /// resolution. Use in tests to substitute fake repository and agent providers without
     /// needing a real Kiro CLI, git remote, or cloud credentials.
     /// </summary>
-    IProviderFactory? ProviderFactoryOverride = null);
+    IProviderFactory? ProviderFactoryOverride = null,
+    /// <summary>Spec 056 DD13: records the job's first quota or login failure; null records nothing.</summary>
+    ProviderFailureRecorder? ProviderFailureRecorder = null);

@@ -12,13 +12,14 @@ See also: [Configuration](configuration.md) for pipeline-level settings, and [Pi
 
 ## Agent Profiles
 
-Settings → Agents → Agent Profiles. A profile has a name, a job template, the settings of that template's tool, MCP
-servers and an enabled flag. It has no model and no effort: the route names those.
+Settings → Agents → Agent Profiles. A profile has a name, a job template, the settings of that template's tool and MCP
+servers. It has no model and no effort: the route names those, and no enabled flag: to stop work on a tool, pause its
+credential (see [Credentials and Pauses](#credentials-and-pauses)). The page shows the credential each profile uses.
 
 | Field | What it does |
 |-------|--------------|
 | Job template | A Helm `jobTemplates[]` entry, by its labels key (for example `dotnet,kiro`). The template names the image, `maxConcurrent` (its capacity ceiling), the resources and the tool (`providerType`). |
-| Tool settings | The settings of that tool: Agent Name (Kiro), Base URL (OpenCode), Auth Mode (Claude Code). |
+| Tool settings | The settings of that tool: Agent Name (Kiro), Base URL (OpenCode), Auth Mode (Claude Code: `subscription`, the default, or `apiKey`). |
 | MCP servers | Added to the agent's MCP configuration, together with the project's. |
 
 The tool is the job template's `providerType`; a profile has no tool of its own, so the two cannot disagree. Saving a
@@ -29,8 +30,8 @@ such a profile is not started until the template is back.
 Several profiles can share one job template, and with it the image and the capacity pool, for example two Kiro profiles
 with different MCP servers. The template's capacity is its Helm `maxConcurrent`, which Settings → Agents → Capacity can
 lower; the runs of every profile on the template and the chats on it count toward it (see
-[Configuration — Agent Capacity](configuration.md#agent-capacity)). A profile that a route names cannot be disabled or
-deleted; the refusal lists the routes ("Global · Decomposition", "Repository X · Implementation").
+[Configuration — Agent Capacity](configuration.md#agent-capacity)). A profile that a route names cannot be deleted; the
+refusal lists the routes ("Global · Decomposition", "Repository X · Implementation").
 
 ## Routing
 
@@ -40,12 +41,12 @@ its own route. A route is a profile, a model and an effort:
 
 | Field | Values |
 |-------|--------|
-| Profile | An enabled profile whose job template exists. |
+| Profile | A profile whose job template exists. |
 | Model | Required. `auto` lets the tool choose, for example Kiro's model router. Claude Code offers its built-in model list; Kiro offers the models Fetch Models lists (a short Kubernetes Job, which needs a credential PVC); OpenCode takes `provider/model`. Any model name of letters, digits, `.`, `_`, `-` and `/` can be typed. |
 | Effort | `auto` (the tool's default) or an effort the tool takes: `low` to `max` for Claude Code, `low`, `medium`, `high`, `max` for Kiro. OpenCode has no effort. |
 
-Saving checks every row and refuses the table with one line per invalid row. A change applies to work created after the
-save: queued and running work keeps the route it was created with.
+Saving checks every row and refuses the table with one line per invalid row. A change applies to queued work at its
+next dispatch, and work waiting for a route starts once one resolves. Running work keeps its route.
 
 ## Repository Rows
 
@@ -61,26 +62,62 @@ each repository's routes in one line, for example "Kiro · sonnet; Decomposition
 
 ## Resolution Order
 
-When the API creates a work item it resolves the route once and pins profile, model and effort on it:
+Creating work never routes and never refuses it for routing: the work item is queued. Each time the Scheduler tries
+to start a queued item, the API resolves its route and pins profile, model and effort on it:
 
 1. the repository's row for the task type;
 2. else the global row for the task type;
 3. else the global default.
 
-The first row found is used. If it names a profile that is disabled or missing, or a job template without a tool, the
-work is refused with the reason; the resolution does not fall through to the next level, and nothing picks some other
-profile. Without any row, for example on a fresh install, creation is refused with "No agent route: set the default
-route in Settings → Agents → Routing". The issue, PR and epic drawers, the run page's re-dispatch, the operator triage,
-the triage preview and the consolidation trigger show that text.
+The first row found is used. If the route cannot run now, the item **waits** in the queue with the reason, and the next
+dispatch tries again; the resolution does not fall through to the next level, and nothing picks some other profile:
+
+| Waits because | Text on the Work page |
+|---|---|
+| No row resolves (for example a fresh install), or the stored request cannot be read | "No agent route for Implementation — set it in Settings → Agents → Routing" |
+| The route names a profile that was deleted | "… names agent profile '…', which does not exist" |
+| The profile's job template has no tool, or is not in the Helm values | the template and the profile |
+| The route's credential is paused | "Kiro paused — quota used up, since … (until …)" |
+| An agent limit is reached, or no Kiro credential PVC is free | the limit and how many agents run |
+
+The Work page shows the reason in its Waiting column and counts the waiting items per reason. The issue, PR and epic
+drawers, the run page's re-dispatch, the operator triage and the consolidation trigger queue the work and say why it
+waits when it would wait now. A wait that only an operator ends (a paused credential, a missing route, profile or
+template) moves the item behind the other queued work, so it never keeps other work from starting. Pausing a credential
+moves all its queued work behind at once. Resuming the credential makes its work eligible again at once; saving the
+routing does so for the other waits, while work for a credential that is still paused stays behind until it is
+reached.
 
 When an agent claims the work, the API checks the pinned route again: a profile deleted since, or a job template that
-changed, refuses the claim with the reason, and the work item fails instead of running on something else. Work created
-before this release has no pinned route; it is routed when it is dispatched or claimed.
+changed, refuses the claim with the reason, and the work item fails instead of running on something else.
 
 Epic decomposition runs both phases on the Decomposition route. A consolidation runs on the Consolidation route of the
-repository that triggered it, or on the global rows when none did. Agent Chat offers the enabled profiles whose job template
+repository that triggered it, or on the global rows when none did. Agent Chat offers every profile whose job template
 exists, with the models of the routes that name them (and Claude Code's built-in list) and the tool's efforts; see
 [Chat Pod Lifecycle](configuration.md#chat-pod-lifecycle).
+
+## Credentials and Pauses
+
+Every profile uses one agent credential, derived from its job template's tool and, for Claude Code, its Auth Mode:
+
+| Credential | Profiles |
+|---|---|
+| Kiro | Kiro profiles (the credential PVC pool) |
+| Claude subscription | Claude Code profiles with Auth Mode `subscription` (the default) |
+| Claude API key | Claude Code profiles with Auth Mode `apiKey` |
+| OpenCode | OpenCode profiles |
+
+A credential is **paused** when an agent reports that its quota is used up or its login was rejected (the pause lasts
+until the reset time the provider names, or until resumed), or when an operator pauses it. The run that hit the limit
+ends, its issue goes back to its queue label, and the same work is queued again as a new work item that waits for the
+credential; no draft PR is opened. While the credential is paused, work routed to it waits, chats on it are refused,
+and work on other credentials runs as before. There is no automatic fallback to another tool: to move the work, change
+the routing.
+
+Work and Fleet show a banner per paused credential: what is paused, why, since and until when, and how much work
+waits. Global operators resume a credential or pause it until a time (with a note) from the banner, from the
+Credentials card on Fleet, or in Settings → Agents → Credentials, which also lists the profiles per credential. A pause
+whose end time passed ends by itself at the next dispatch. An automatic pause never replaces an operator's pause.
 
 ## Agent Images
 
@@ -102,7 +139,9 @@ The image's default `AGENT_LABELS` lists the agent tool and every stack. Kuberne
 The per-stack tags of earlier releases (`coding-agent-kiro-dotnet10-latest`, `coding-agent-claude-java21-latest`, …) are no longer published. Point job templates that still use them at `coding-agent-<tool>-latest`.
 
 The Claude image runs the Claude Code CLI. Its job templates use `providerType: claude`, and the profiles on them set
-the Auth Mode. It needs no credential PVC: the API key and/or subscription token come from the agent Secret — see [Deployment](deployment.md).
+the Auth Mode: `subscription` (the default; the subscription token) or `apiKey` (the API key, billed per token). It
+needs no credential PVC: the token and the key come from the agent Secret — see [Deployment](deployment.md). A profile
+whose credential is missing from the Secret pauses that credential on its first run.
 
 ## Stack Labels: Quality Gates and Reviewers
 

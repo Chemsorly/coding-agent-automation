@@ -18,8 +18,8 @@ public sealed record AgentProfile
     // Key(2) retired — MatchLabels removed (spec 053: routes pick profiles; the configuration move reads old rows as raw JSON). Do NOT reuse this Key index
     // Key(3) retired — AgentProviderConfigId removed (spec 053: the agent config is built from the profile and its route). Do NOT reuse this Key index
 
-    [Key(4)]
-    public bool Enabled { get; init; } = true;
+    // Key(4) retired — Enabled removed (spec 056: a credential is paused instead; stored JSON with "enabled" still loads and
+    // drops it at the next save). Do NOT reuse this Key index
 
     // Key(5) retired — Priority removed (spec 053: nothing picks among profiles any more). Do NOT reuse this Key index
 

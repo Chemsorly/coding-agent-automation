@@ -24,6 +24,43 @@ internal static class E2ERouting
         await fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(profile.Id, model, effort));
     }
 
+    /// <summary>
+    /// Spec 056: dispatch routes every Pending item, so a test that dispatches a row it inserted routes the row's job
+    /// template: one profile per template (a stable Id), and the global default route to it.
+    /// </summary>
+    public static Task SeedRoutedTemplateAsync(this E2EFixture fixture, string jobTemplate)
+    {
+        var id = new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(jobTemplate)));
+        return fixture.SeedRoutedProfileAsync(AgentRoutingTestData.Profile(id.ToString(), jobTemplate, $"E2E {jobTemplate}"));
+    }
+
+    /// <summary>
+    /// Spec 056: routes the work of one repository to <paramref name="jobTemplate"/> without touching the global table, so
+    /// rows routed to different templates can wait in one queue. Saves the template's profile and a (disabled) pipeline
+    /// template that owns the returned repository provider id and routes Implementation work to the profile.
+    /// </summary>
+    public static async Task<string> SeedRepositoryRouteAsync(this E2EFixture fixture, string jobTemplate)
+    {
+        var key = string.Join("-", jobTemplate.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal));
+        var profileId = new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(jobTemplate))).ToString();
+        var repo = $"repo-e2e-{key}";
+        await fixture.ConfigStore.SaveAgentProfileAsync(
+            Converted(AgentRoutingTestData.Profile(profileId, jobTemplate, $"E2E {jobTemplate}")), CancellationToken.None);
+        await fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = $"template-route-{key}",
+            Name = $"E2E route {key}",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = repo,
+            Enabled = false, // owns the repository for routing only; the loop never polls it
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Implementation] = new(profileId, Model, "auto"),
+            },
+        }, CancellationToken.None);
+        return repo;
+    }
+
     /// <summary>Replaces the global routing table.</summary>
     public static Task SeedRoutingAsync(this E2EFixture fixture, AgentRouting routing) =>
         AgentRoutingTestData.SeedRoutingAsync(fixture.DbContextFactory, routing);

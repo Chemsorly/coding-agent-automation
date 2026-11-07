@@ -1,3 +1,4 @@
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline.Models;
@@ -21,6 +22,7 @@ public sealed class AgentCapacityE2ETests : E2ETestBase
     private async Task<Guid> InsertPendingAsync(string issueIdentifier)
     {
         var id = Guid.NewGuid();
+        await Fixture.SeedRoutedTemplateAsync("jc-e2e");
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         db.WorkItems.Add(new WorkItemEntity
         {
@@ -29,7 +31,7 @@ public sealed class AgentCapacityE2ETests : E2ETestBase
             IssueIdentifier = issueIdentifier,
             IssueProviderConfigId = "issue-e2e",
             Status = WorkItemStatus.Pending,
-            Payload = "{}",
+            Payload = WorkItemTestData.RoutablePayload(WorkItemTaskType.Implementation, issueIdentifier, "issue-e2e", "repo-e2e"),
             AgentSelector = "jc-e2e",
             CreatedAt = DateTimeOffset.UtcNow,
             TimeoutSeconds = 3600,

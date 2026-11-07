@@ -27,6 +27,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private readonly Microsoft.Extensions.Hosting.IHostApplicationLifetime _appLifetime;
     private readonly IFeedbackCommentOutbox _outbox;
     private readonly ILogger _logger;
+    private readonly IProviderFailureHandler? _providerFailures;
 
     private readonly IJobCompletionStrategy _regularStrategy;
     private readonly IJobCompletionStrategy _consolidationStrategy;
@@ -43,6 +44,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         _appLifetime = deps.AppLifetime;
         _outbox = deps.Outbox;
         _logger = deps.Logger;
+        _providerFailures = deps.ProviderFailures;
 
         _regularStrategy = new RegularJobCompletionStrategy(deps.Facade, deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
         _consolidationStrategy = new ConsolidationJobCompletionStrategy(deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
@@ -197,6 +199,25 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             run, AgentLabels.Error, _logger, "AgentJobLifecycleService.PermanentlyFailRejectedRunAsync", ct);
     }
 
+    /// <summary>
+    /// Spec 056 DD11: hands a reported provider failure to the handler and releases the agent; true when it did (the
+    /// caller then does nothing more).
+    /// </summary>
+    private async Task<bool> TryHandleProviderFailureAsync(
+        JobId jobId, AgentEntry? agent, PipelineRun? run, JobCompletionPayload payload, CancellationToken ct)
+    {
+        if (payload.ProviderFailure is not { } providerFailure || _providerFailures is null
+            || (agent?.AgentId.Value ?? run?.AgentId) is not { Length: > 0 } reporter
+            || !Guid.TryParse(jobId.Value, out var workItemId))
+        {
+            return false;
+        }
+
+        await _providerFailures.HandleAsync(workItemId, reporter, providerFailure, ct);
+        _idleTransitioner.TransitionToIdle(agent, run, jobId.Value, "HandleJobCompletedAsync");
+        return true;
+    }
+
     /// <inheritdoc />
     public async Task HandleJobCompletedAsync(JobId jobId, AgentEntry? agent, JobCompletionPayload payload, CancellationToken ct)
     {
@@ -204,6 +225,11 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         activity?.SetTag("job_id", jobId.Value);
 
         var run = _facade.GetRun(jobId);
+
+        // Spec 056 DD11: a provider failure is handled first and never falls through — the handler ends the run,
+        // pauses the credential and queues the work again (or does nothing when another path already did).
+        if (await TryHandleProviderFailureAsync(jobId, agent, run, payload, ct))
+            return;
 
         // runWasAlive: true if the run existed in memory and was processed normally (or if the run
         // was not found at all — orphan path has its own handling). false only when
@@ -250,17 +276,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // BrainUpdatesPushed and BrainSkillsResult are set by JobCompletionMapper.Apply
             // inside strategy.ExecuteAsync above. Use payload.* for the push-result tag to avoid
             // the race where ReplaceRun mutates the local run before we read it (#3897).
-            if (run.BrainProviderConfigId is not null)
-            {
-                var updates = payload.BrainUpdatesPushed == true ? "pushed"
-                    : payload.BrainPushFailed == true ? "failed"
-                    : "none";
-                PipelineTelemetry.RunBrainUpdates.Add(1,
-                    new KeyValuePair<string, object?>("result", updates));
-                PipelineTelemetry.RunBrainSkills.Add(1,
-                    new KeyValuePair<string, object?>("result", run.BrainSkillsResult ?? BrainSkillsResults.Unknown),
-                    PipelineTelemetry.RunTypeTag(run.RunType));
-            }
+            RecordBrainTelemetry(run, payload);
 
             // skipLabelSwap=true when another path (HTTP Failed POST) terminated the run first and the
             // work item kept that path's status. That path set the label (e.g. agent:needs-refinement,
@@ -269,6 +285,26 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // returns true and the label follows it. The outbox enqueue and feedback comment still run.
             await PostCompletionBookkeepingAsync(jobId, run, payload, skipLabelSwap: !runWasAlive, ct);
         }
+    }
+
+    /// <summary>Brain telemetry of a run with a brain provider (spec 054, req 14).</summary>
+    private static void RecordBrainTelemetry(PipelineRun run, JobCompletionPayload payload)
+    {
+        if (run.BrainProviderConfigId is null)
+            return;
+
+        string updates;
+        if (payload.BrainUpdatesPushed == true)
+            updates = "pushed";
+        else if (payload.BrainPushFailed == true)
+            updates = "failed";
+        else
+            updates = "none";
+        PipelineTelemetry.RunBrainUpdates.Add(1,
+            new KeyValuePair<string, object?>("result", updates));
+        PipelineTelemetry.RunBrainSkills.Add(1,
+            new KeyValuePair<string, object?>("result", run.BrainSkillsResult ?? BrainSkillsResults.Unknown),
+            PipelineTelemetry.RunTypeTag(run.RunType));
     }
 
     private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, bool skipLabelSwap, CancellationToken ct)

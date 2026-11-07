@@ -1,10 +1,12 @@
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.Ui;
 
@@ -94,12 +96,16 @@ internal static class UiSettingsEndpoints
 
     /// <summary>GET /api/ui/settings/agent-routing — the global routing table, the profiles a route can name and their job templates.</summary>
     internal static async Task<IResult> GetAgentRouting(
-        AgentRoutingStore routing, IAgentProfileStore profiles, JobTemplateStore templates, CancellationToken ct)
+        AgentRoutingStore routing, IAgentProfileStore profiles, JobTemplateStore templates, CredentialPauseStore pauses,
+        CancellationToken ct)
     {
         var toolsByKey = templates.ToolsByKey();
+        // Spec 056 req 4.6: each profile carries the pause text of its credential.
+        var paused = (await pauses.LoadAllAsync(ct)).ToDictionary(p => p.Credential, StringComparer.Ordinal);
         var routingProfiles = (await profiles.LoadAgentProfilesAsync(ct))
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(), p.Enabled))
+            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(),
+                AgentCredentials.For(p, toolsByKey) is { } c && paused.TryGetValue(c, out var pause) ? HoldTexts.CredentialPaused(pause) : null))
             .ToList();
         return TypedResults.Ok(new UiAgentRoutingPage(
             await routing.LoadAsync(ct) ?? AgentRouting.Empty, routingProfiles, JobTemplates(toolsByKey)));
@@ -111,13 +117,14 @@ internal static class UiSettingsEndpoints
     /// </summary>
     internal static async Task<IResult> SaveAgentRouting(
         [FromBody] AgentRouting? routing, AgentRoutingStore store, IAgentProfileStore profiles, JobTemplateStore templates,
-        CancellationToken ct)
+        IDbContextFactory<PipelineDbContext> dbFactory, CredentialPauseStore pauses, CancellationToken ct)
     {
         var errors = AgentRouteValidator.ValidateRouting(routing, await profiles.LoadAgentProfilesAsync(ct), templates.ToolsByKey());
         if (errors.Count > 0)
             return TypedResults.BadRequest(string.Join("\n", errors));
 
         await store.SaveAsync(routing!, ct);
+        await ClearOperatorHoldsAsync(dbFactory, pauses, ct);
         return TypedResults.Ok();
     }
 
@@ -241,9 +248,10 @@ internal static class UiSettingsEndpoints
     /// Behaviour of a template already in that project (<see cref="ProjectAdminEdits"/>); a new template, or another
     /// project's (saving it here would move it here), is 404.
     /// </summary>
-    internal static async Task<IResult> SaveTemplate(
+    internal static async Task<IResult> SaveTemplate( // NOSONAR S107 — minimal API handler; the parameters are bound by the framework
         string projectId, [FromBody] PipelineJobTemplate template, IUserAccess access, IProjectStore store,
-        IAgentProfileStore profiles, JobTemplateStore jobTemplates, CancellationToken ct)
+        IAgentProfileStore profiles, JobTemplateStore jobTemplates, IDbContextFactory<PipelineDbContext> dbFactory,
+        CredentialPauseStore pauses, CancellationToken ct)
     {
         access.DemandAdminister(projectId);
         if (!access.IsGlobalAdmin)
@@ -254,7 +262,33 @@ internal static class UiSettingsEndpoints
             template = ProjectAdminEdits.Apply(stored, template);
         }
 
-        return await ConfigEndpoints.SaveTemplate(projectId, template, store, profiles, jobTemplates, ct);
+        var result = await ConfigEndpoints.SaveTemplate(projectId, template, store, profiles, jobTemplates, ct);
+        if (result is IStatusCodeHttpResult { StatusCode: >= 200 and < 300 })
+            await ClearOperatorHoldsAsync(dbFactory, pauses, ct);
+        return result;
+    }
+
+    /// <summary>
+    /// Spec 056 DD7, req 3.8: a saved routing table (global, or a repository's rows on its template) applies to queued work
+    /// at its next dispatch; held items lose their operator hold so they regain their place in the queue. Best effort: a
+    /// failure leaves the holds, which the next dispatch attempt replaces.
+    /// </summary>
+    private static async Task ClearOperatorHoldsAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory, CredentialPauseStore pauses, CancellationToken ct)
+    {
+        try
+        {
+            // Spec 056 req 3.5(a): a credential that is still paused keeps its items waiting at the back.
+            var paused = await pauses.PausedCredentialsAsync(ct);
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var cleared = await PendingHoldResets.ClearOperatorHoldsAsync(db, ct, paused);
+            if (cleared > 0)
+                Serilog.Log.Information("Routing saved: cleared the holds of {HeldItems} waiting work items", cleared);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Serilog.Log.Warning(ex, "Routing saved, but the holds of waiting work items could not be cleared");
+        }
     }
 
     /// <summary>GET /api/ui/settings/first-run — what the first-run banner needs.</summary>

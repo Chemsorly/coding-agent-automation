@@ -95,6 +95,26 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
         result.JobId.Should().Be(job.JobId);
     }
 
+    // Spec 056 DD11 (task 3.6): a failed consolidation reports the recorded provider failure; a failed one without a
+    // recorded failure reports none.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExecuteAsync_Failed_CarriesTheRecordedProviderFailure(bool recorded)
+    {
+        var recorder = new ProviderFailureRecorder();
+        var failure = new AgentProviderFailure(AgentProviderFailure.QuotaExhausted, null, "monthly usage limit");
+        if (recorded)
+            recorder.Record(failure);
+        var executor = new LocalConsolidationExecutor(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _mockLogger.Object, failureRecorder: recorder);
+
+        var result = await executor.ExecuteAsync(CreateBrainConsolidationJob(providerConfigs: []), _connection, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ProviderFailure.Should().Be(recorded ? failure : null);
+    }
+
     [Fact]
     public async Task ExecuteAsync_BrainConsolidation_MissingAgentConfig_ReturnsFailure()
     {

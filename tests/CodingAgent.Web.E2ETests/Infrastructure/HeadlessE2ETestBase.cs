@@ -1,3 +1,4 @@
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline.Interfaces;
@@ -223,9 +224,17 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string issueIdentifier,
         string agentSelector = "kiro,dotnet",
         int timeoutSeconds = 3600,
-        Guid? projectId = null)
+        Guid? projectId = null,
+        bool routeByRepository = false)
     {
         var workItemId = Guid.NewGuid();
+        // Spec 056: dispatch routes the row, so its request is readable and its job template is routed: by the global
+        // default route, or — when one queue holds rows for several job templates — by a repository of its own.
+        var repo = "repo-e2e";
+        if (routeByRepository)
+            repo = await Fixture.SeedRepositoryRouteAsync(agentSelector);
+        else if (!string.IsNullOrEmpty(agentSelector))
+            await Fixture.SeedRoutedTemplateAsync(agentSelector);
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         db.WorkItems.Add(new WorkItemEntity
         {
@@ -234,7 +243,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             IssueIdentifier = issueIdentifier,
             IssueProviderConfigId = "issue-e2e",
             Status = WorkItemStatus.Pending,
-            Payload = "{}",
+            Payload = WorkItemTestData.RoutablePayload(WorkItemTaskType.Implementation, issueIdentifier, "issue-e2e", repo),
             AgentSelector = agentSelector,
             CreatedAt = DateTimeOffset.UtcNow,
             TimeoutSeconds = timeoutSeconds,

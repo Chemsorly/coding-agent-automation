@@ -675,7 +675,7 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         var result = await _client.DispatchPendingAsync(workItemId);
 
-        result.Should().Be(DispatchPendingResult.Dispatched,
+        result.Result.Should().Be(DispatchPendingResult.Dispatched,
             "200 OK with dispatched:true must return Dispatched so the poller continues to the next item");
     }
 
@@ -691,8 +691,24 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         var result = await _client.DispatchPendingAsync(workItemId);
 
-        result.Should().Be(DispatchPendingResult.PermanentRejection,
+        result.Result.Should().Be(DispatchPendingResult.PermanentRejection,
             "200 with dispatched:false must return PermanentRejection (stop selector this cycle)");
+    }
+
+    // Spec 056 DD9: a hold names the reason, the template and the credential the item resolved to.
+    [Fact]
+    public async Task DispatchPendingAsync_AHold_ReturnsItsReasonTemplateAndCredential()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"credential_paused","holdText":"Kiro paused","templateKey":"dotnet,kiro","credential":"kiro"}"""));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(new DispatchPendingOutcome(DispatchPendingResult.PermanentRejection, "credential_paused", "dotnet,kiro", "kiro"));
     }
 
     // Spec 057 req 3.5: the all-agents limit ends the Scheduler's cycle.
@@ -708,7 +724,7 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         var result = await _client.DispatchPendingAsync(workItemId);
 
-        result.Should().Be(DispatchPendingResult.GlobalLimitReached);
+        result.Result.Should().Be(DispatchPendingResult.GlobalLimitReached);
     }
 
     [Fact]
@@ -723,7 +739,7 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         var result = await _client.DispatchPendingAsync(workItemId);
 
-        result.Should().Be(DispatchPendingResult.PermanentRejection,
+        result.Result.Should().Be(DispatchPendingResult.PermanentRejection,
             "200 with dispatched:false (not_pending) must return PermanentRejection");
     }
 
@@ -739,7 +755,7 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         var result = await _client.DispatchPendingAsync(workItemId);
 
-        result.Should().Be(DispatchPendingResult.PermanentRejection,
+        result.Result.Should().Be(DispatchPendingResult.PermanentRejection,
             "200 with dispatched:false (no_template) must return PermanentRejection");
     }
 
@@ -767,7 +783,7 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         var result = await _client.DispatchPendingAsync(workItemId);
 
-        result.Should().Be(DispatchPendingResult.Transient,
+        result.Result.Should().Be(DispatchPendingResult.Transient,
             "503 Service Unavailable must return Transient so the Scheduler poller retries next cycle");
     }
 

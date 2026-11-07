@@ -7,7 +7,6 @@ namespace CodingAgent.Web.E2ETests.PageObjects;
 /// settings of that template's tool and MCP servers.
 ///
 /// Notes:
-/// - The Enabled field is a plain checkbox, not a toggle-switch.
 /// - After FillAsync on @bind inputs, BlurAsync() is required to trigger Blazor's onchange handler.
 /// - When the form is open, <c>button.btn-add</c> inside the form is the "Add MCP Server" button.
 /// </summary>
@@ -26,7 +25,6 @@ public sealed partial class AgentProfileSectionHelper
 
     private ILocator AgentNameInput => _page.Locator("[data-testid='profile-agent-name']");
 
-    private ILocator EnabledCheckbox => Form.Locator(":scope > div.form-checkbox input[type='checkbox']");
 
     private ILocator SaveButton => Form.Locator(":scope > div.form-buttons button.btn-save");
 
@@ -59,12 +57,6 @@ public sealed partial class AgentProfileSectionHelper
     }
 
     public Task<bool> IsAgentNameShownAsync() => AgentNameInput.IsVisibleAsync();
-
-    public async Task SetEnabledAsync(bool enabled)
-    {
-        if (await EnabledCheckbox.IsCheckedAsync() != enabled)
-            await EnabledCheckbox.ClickAsync();
-    }
 
     /// <summary>Clicks Save and waits for the form to close.</summary>
     public async Task SaveAsync()
@@ -110,9 +102,9 @@ public sealed partial class AgentProfileSectionHelper
     public async Task<string> GetJobTemplateCellAsync(string displayName) =>
         (await Row(displayName).Locator("td").Nth(1).TextContentAsync())?.Trim() ?? "";
 
-    /// <summary>True when the Enabled cell of the named row shows the enabled icon.</summary>
-    public async Task<bool> IsRowEnabledAsync(string displayName) =>
-        await Row(displayName).Locator("td").Nth(3).Locator("span.status-icon.is-on").CountAsync() > 0;
+    /// <summary>Spec 056 req 1.5: the credential the named row's profile uses (for example "Kiro").</summary>
+    public async Task<string> GetCredentialCellAsync(string displayName) =>
+        (await Row(displayName).Locator("[data-testid='profile-credential']").TextContentAsync())?.Trim() ?? "";
 
     /// <summary>True when a status toast or inline status containing the text is visible.</summary>
     public async Task<bool> IsStatusMessageVisibleAsync(string containsText)

@@ -47,7 +47,6 @@ public sealed class RunPageLiveCompletionTests : E2ETestBase
             Id = "run-page-profile",
             DisplayName = "Run Page E2E Profile",
             JobTemplate = E2ERouting.Key(s_e2eMatchLabels),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail

@@ -1310,9 +1310,18 @@ public class ConsolidationPageComponentTests : BunitContext
             mockConfigStore.Object,
             new Mock<IConsolidationService>().Object,
             mockStaleness.Object,
-            new CodingAgent.Infrastructure.Persistence.Services.AgentRoutingStore(noDatabase.Object),
-            new Mock<IAgentProfileStore>().Object,
-            CodingAgent.Web.TestUtilities.AgentRoutingTestData.JobTemplates());
+            new CodingAgent.Api.Dispatch.DispatchRouter(
+                noDatabase.Object,
+                new Mock<IAgentProfileStore>().Object,
+                new CodingAgent.Infrastructure.Persistence.Services.AgentRoutingStore(noDatabase.Object),
+                mockProjectStore.Object,
+                CodingAgent.Web.TestUtilities.AgentRoutingTestData.JobTemplates(),
+                new CodingAgent.Infrastructure.Persistence.Services.CredentialPauseStore(
+                    noDatabase.Object, new Mock<CodingAgent.Infrastructure.Locking.IDistributedLockProvider>().Object,
+                    TimeProvider.System, Serilog.Core.Logger.None),
+                new Mock<IOrchestratorRunService>().Object,
+                TimeProvider.System,
+                Serilog.Core.Logger.None));
 
         // Act
         var result = await service.GetAutoCountersAsync(CancellationToken.None);

@@ -1,4 +1,5 @@
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,6 +14,9 @@ internal static class WorkItemDispatchOrderExtensions
     /// <summary>
     /// Applies the standard three-level dispatch sort:
     /// <list type="number">
+    ///   <item>Spec 056 DD10: items held for an operator hold (<see cref="HoldReasons.OperatorHolds"/>: a paused
+    ///     credential or a route that cannot run) last, so they never fill the dispatch window. The null check is needed:
+    ///     in Postgres <c>x = ANY(@p)</c> is NULL for a NULL <c>x</c>, and NULLs sort last.</item>
     ///   <item>Task type tier ASC — a task type's position in <paramref name="dispatchOrder"/>
     ///     (<see cref="PipelineConfiguration.DispatchOrder"/>; default Triage, Review, Decomposition, Implementation,
     ///     Consolidation). EF Core translates the ternary chain to a SQL <c>CASE WHEN … THEN … END</c> expression
@@ -33,7 +37,8 @@ internal static class WorkItemDispatchOrderExtensions
         var consolidation = Tier(order, WorkItemTaskType.Consolidation);
 
         return source
-            .OrderBy(w =>
+            .OrderByOperatorHoldsLast()
+            .ThenBy(w =>
                 w.TaskType == WorkItemTaskType.Triage         ? triage :
                 w.TaskType == WorkItemTaskType.Review         ? review :
                 w.TaskType == WorkItemTaskType.Decomposition  ? decomposition :

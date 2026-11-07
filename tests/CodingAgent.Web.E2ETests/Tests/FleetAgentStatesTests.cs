@@ -46,7 +46,6 @@ public sealed class FleetAgentStatesTests : E2ETestBase
             Id = "profile-fleet-states",
             DisplayName = "Fleet States E2E Profile",
             JobTemplate = E2ERouting.Key(s_e2eMatchLabels),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -178,8 +177,9 @@ public sealed class FleetAgentStatesTests : E2ETestBase
     {
         await new FleetPage(Page, BaseUrl).NavigateAsync();
 
-        await Assertions.Expect(Page.Locator(".cockpit-empty"))
-            .ToHaveTextAsync("No agents registered.", new() { Timeout = (float)s_pageTimeout.TotalMilliseconds });
+        // Spec 056: the Credentials card has its own empty text; the agents card says that no agent is registered.
+        await Assertions.Expect(Page.Locator(".cockpit-empty", new() { HasTextString = "No agents registered." }))
+            .ToBeVisibleAsync(new() { Timeout = (float)s_pageTimeout.TotalMilliseconds });
     }
 
     [Fact]

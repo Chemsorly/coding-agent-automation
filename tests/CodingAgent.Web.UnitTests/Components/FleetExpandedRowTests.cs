@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -34,6 +35,8 @@ public class FleetExpandedRowTests : BunitContext
         _mockAgents.Setup(c => c.GetCredentialPoolAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CredentialPoolStatus(0, 0, 0));
         Services.AddSingleton(_mockAgents.Object);
+        Services.AddTestAccess(); // spec 056: the credential banner and card read CurrentAccess and IAccessGuard
+        Services.AddNoCredentials();
 
         // RefreshBar calls JSRuntime.InvokeAsync for localStorage reads on first render.
         // Use bUnit's built-in JSInterop (not a Mock<IJSRuntime>) to handle these calls.

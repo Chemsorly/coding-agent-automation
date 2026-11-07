@@ -12,10 +12,10 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class RouteTableComponentTests : BunitContext
 {
-    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro", true);
-    private static readonly UiRoutingProfile Claude = new("p-claude", "Claude dotnet", JobTemplateProviderType.Claude, "claude,dotnet", true);
-    private static readonly UiRoutingProfile OpenCode = new("p-opencode", "OpenCode python", JobTemplateProviderType.Opencode, "opencode,python", true);
-    private static readonly UiRoutingProfile Retired = new("p-retired", "Retired", JobTemplateProviderType.Kiro, "dotnet,kiro", false);
+    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro");
+    private static readonly UiRoutingProfile Claude = new("p-claude", "Claude dotnet", JobTemplateProviderType.Claude, "claude,dotnet");
+    private static readonly UiRoutingProfile OpenCode = new("p-opencode", "OpenCode python", JobTemplateProviderType.Opencode, "opencode,python");
+    private static readonly UiRoutingProfile Retired = new("p-retired", "Retired", JobTemplateProviderType.Kiro, "dotnet,kiro");
     private static readonly UiRoutingProfile[] Profiles = [Kiro, Claude, OpenCode, Retired];
 
     private static readonly AgentRouting Global = new()
@@ -125,13 +125,25 @@ public class RouteTableComponentTests : BunitContext
     }
 
     [Fact]
-    public void ADisabledProfile_IsOfferedOnlyOnTheRowThatNamesIt()
+    public void EveryProfile_IsOfferedOnEveryRow_Spec056()
     {
-        var routing = Global with { ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Triage] = new(Retired.Id, "auto", "auto") } };
-        var cut = RenderTable(RouteRow.ForRouting(routing));
+        var cut = RenderTable(RouteRow.ForRouting(Global));
 
-        cut.FindAll("[data-testid='route-profile-triage'] option").Select(o => o.TextContent).Should().Contain("Retired (Kiro, disabled)");
-        cut.FindAll("[data-testid='route-profile-default'] option").Select(o => o.GetAttribute("value")).Should().NotContain(Retired.Id);
+        cut.FindAll("[data-testid='route-profile-default'] option").Select(o => o.TextContent).Should().Contain("Retired (Kiro)");
+        cut.Markup.Should().NotContain("disabled)");
+    }
+
+    [Fact]
+    public void ARowWhoseCredentialIsPaused_ShowsThePauseText_Spec056()
+    {
+        const string text = "Kiro paused — quota used up, since 2026-11-02 05:00 UTC";
+        var routing = Global with { ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Triage] = new(Retired.Id, "auto", "auto") } };
+        var cut = Render<RouteTable>(p => p
+            .Add(c => c.Rows, RouteRow.ForRouting(routing))
+            .Add(c => c.Profiles, [Kiro, Claude, OpenCode, Retired with { PausedText = text }]));
+
+        cut.Find("[data-testid='route-paused-triage']").TextContent.Should().Be(text);
+        cut.FindAll("[data-testid='route-paused-default']").Should().BeEmpty();
     }
 
     [Fact]

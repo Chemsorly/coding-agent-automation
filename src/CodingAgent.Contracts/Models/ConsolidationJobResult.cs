@@ -80,6 +80,13 @@ public sealed class ConsolidationJobResult
     /// <summary>Reason the brain review push was refused (spec 054, req 13.2, task 3.5). Wire-compat: additive.</summary>
     [Key(16)]
     public string? BrainReviewRefusalReason { get; set; }
+
+    /// <summary>
+    /// Spec 056: set on a failed result when the run stopped because its credential's quota is used up or its login
+    /// was rejected. Wire-compat: additive.
+    /// </summary>
+    [Key(17)]
+    public AgentProviderFailure? ProviderFailure { get; set; }
 }
 
 /// <summary>

@@ -314,7 +314,6 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
             Id = "profile-setup-e2e",
             DisplayName = "Setup E2E Agent Profile",
             JobTemplate = "setup-e2e",
-            Enabled = true
         });
 
         // ── Step 7: Connect a fake agent so FakeJobController can deliver the job ────────

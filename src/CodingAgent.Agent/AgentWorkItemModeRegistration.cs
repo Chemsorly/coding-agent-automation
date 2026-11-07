@@ -1,4 +1,5 @@
 using CodingAgent.Infrastructure.Resilience;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using KiroCliLib.Core;
@@ -21,6 +22,10 @@ internal static class AgentWorkItemModeRegistration
         AgentStartupConfig config,
         ILogger logger)
     {
+        // Spec 056: AddAgentHostServices registers it; a host that wires the executors itself (the E2E worker harness)
+        // gets the same recorder here.
+        services.TryAddSingleton<ProviderFailureRecorder>();
+
         services.AddHttpClient<WorkItemHttpClient>(client =>
         {
             client.BaseAddress = new Uri(config.OrchestratorUrl.TrimEnd('/'));
@@ -102,7 +107,8 @@ internal static class AgentWorkItemModeRegistration
                 AgentId: sp.GetRequiredService<AgentId>(),
                 Lifetime: sp.GetRequiredService<IHostApplicationLifetime>(),
                 Logger: logger,
-                ServiceProvider: sp)));
+                ServiceProvider: sp,
+                ProviderFailureRecorder: sp.GetRequiredService<ProviderFailureRecorder>())));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemAgentService>());
         services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<WorkItemAgentService>());
 

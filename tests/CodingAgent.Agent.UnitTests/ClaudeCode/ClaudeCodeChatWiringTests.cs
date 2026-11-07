@@ -21,11 +21,12 @@ public class ClaudeCodeChatWiringTests
     }
 
     [Theory]
-    [InlineData(null, "auto")]
-    [InlineData("", "auto")]
+    [InlineData(null, "subscription")]
+    [InlineData("", "subscription")]
+    [InlineData("auto", "subscription")] // spec 056: auto is gone
     [InlineData("APIKEY", "apiKey")]
     [InlineData(" subscription ", "subscription")]
-    [InlineData("other", "auto")]
+    [InlineData("other", "subscription")]
     public void AuthModes_Normalize_MapsToTheClosedSet(string? value, string expected)
     {
         ClaudeCodeAuthModes.Normalize(value).Should().Be(expected);

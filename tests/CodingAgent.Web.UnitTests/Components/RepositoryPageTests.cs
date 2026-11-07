@@ -292,7 +292,7 @@ public class RepositoryPageTests : BunitContext
 
     // ── Binding card: stack labels and agent routing (spec 053 req 1.7, 3.2, 3.3, 3.7, 5.3, 5.5) ──
 
-    private static readonly UiRoutingProfile KiroProfile = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro", true);
+    private static readonly UiRoutingProfile KiroProfile = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro");
 
     private static UiResolvedRoute Resolved(WorkItemTaskType taskType) =>
         new(taskType, "Kiro dotnet", JobTemplateProviderType.Kiro, "auto", "high", AgentRouteSource.GlobalDefault, "dotnet,kiro", null);

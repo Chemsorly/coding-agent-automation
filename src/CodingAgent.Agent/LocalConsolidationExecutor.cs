@@ -34,19 +34,22 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     private readonly Serilog.ILogger _logger;
     private readonly IBrainUpdateService _brainUpdateService;
     private readonly IPipelineReporterFactory _reporterFactory;
+    private readonly ProviderFailureRecorder? _failureRecorder;
 
     public LocalConsolidationExecutor(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
-        IPipelineReporterFactory? reporterFactory = null)
+        IPipelineReporterFactory? reporterFactory = null,
+        ProviderFailureRecorder? failureRecorder = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger);
+        _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger, failureRecorder);
+        _failureRecorder = failureRecorder;
         _logger = logger;
         _brainUpdateService = brainUpdateService ?? new CodingAgent.Infrastructure.Git.BrainUpdateService(logger);
         _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
@@ -172,6 +175,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 
         // Report result back to orchestrator (after reporter is disposed, so all step transitions are drained first)
         if (progress is not null) progress.CopyUsageTo(result);
+        // Spec 056 DD11: a failed run that stopped on a used-up quota or a rejected login says so.
+        if (!result.Success && result.ProviderFailure is null && _failureRecorder?.Failure is { } providerFailure)
+            result.ProviderFailure = providerFailure;
         try
         {
             await connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, result, ct);

@@ -16,7 +16,7 @@ public partial class RouteTable
     /// <summary>The rows to edit; the table changes them in place.</summary>
     [Parameter, EditorRequired] public IReadOnlyList<RouteRow> Rows { get; set; } = [];
 
-    /// <summary>The profiles a route can name. A disabled one is offered only on the row that names it.</summary>
+    /// <summary>The profiles a route can name (spec 056: every profile; a paused credential is shown, not hidden).</summary>
     [Parameter, EditorRequired] public IReadOnlyList<UiRoutingProfile> Profiles { get; set; } = [];
 
     /// <summary>The global routing table the rows inherit; set on the repository page.</summary>
@@ -39,14 +39,14 @@ public partial class RouteTable
 
     private AgentTool? ToolOf(string? profileId) => AgentToolCatalog.Find(ProfileOf(profileId)?.Tool);
 
-    private IEnumerable<UiRoutingProfile> OfferedProfiles(RouteRow row) =>
-        Profiles.Where(p => p.Enabled || string.Equals(p.Id, row.ProfileId, StringComparison.Ordinal));
-
     private static string ProfileLabel(UiRoutingProfile profile)
     {
         var tool = AgentToolCatalog.Find(profile.Tool)?.DisplayName ?? "no tool";
-        return profile.Enabled ? $"{profile.Name} ({tool})" : $"{profile.Name} ({tool}, disabled)";
+        return $"{profile.Name} ({tool})";
     }
+
+    /// <summary>Spec 056 req 4.6: the pause text of the row's profile's credential; null when it is available.</summary>
+    private string? PausedTextOf(string? profileId) => ProfileOf(profileId)?.PausedText;
 
     /// <summary>The models the model field offers besides <c>auto</c>: the tool's built-in list, or Kiro's fetched models.</summary>
     private IReadOnlyList<string> ModelsFor(AgentTool? tool) =>

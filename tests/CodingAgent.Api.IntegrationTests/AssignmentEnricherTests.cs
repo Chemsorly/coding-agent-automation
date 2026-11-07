@@ -16,7 +16,7 @@ namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
 /// <see cref="AssignmentEnricher.EnrichAsync"/> (spec 053 design "Claim", DD6): the claim runs on the route pinned at
-/// creation, or for an item queued before agent routing on the current routing; the profile must exist and be enabled,
+/// creation, or for an item queued before agent routing on the current routing; the profile must exist,
 /// its job template must still be the one the item was queued for and must have a tool, and the built agent config's
 /// Id must be unique. Each of those is <see cref="EnrichmentResult.Refused"/>; every other reason to serve no assignment
 /// is <see cref="EnrichmentResult.Unavailable"/>. The repository template's stack labels pick the quality gates and
@@ -125,9 +125,9 @@ public sealed class AssignmentEnricherTests
     };
 
     private static AgentProfile MakeProfile(
-        string id = ProfileId, string jobTemplate = JobTemplate, bool enabled = true,
+        string id = ProfileId, string jobTemplate = JobTemplate,
         IReadOnlyList<McpServerConfig>? mcpServers = null) =>
-        AgentRoutingTestData.Profile(id, jobTemplate, id == ProfileId ? ProfileName : $"{id} profile", enabled,
+        AgentRoutingTestData.Profile(id, jobTemplate, id == ProfileId ? ProfileName : $"{id} profile",
             new Dictionary<string, string> { [ProviderSettingKeys.AgentName] = "dev" }, mcpServers);
 
     private static DispatchInfrastructure.IssueContextResult MakeIssueContext() =>
@@ -222,7 +222,7 @@ public sealed class AssignmentEnricherTests
 
             return new AssignmentEnricher(
                 Infra, profileStore.Object, Preparer.Object, projectStore.Object,
-                new ConsolidationTemplateResolver(projectStore.Object), new AgentRoutingStore(db), JobTemplates, Logger,
+                new ConsolidationTemplateResolver(projectStore.Object), JobTemplates, Logger,
                 new ConsolidationRunContextSources(RunHistory));
         }
     }
@@ -296,39 +296,17 @@ public sealed class AssignmentEnricherTests
         result.Route.Should().Be(PinnedRoute);
     }
 
+    // Spec 056 DD3: the claim never resolves a route, even when the current routing would resolve one.
     [Fact]
-    public async Task EnrichAsync_ItemQueuedBeforeAgentRouting_IsRoutedAtClaim()
+    public async Task EnrichAsync_ItemWithoutAPinnedRoute_IsRefused_NoRoute_AlthoughTheRoutingResolves()
     {
-        // Spec 053 req 4.6: an item stored without a route runs on the current routing, recorded as source "claim".
         var setup = new Setup { Routing = AgentRoutingTestData.Routing(ProfileId, "sonnet", "low") };
         var identity = MakeIdentity() with { Route = null, ResolvedProfileId = null };
 
-        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
+        var result = await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        result.Route.Should().Be(new AgentRouteSnapshot(
-            ProfileId, ProfileName, JobTemplateProviderType.Kiro, "sonnet", "low", AgentRouteSource.Claim));
-        result.ResolvedProfileId.Should().Be(ProfileId);
-        setup.Infra.CapturedRequest!.AgentConfig!.Settings.Should().Contain(ProviderSettingKeys.Model, "sonnet");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_RepositoryRowsApply_ToAnItemRoutedAtClaim()
-    {
-        var setup = new Setup
-        {
-            Profiles = [MakeProfile(), MakeProfile("profile-2")],
-            Routing = AgentRoutingTestData.Routing(ProfileId),
-            Templates = [RepoTemplate(rows: new Dictionary<WorkItemTaskType, AgentRoute>
-            {
-                [WorkItemTaskType.Implementation] = AgentRoutingTestData.Route("profile-2", "row-model"),
-            })],
-        };
-        var identity = MakeIdentity() with { Route = null };
-
-        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
-
-        result.ResolvedProfileId.Should().Be("profile-2");
-        result.Route!.Model.Should().Be("row-model");
+        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be("the work item was dispatched without an agent route");
+        setup.Infra.CapturedRequest.Should().BeNull();
     }
 
     [Fact]
@@ -580,7 +558,6 @@ public sealed class AssignmentEnricherTests
         var enricher = new AssignmentEnricher(
             infra, profileStore.Object, MakeNoOpConsolidationPreparer().Object, projectStore.Object,
             new ConsolidationTemplateResolver(projectStore.Object),
-            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
             AgentRoutingTestData.JobTemplates(), Serilog.Log.Logger);
         var project = MakeProject() with { EpicIssueProviderId = "issue-epics", TemplateIds = ["t-api"] };
 
@@ -605,12 +582,10 @@ public sealed class AssignmentEnricherTests
 
     // ── Refusals (spec 053 design "Claim") ───────────────────────────────────────────
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task EnrichAsync_PinnedProfileGoneOrDisabled_IsRefused_ProfileUnavailable(bool disabled)
+    [Fact]
+    public async Task EnrichAsync_PinnedProfileGone_IsRefused_ProfileUnavailable()
     {
-        var setup = new Setup { Profiles = disabled ? [MakeProfile(enabled: false)] : [MakeProfile("profile-other")] };
+        var setup = new Setup { Profiles = [MakeProfile("profile-other")] };
 
         var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
 
@@ -671,7 +646,7 @@ public sealed class AssignmentEnricherTests
 
         var result = await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be(AgentRouteRefusalReason.NoRouteText);
+        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be("the work item was dispatched without an agent route");
         setup.Infra.CapturedRequest.Should().BeNull();
         setup.Preparer.VerifyNoOtherCalls();
     }
@@ -1015,29 +990,6 @@ public sealed class AssignmentEnricherTests
     }
 
     [Fact]
-    public async Task EnrichAsync_ConsolidationTask_ItemQueuedBeforeAgentRouting_UsesTheConsolidationTemplatesRow()
-    {
-        // Req 4.3: a consolidation routes by the template that triggered it, not by the repository.
-        var trigger = new PipelineJobTemplate
-        {
-            Id = "tmpl-1", Name = "brain", IssueProviderId = "ip", RepoProviderId = "other-repo",
-            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
-            {
-                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route("profile-2", "brain-model"),
-            },
-        };
-        var setup = ConsolidationSetup(
-            profiles: [MakeProfile(), MakeProfile("profile-2")], templates: [trigger], routing: AgentRoutingTestData.Routing(ProfileId));
-        var identity = MakeConsolidationIdentity() with { Route = null };
-
-        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
-
-        result.ResolvedProfileId.Should().Be("profile-2");
-        result.Route!.Source.Should().Be(AgentRouteSource.Claim);
-        PrepareCall(setup).AgentConfig!.Settings.Should().Contain(ProviderSettingKeys.Model, "brain-model");
-    }
-
-    [Fact]
     public async Task EnrichAsync_ConsolidationTask_SetsProjectSteeringContent()
     {
         var project = MakeProject() with { SteeringContent = "consolidation-project-steering" };
@@ -1183,7 +1135,6 @@ public sealed class AssignmentEnricherOceCancellationTests
         return new AssignmentEnricher(
             new ThrowingDispatchInfrastructure(toThrow), profileStoreMock.Object, new Mock<IConsolidationJobPreparationService>().Object,
             noopProjectStore.Object, new ConsolidationTemplateResolver(noopProjectStore.Object),
-            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
             AgentRoutingTestData.JobTemplates(), mockLogger.Object);
     }
 

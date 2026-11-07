@@ -25,7 +25,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// <c>_testStartedAt</c> is captured when the test class is constructed (once per test in xUnit).
 /// The shared in-memory DB is not truncated between tests; without the timestamp filter, a
 /// Pending WorkItem created by <c>WhenBrainRunsReachTheThreshold</c> or
-/// <c>WhenTheRouteIsRefused</c> would persist and inflate the expected-zero counts in subsequent
+/// <c>WhenNoRouteIsSet</c> would persist and inflate the expected-zero counts in subsequent
 /// tests that run in the same process.
 /// </para>
 ///
@@ -140,7 +140,6 @@ public sealed class AutoConsolidationE2ETests : E2ETestBase
             Id = "auto-consol-profile",
             DisplayName = "Auto Consolidation Profile",
             JobTemplate = E2ERouting.Key("jc-e2e"),
-            Enabled = true,
         });
     }
 
@@ -220,45 +219,34 @@ public sealed class AutoConsolidationE2ETests : E2ETestBase
         Assert.Contains("· auto", counterText);
     }
 
-    // ── S5c — route is refused, then routed ──────────────────────────────
+    // ── S5c — no route: the run is queued and waits ──────────────────────
 
     /// <summary>
-    /// S5c: when no route is configured, <c>TriggerAutomaticAsync</c> throws
-    /// <see cref="WorkItemRefusedException"/>. <c>TryTriggerBrainScopeAsync</c> catches it —
-    /// <c>RunOnceAsync</c> does NOT propagate. The page shows "auto refused:". Once a valid
-    /// route is added, the next call succeeds.
+    /// S5c (spec 056 DD1): an automatic start is never refused for routing. Without a route the run is queued once and
+    /// waits (the dispatcher holds it as <c>no_route</c>); the next check does not queue a second one, and the counter
+    /// still says the start is automatic.
     /// </summary>
     [Fact]
-    public async Task WhenTheRouteIsRefused_ShouldStartNothing_ShowWhy_AndStartOnceRouted()
+    public async Task WhenNoRouteIsSet_ShouldQueueOneRunThatWaits_AndNotASecond()
     {
         // Arrange: threshold=1, one run, NO route seeded
         await SeedAsync(threshold: 1);
         await AddRunWithInboxAsync();
 
-        // Act 1: trigger without a route — must not throw
+        // Act: two checks without a route — neither throws
+        await RunOnceAsync();
         await RunOnceAsync();
 
-        // Assert 1: nothing was created
-        Assert.Equal(0, await ConsolidationItemsAsync());
+        // Assert: one queued run, still Pending
+        Assert.Equal(1, await ConsolidationItemsAsync());
 
-        // Assert (page): "auto refused:" appears, "· auto" is absent
+        // Assert (page): no refusal text; "· auto" is shown
         var consolPage = new ConsolidationPage(Page, BaseUrl);
         await consolPage.NavigateAsync();
-
-        var blockedText = await Page.Locator("[data-testid=auto-blocked-brain]").TextContentAsync();
-        Assert.NotNull(blockedText);
-        Assert.Contains("auto refused:", blockedText);
-
         var counterText = await Page.Locator("[data-testid=auto-counter-brain]").TextContentAsync();
         Assert.NotNull(counterText);
-        Assert.DoesNotContain("· auto", counterText);
-
-        // Act 2: seed the route and trigger again
-        await SeedRouteAsync();
-        await RunOnceAsync();
-
-        // Assert 2: one item created after the route was added
-        Assert.Equal(1, await ConsolidationItemsAsync());
+        Assert.Contains("· auto", counterText);
+        Assert.Equal(0, await Page.Locator("[data-testid=auto-blocked-brain]").CountAsync());
     }
 
     // ── S5d — last run failed (paused) ────────────────────────────────────

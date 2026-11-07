@@ -89,6 +89,33 @@ public sealed class UiClientContractTests(ApiWebApplicationFactory factory)
         }
     }
 
+    // Spec 056 req 2.4: the web client's credential calls; an unknown credential's 404 carries the reason.
+    [Fact]
+    public async Task AgentCredentials_PauseReadAndResume_AndA404CarriesTheReason()
+    {
+        var credentials = new UiCredentialsClient(factory.CreateClient(), Token(TestUserTokens.Global(AccessRole.Operator)));
+        var until = DateTimeOffset.UtcNow.AddHours(3);
+        try
+        {
+            await credentials.PauseAsync(AgentCredentials.ClaudeApiKey, until, "contract test");
+
+            var paused = (await credentials.GetAsync()).Credentials.Single(c => c.Credential == AgentCredentials.ClaudeApiKey);
+            paused.Paused.Should().BeTrue();
+            paused.Detail.Should().Be("contract test");
+            paused.Until.Should().BeCloseTo(until, TimeSpan.FromSeconds(1));
+
+            var refused = () => credentials.PauseAsync("codex", null, null);
+            (await refused.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should()
+                .Contain("Unknown agent credential 'codex'");
+        }
+        finally
+        {
+            await credentials.ResumeAsync(AgentCredentials.ClaudeApiKey);
+        }
+
+        (await credentials.GetAsync()).Credentials.Should().NotContain(c => c.Credential == AgentCredentials.ClaudeApiKey && c.Paused);
+    }
+
     [Fact]
     public async Task AgentProfiles_SaveListAndDelete_KeepingTheMaskedSecret()
     {

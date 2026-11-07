@@ -8,7 +8,6 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using ILogger = Serilog.ILogger;
 
@@ -49,7 +48,7 @@ public sealed class TriageService
     private readonly IConfigurationStore _config;
     private readonly IOrchestratorRunService _runService;
     private readonly TriageTrackerOperations _tracker;
-    private readonly WorkItemRouter _router;
+    private readonly DispatchRouter _router;
     private readonly ILogger _logger;
 
     public TriageService(
@@ -58,7 +57,7 @@ public sealed class TriageService
         IConfigurationStore config,
         IOrchestratorRunService runService,
         TriageTrackerOperations tracker,
-        WorkItemRouter router,
+        DispatchRouter router,
         ILogger logger)
     {
         _dbFactory = dbFactory;
@@ -174,7 +173,7 @@ public sealed class TriageService
         AddRun(workItemId, distribution);
         _logger.Information("Started operator triage {TriageId} in project {ProjectId} on template {Template} (run {RunId})",
             record.Id, project.Id, executor.Name, workItemId);
-        return await ToDetailAsync(record, ct);
+        return await WithWaitTextAsync(await ToDetailAsync(record, ct), distribution, ct);
     }
 
     /// <summary>
@@ -257,7 +256,7 @@ public sealed class TriageService
 
         AddRun(workItemId, distribution);
         _logger.Information("Re-ran triage {TriageId} (run {RunId})", id, workItemId);
-        return await ToDetailAsync(updated, ct);
+        return await WithWaitTextAsync(await ToDetailAsync(updated, ct), distribution, ct);
     }
 
     // ── Drafts and dismissal ─────────────────────────────────────────────────
@@ -409,9 +408,22 @@ public sealed class TriageService
             },
         };
 
-        // Spec 053 req 4.2: the API routes the triage like every other work item; a refusal is the start's 400.
-        var routed = await _router.RouteAsync(request, PipelineTelemetry.RoutingStages.Create, ct);
-        return routed.Request ?? throw new TriageRequestException(StatusCodes.Status400BadRequest, routed.RefusalText!);
+        // Spec 056 DD1: the triage is routed when it is dispatched, like every other work item; nothing refuses it here.
+        return request;
+    }
+
+    /// <summary>Spec 056 DD12: the detail with the text of why the attempt waits, when dispatch would hold it now.</summary>
+    private async Task<TriageDetail> WithWaitTextAsync(TriageDetail detail, JobDistributionRequest distribution, CancellationToken ct)
+    {
+        try
+        {
+            return detail with { WaitText = await _router.PreviewAsync(distribution, ct) };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Could not preview the route of triage run {RunId}", distribution.RunId);
+            return detail;
+        }
     }
 
     private void AddRun(Guid workItemId, JobDistributionRequest distribution)

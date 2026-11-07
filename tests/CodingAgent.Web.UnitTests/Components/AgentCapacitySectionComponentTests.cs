@@ -37,6 +37,26 @@ public class AgentCapacitySectionComponentTests : BunitContext
             .Add(s => s.SettingsClient, _settings.Object)
             .Add(s => s.OnShowStatus, (ValueTuple<string, bool> s) => _statuses.Add(s)));
 
+    // Spec 056 req 4.6
+    [Fact]
+    public void ARowWhoseCredentialIsPaused_IsMarked()
+    {
+        const string text = "Kiro paused — quota used up, since 2026-11-02 05:00 UTC";
+        _settings.Setup(s => s.GetAgentCapacityAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Page() with
+        {
+            Templates =
+            [
+                new UiAgentCapacityRow("claude", "claude", 1, 0, 0, 2, 2, "ui"),
+                new UiAgentCapacityRow("dotnet,kiro", "kiro", 2, 1, 3, 5, 3, "helm", text),
+            ],
+        });
+
+        var cut = RenderSection();
+
+        cut.Find("[data-testid='capacity-row-dotnet,kiro'] [data-testid='capacity-credential-paused']").TextContent.Should().Be(text);
+        cut.FindAll("[data-testid='capacity-row-claude'] [data-testid='capacity-credential-paused']").Should().BeEmpty();
+    }
+
     // req 6.1
     [Fact]
     public void Rows_ShowRunningHelmUiAndWhatApplies()

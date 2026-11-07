@@ -50,6 +50,7 @@ public class WorkComponentTests : BunitContext
     public WorkComponentTests()
     {
         Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
+        Services.AddNoCredentials();
         // Spec 051 2.2a: the lists come from /api/ui (IUiWorkItemClient); cancel and priority still use the API key client.
         _mockLists
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -90,6 +91,33 @@ public class WorkComponentTests : BunitContext
         var headers = cut.FindAll(".monitoring-table thead th");
         headers.Should().Contain(h => h.TextContent == "Priority",
             "the Priority column header must be present in the queue table");
+    }
+
+    // ── Spec 056 req 4.3: why queued work waits ───────────────────────────────
+
+    [Fact]
+    public void WorkQueueTable_ShowsWhyEachItemWaits_AndCountsPerReason_Spec056()
+    {
+        const string paused = "Kiro paused — quota used up, since 2026-11-02 05:00 UTC";
+        var heldAt = new DateTimeOffset(2026, 11, 2, 5, 0, 0, TimeSpan.Zero);
+        var a = MakePendingItem(Guid.NewGuid()) with { HoldReason = HoldReasons.CredentialPaused, HoldText = paused, HeldAt = heldAt };
+        var b = MakePendingItem(Guid.NewGuid()) with { HoldReason = HoldReasons.CredentialPaused, HoldText = paused, HeldAt = heldAt };
+        var c = MakePendingItem(Guid.NewGuid()) with { HoldReason = HoldReasons.NoRoute, HoldText = "No agent route for task type Triage." };
+        var free = MakePendingItem(Guid.NewGuid());
+        _mockLists
+            .Setup(l => l.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([a, b, c, free]);
+
+        var cut = Render<Work>();
+
+        cut.FindAll(".monitoring-table thead th").Should().Contain(h => h.TextContent == "Waiting");
+        var waiting = cut.Find($"[data-testid='waiting-{a.Id}']");
+        waiting.TextContent.Should().Be(paused);
+        waiting.GetAttribute("title").Should().StartWith("Waiting since ");
+        cut.Find($"[data-testid='waiting-{free.Id}']").TextContent.Should().Be("—");
+        var counts = cut.Find("[data-testid='work-waiting-counts']").TextContent;
+        counts.Should().Contain("Credential paused").And.Contain("2").And.Contain("No route");
+        cut.Markup.Should().NotContain("refused", "texts say waiting, never refused");
     }
 
     // ── Test 2: Priority weight rendered in input ─────────────────────────────
