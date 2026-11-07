@@ -33,7 +33,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class BasepathNavigationTests : BunitContext
 {
     // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
-    public BasepathNavigationTests() => Services.AddTestAccess();
+    public BasepathNavigationTests()
+    {
+        Services.AddTestAccess();
+        Services.AddNoCredentials();
+    }
 
     // ── Helper ──────────────────────────────────────────────────────────────
 

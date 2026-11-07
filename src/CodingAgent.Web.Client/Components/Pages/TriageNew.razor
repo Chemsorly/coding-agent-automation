@@ -433,6 +433,8 @@
                     AlreadyTried = Blank(_alreadyTried),
                 },
             }, _cts.Token);
+            if (detail.WaitText is { Length: > 0 } waitText)
+                State.SetNotice($"triage/{detail.Record.Id}", TriageWaitNotice(waitText));
             Nav.NavigateTo($"triage/{detail.Record.Id}");
         }
         catch (AccessDeniedException) { _error = AccessDeniedException.UserMessage; }

@@ -229,7 +229,7 @@ else
 
                         <div class="config-sub-fields" style="margin-top: 1rem;" data-testid="binding-routing">
                             <h3>Agent routing</h3>
-                            <p class="form-hint">Which agent profile runs each task type of this repository, with which model and effort. A task type without its own row inherits the global routing. Changes apply to work created after saving.</p>
+                            <p class="form-hint">Which agent profile runs each task type of this repository, with which model and effort. A task type without its own row inherits the global routing. Changes apply to queued work at its next dispatch. Running work keeps its route.</p>
                             @if (PageService.RoutingPage is { } routing)
                             {
                                 <RouteTable Rows="_routeRows" Profiles="routing.Profiles" Inherited="routing.Routing" />

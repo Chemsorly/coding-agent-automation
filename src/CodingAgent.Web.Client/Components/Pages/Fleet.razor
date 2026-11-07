@@ -24,6 +24,9 @@
         <RefreshBar OnRefresh="RefreshQuietAsync" IsLoading="@(_loading && _agents is null)" StorageKey="autoRefresh.fleet" />
     </div>
 
+    @* Spec 056 req 4.1: a banner per paused credential. *@
+    <CredentialPauseBanner @ref="_credentialBanner" OnChanged="CredentialsChangedAsync" />
+
     @* TODO: [WARNING] Fleet shows agent status (Idle/Busy) which changes on job assignment/completion.
        The run-scoped hub events (OnStepTransition, OnRunCompleted) are not wired here because they are
        sent only to run-specific groups and agent heartbeat/status events are not exposed via
@@ -58,6 +61,9 @@
                 </span>
             </div>
         </div>
+        @* Spec 056 req 4.2: every credential in use; Pause and Resume for global operators. *@
+        <AgentCredentialsCard @ref="_credentialsCard" OnChanged="CredentialsChangedAsync" />
+
         @if (_pool is { Total: > 0, Available: 0 })
         {
             <div class="cockpit-card cockpit-card-pad" style="color: var(--error); font-size: 12.5px; border-color: var(--error);">
@@ -259,6 +265,18 @@
         catch { _pool = null; }
     }
 
+    private CredentialPauseBanner? _credentialBanner;
+    private AgentCredentialsCard? _credentialsCard;
+
+    /// <summary>Reloads the banner and the credentials card after either changed a pause, or on a refresh tick.</summary>
+    private async Task CredentialsChangedAsync()
+    {
+        if (_credentialBanner is not null)
+            await _credentialBanner.RefreshAsync();
+        if (_credentialsCard is not null)
+            await _credentialsCard.RefreshAsync();
+    }
+
     // Quiet tick refresh — no spinner, keeps the expanded row and stale data on a transient error.
     private async Task RefreshQuietAsync()
     {
@@ -270,6 +288,7 @@
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* keep last-known agents until the next tick */ }
+        await CredentialsChangedAsync();
     }
 
     private static string Ago(DateTimeOffset t)

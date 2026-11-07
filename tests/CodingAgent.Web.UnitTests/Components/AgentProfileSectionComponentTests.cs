@@ -67,11 +67,24 @@ public class AgentProfileSectionComponentTests : BunitContext
 
         var cut = RenderSection();
 
-        cut.FindAll("th").Select(h => h.TextContent.Trim()).Should().Equal("Name", "Job template", "MCP", "Enabled", "Actions");
+        cut.FindAll("th").Select(h => h.TextContent.Trim()).Should().Equal("Name", "Job template", "Credential", "MCP", "Enabled", "Actions");
         var row = cut.Find("[data-testid='profile-row-p-1']");
         row.TextContent.Should().Contain("Claude dotnet").And.Contain(ClaudeTemplate);
         row.QuerySelector("[data-testid='profile-tool']")!.TextContent.Should().Be("Claude Code");
         cut.FindAll("[data-testid='profile-missing-template']").Should().BeEmpty();
+    }
+
+    // Spec 056 req 1.5: the credential column, computed from the tool and the auth mode.
+    [Theory]
+    [InlineData("apiKey", "Claude API key")]
+    [InlineData("subscription", "Claude subscription")]
+    public void Table_ShowsTheCredentialOfEachProfile(string authMode, string expected)
+    {
+        Returns(AgentRoutingTestData.Profile("p-1", ClaudeTemplate, "Claude dotnet", settings: new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = authMode }));
+
+        var cut = RenderSection();
+
+        cut.Find("[data-testid='profile-row-p-1'] [data-testid='profile-credential']").TextContent.Should().Be(expected);
     }
 
     [Fact]

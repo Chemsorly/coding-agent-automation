@@ -16,6 +16,7 @@
                 <colgroup>
                     <col style="width: 200px;" />  @* Name *@
                     <col style="width: 260px;" />  @* Job template *@
+                    <col style="width: 160px;" />  @* Credential *@
                     <col style="width: 60px;" />   @* MCP *@
                     <col style="width: 70px;" />   @* Enabled *@
                     <col style="width: 100px;" />  @* Actions *@
@@ -24,6 +25,7 @@
                     <tr>
                         <th>Name</th>
                         <th>Job template</th>
+                        <th>Credential</th>
                         <th>MCP</th>
                         <th>Enabled</th>
                         <th>Actions</th>
@@ -51,6 +53,8 @@
                                     <span class="badge-disabled-table" data-testid="profile-no-tool" title="The job template has no providerType, so work routed to this profile is refused.">No tool</span>
                                 }
                             </td>
+                            @* Spec 056 req 1.5: which credential the profile's work uses (Settings → Agents → Credentials pauses it). *@
+                            <td data-testid="profile-credential">@(AgentCredentials.For(template?.Tool, profile.Settings) is { } credential ? AgentCredentials.DisplayName(credential) : "—")</td>
                             <td>@(profile.McpServers?.Count(s => !s.Disabled) ?? 0)</td>
                             <td><StatusIcon Enabled="profile.Enabled" /></td>
                             <td>

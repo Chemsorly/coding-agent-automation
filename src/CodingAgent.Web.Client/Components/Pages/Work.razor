@@ -35,6 +35,9 @@
         </div>
     </div>
 
+    @* Spec 056 req 4.1: a banner per paused credential. *@
+    <CredentialPauseBanner @ref="_credentialBanner" OnChanged="RefreshQuietAsync" />
+
     @* TODO: [WARNING] Work shows queue depth and in-flight counts that change on job dispatch/completion.
        The run-scoped hub events (OnStepTransition, OnRunCompleted) are not wired here because the hub
        sends them only to run-specific groups (run-{jobId}), and subscribing per-run on a list page is
@@ -186,6 +189,16 @@
         <!-- queue -->
         <div class="cockpit-card">
             <div class="cockpit-card-header"><h2>Queue</h2><span style="font-size: 12px; color: var(--text-muted);">@_pending.Count</span></div>
+            @if (WaitingByReason(_pending) is { Count: > 0 } waiting)
+            {
+                @* Spec 056 req 4.3: how many items wait, per reason. *@
+                <div class="work-waiting-counts" data-testid="work-waiting-counts">
+                    @foreach (var (reason, count) in waiting)
+                    {
+                        <span class="cockpit-chip">@reason <strong style="color: var(--text); margin-left: 4px;">@count</strong></span>
+                    }
+                </div>
+            }
             @if (_pending.Count == 0)
             {
                 <div class="cockpit-empty" style="padding: 24px;">The queue is empty.</div>
@@ -198,7 +211,7 @@
                 }
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table work-table">
-                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th>Priority</th><th></th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th>Waiting</th><th>Priority</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var p in _pending)
                             {
@@ -221,6 +234,7 @@
                                     </td>
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
+                                    <td class="work-waiting" data-testid="waiting-@p.Id" title="@(p.HeldAt is { } heldAt ? $"Waiting since {heldAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" : null)">@(string.IsNullOrEmpty(p.HoldText) ? "—" : p.HoldText)</td>
                                     @if (Access.CanOperate(p.ProjectId))
                                     {
                                         <td>
@@ -518,6 +532,8 @@
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* keep last-known data until the next tick */ }
+        if (_credentialBanner is not null)
+            await _credentialBanner.RefreshAsync();
     }
 
     /// <summary>
@@ -629,6 +645,16 @@
         items.OrderBy(a => a.DispatchedAt ?? DateTimeOffset.MaxValue).ThenBy(a => a.Id).ToList();
 
     /// <summary>Returns a short label + count for each distinct task type, ordered by count descending.</summary>
+    private CredentialPauseBanner? _credentialBanner;
+
+    /// <summary>Spec 056 req 4.3: the queued items with a stored hold, counted per reason (labels say "waiting", never "refused").</summary>
+    private static IReadOnlyList<(string Reason, int Count)> WaitingByReason(IEnumerable<PendingWorkItemDto> pending) =>
+        pending.Where(p => p.HoldReason is not null && p.HoldText is not null)
+            .GroupBy(p => p.HoldReason!)
+            .OrderByDescending(g => g.Count())
+            .Select(g => (HoldReasons.Label(g.Key), g.Count()))
+            .ToList();
+
     private static IEnumerable<(string Label, int Count)> GetTypeBreakdown(IEnumerable<WorkItemTaskType> types)
         => types
             .GroupBy(t => t)

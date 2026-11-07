@@ -115,4 +115,7 @@ public static class UiFormatters
             _ => scope is null ? "Consolidation" : $"Consolidation · {scope}"
         };
     }
+
+    /// <summary>Spec 056 DD12: the notice for a triage attempt that is queued but cannot start now.</summary>
+    public static string TriageWaitNotice(string waitText) => $"The attempt is queued and waits: {waitText}";
 }

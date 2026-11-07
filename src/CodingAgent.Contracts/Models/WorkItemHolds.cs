@@ -50,6 +50,20 @@ public static class HoldReasons
     /// <summary>True when <paramref name="reason"/> is one of <see cref="OperatorHolds"/>.</summary>
     public static bool IsOperatorHold(string? reason) =>
         reason is not null && OperatorHolds.Contains(reason, StringComparer.Ordinal);
+
+    /// <summary>The short label of <paramref name="reason"/> for the Work page's per-reason counts (req 4.3).</summary>
+    public static string Label(string reason) => reason switch
+    {
+        NoRoute => "No route",
+        ProfileUnavailable => "Profile missing",
+        NoTool => "No tool",
+        NoTemplate => "No job template",
+        CredentialPaused => "Credential paused",
+        ConcurrencyLimit => "Template limit",
+        GlobalConcurrencyLimit => "Global limit",
+        PvcUnavailable => "No Kiro slot",
+        _ => reason,
+    };
 }
 
 /// <summary>

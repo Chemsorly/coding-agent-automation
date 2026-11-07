@@ -12,6 +12,7 @@
 @inject CurrentAccess Access
 @inject IAccessGuard Guard
 @inject IUiRunClient RunHistory
+@inject CodingAgent.Web.Services.CockpitState State
 
 @*
     Triage page (spec 050, mocks B4 result, B6 needs input; B3 is the run page, linked from here).
@@ -510,7 +511,7 @@
         {
             _loadedId = Id;
             _error = null;
-            _notice = null;
+            _notice = State.TakeNotice($"triage/{Id}");
             _panel = Panel.None;
             _editing = null;
             _editError = null;
@@ -663,6 +664,8 @@
     private void AfterRerun(TriageDetail detail)
     {
         _detail = detail;
+        if (detail.WaitText is { Length: > 0 } waitText)
+            _notice = TriageWaitNotice(waitText);
         if (detail.Record.Source == TriageSource.Issue && !IsRunning)
         {
             _rerunRequested = true;

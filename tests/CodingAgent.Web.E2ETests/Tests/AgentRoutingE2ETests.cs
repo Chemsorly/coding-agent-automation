@@ -43,7 +43,7 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
         await settingsPage.SelectTreeNodeAsync("Routing");
         await routing.WaitForTableAsync();
 
-        Assert.Contains("Changes apply to work created after saving", await routing.GetAppliesNoteAsync());
+        Assert.Contains("Changes apply to queued work at its next dispatch", await routing.GetAppliesNoteAsync());
 
         // Act: a default route and an OpenCode row for decomposition (OpenCode has no effort, so none is chosen).
         await routing.Table.SetRouteAsync("default", KiroProfileId, "auto", "high");

@@ -41,6 +41,12 @@
                     </select>
                 </div>
 
+                @if (SelectedProfile is { PausedText: { Length: > 0 } pausedText })
+                {
+                    @* Spec 056 req 4.5: the profile stays offered; a launch answers 409 with the same text. *@
+                    <div class="agent-detail-warning" data-testid="chat-profile-paused"><Icon Name="alert-triangle" Size="16" /> @pausedText</div>
+                }
+
                 @if (SelectedProfile is { } chosen)
                 {
                     @* Spec 053 D13, req 6.1: the model and effort come from lists; no free text reaches the CLI. *@
@@ -66,7 +72,7 @@
 
                 @if (_profilesLoaded && _chatProfiles.Count == 0)
                 {
-                    <p class="form-hint">No enabled agent profile runs on a job template with a tool. Add one in Settings → Agents → Agent Profiles.</p>
+                    <p class="form-hint">No agent profile runs on a job template with a tool. Add one in Settings → Agents → Agent Profiles.</p>
                 }
 
                 <div class="chat-agent-select">

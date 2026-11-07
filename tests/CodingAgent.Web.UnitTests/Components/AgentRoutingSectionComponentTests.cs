@@ -43,11 +43,11 @@ public class AgentRoutingSectionComponentTests : BunitContext
             .Add(s => s.OnShowStatus, (ValueTuple<string, bool> s) => _statuses.Add(s)));
 
     [Fact]
-    public void ThePage_SaysThatAChangeAppliesToWorkCreatedAfterSaving()
+    public void ThePage_SaysThatAChangeAppliesToQueuedWorkAtItsNextDispatch_Spec056()
     {
         var cut = RenderSection();
 
-        cut.Find("[data-testid='routing-applies-note']").TextContent.Should().Contain("Changes apply to work created after saving");
+        cut.Find("[data-testid='routing-applies-note']").TextContent.Should().Contain("Changes apply to queued work at its next dispatch");
         cut.FindAll("[data-testid='route-table'] tbody tr").Should().HaveCount(6);
     }
 

@@ -96,12 +96,16 @@ internal static class UiSettingsEndpoints
 
     /// <summary>GET /api/ui/settings/agent-routing — the global routing table, the profiles a route can name and their job templates.</summary>
     internal static async Task<IResult> GetAgentRouting(
-        AgentRoutingStore routing, IAgentProfileStore profiles, JobTemplateStore templates, CancellationToken ct)
+        AgentRoutingStore routing, IAgentProfileStore profiles, JobTemplateStore templates, CredentialPauseStore pauses,
+        CancellationToken ct)
     {
         var toolsByKey = templates.ToolsByKey();
+        // Spec 056 req 4.6: each profile carries the pause text of its credential.
+        var paused = (await pauses.LoadAllAsync(ct)).ToDictionary(p => p.Credential, StringComparer.Ordinal);
         var routingProfiles = (await profiles.LoadAgentProfilesAsync(ct))
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(), p.Enabled))
+            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(), p.Enabled,
+                AgentCredentials.For(p, toolsByKey) is { } c && paused.TryGetValue(c, out var pause) ? HoldTexts.CredentialPaused(pause) : null))
             .ToList();
         return TypedResults.Ok(new UiAgentRoutingPage(
             await routing.LoadAsync(ct) ?? AgentRouting.Empty, routingProfiles, JobTemplates(toolsByKey)));

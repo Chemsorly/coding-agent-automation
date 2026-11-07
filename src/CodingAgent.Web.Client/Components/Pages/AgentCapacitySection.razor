@@ -65,6 +65,11 @@
                                     {
                                         <span class="sidebar-label">@tool.DisplayName</span>
                                     }
+                                    @if (!string.IsNullOrEmpty(row.CredentialPausedText))
+                                    {
+                                        @* Spec 056 req 4.6: the template's credential is paused; its work waits whatever the limit. *@
+                                        <div class="form-hint credential-paused-hint" data-testid="capacity-credential-paused">@row.CredentialPausedText</div>
+                                    }
                                 }
                             </td>
                             <td data-testid="capacity-running">@RunningText(row)</td>

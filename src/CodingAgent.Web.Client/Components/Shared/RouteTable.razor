@@ -24,11 +24,15 @@
                             <select data-testid="route-profile-@key" aria-label="@($"Agent profile for {RowLabel(row)}")"
                                     @bind="row.ProfileId" @bind:after="() => AfterProfileChanged(row)">
                                 <option value="">— Select agent profile —</option>
-                                @foreach (var profile in OfferedProfiles(row))
+                                @foreach (var profile in Profiles)
                                 {
                                     <option @key="profile.Id" value="@profile.Id">@ProfileLabel(profile)</option>
                                 }
                             </select>
+                            @if (PausedTextOf(row.ProfileId) is { } pausedText)
+                            {
+                                <div class="form-hint credential-paused-hint" data-testid="route-paused-@key">@pausedText</div>
+                            }
                         </td>
                         <td>
                             <input type="text" list="@($"route-models-{key}")" data-testid="route-model-@key"

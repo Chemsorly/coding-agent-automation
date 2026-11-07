@@ -119,7 +119,7 @@ public sealed class AgentChatErrorPathsTests : E2ETestBase
         await chatPage.NavigateAsync();
 
         await Assertions.Expect(Page.Locator(".form-hint"))
-            .ToContainTextAsync("No enabled agent profile runs on a job template with a tool.");
+            .ToContainTextAsync("No agent profile runs on a job template with a tool.");
         Assert.True(await chatPage.IsLaunchButtonDisabledAsync());
     }
 

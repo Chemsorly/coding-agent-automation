@@ -27,14 +27,16 @@ public static class RouteText
             : $"{string.Join(", ", g.Select(r => AgentRouteLabels.TaskType(r.TaskType)))}: {g.Key}"));
     }
 
-    /// <summary>Profile · tool · model · effort of one resolved route, or its problem.</summary>
+    /// <summary>Profile · tool · model · effort of one resolved route, or its problem; spec 056: then the pause text of its
+    /// credential when it is paused.</summary>
     public static string Describe(UiResolvedRoute route)
     {
         ArgumentNullException.ThrowIfNull(route);
         if (route.ProfileName is null)
             return route.Problem ?? NoRoute;
         var tool = AgentToolCatalog.Find(route.Tool)?.DisplayName ?? "no tool";
-        return $"{route.ProfileName} · {tool} · {Model(route.Model)} · effort {route.Effort}";
+        var text = $"{route.ProfileName} · {tool} · {Model(route.Model)} · effort {route.Effort}";
+        return route.CredentialPausedText is { Length: > 0 } paused ? $"{text} · {paused}" : text;
     }
 
     /// <summary>Where a resolved route comes from: repository, global task row or global default.</summary>

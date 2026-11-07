@@ -42,4 +42,15 @@ public sealed class CockpitState
         AttentionCount = count;
         OnChange?.Invoke();
     }
+
+    private readonly Dictionary<string, string> _notices = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Leaves a notice for the page at <paramref name="path"/>, shown once after a navigation (spec 056: a new triage
+    /// whose attempt waits says why on its page).
+    /// </summary>
+    public void SetNotice(string path, string text) => _notices[path] = text;
+
+    /// <summary>The notice left for <paramref name="path"/>, removed on the way; null when there is none.</summary>
+    public string? TakeNotice(string path) => _notices.Remove(path, out var text) ? text : null;
 }
