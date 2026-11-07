@@ -149,6 +149,12 @@ secrets:
   # (Pro, Max, Team or Enterprise plan). It does not warn before it expires — renew it yearly.
   claudeOauthToken: ""
 
+  # Optional: extra annotations on the Secret the chart renders when agentApiKey is set, for
+  # example a GitOps tool's sync option. helm.sh/resource-policy: keep is always set and cannot be
+  # overridden. The Secret the secret-init hook creates (agentApiKey empty) and an existingSecret
+  # do not get them: neither is rendered by the chart.
+  annotations: {}
+
 # Name of an existing Kubernetes Secret to use instead of creating one.
 # When set, the chart does NOT create a Secret resource and references this name
 # in all volume mounts and env var sources.
