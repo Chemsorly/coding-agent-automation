@@ -56,12 +56,14 @@ public sealed partial class WorkItemStatusTransitionService
     private readonly IRunLifecycleManager _runLifecycleManager;
     private readonly ILogger<WorkItemStatusTransitionService> _logger;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
+    private readonly IProviderFailureHandler? _providerFailures;
 
     public WorkItemStatusTransitionService(
         WorkItemTransitionService transitionService,
         IRunLifecycleManager runLifecycleManager,
         ILogger<WorkItemStatusTransitionService> logger,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null)
+        IDbContextFactory<PipelineDbContext>? dbFactory = null,
+        IProviderFailureHandler? providerFailures = null)
     {
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(runLifecycleManager);
@@ -71,6 +73,7 @@ public sealed partial class WorkItemStatusTransitionService
         _runLifecycleManager = runLifecycleManager;
         _logger = logger;
         _dbFactory = dbFactory;
+        _providerFailures = providerFailures;
     }
 
     /// <summary>
@@ -92,9 +95,21 @@ public sealed partial class WorkItemStatusTransitionService
         Guid id,
         WorkItemStatusRequest request,
         CancellationToken ct,
-        bool awaitTelemetry = false)
+        bool awaitTelemetry = false,
+        string? agentCaller = null)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        // ── Spec 056 DD11: a provider failure from the agent that runs the item ───────────────────
+        // Handled first and never falls through: the item is ended and queued again, exactly once. A provider failure
+        // posted with the operator key is ignored (agentCaller null): the request is handled as a plain Failed.
+        if (request.Status == WorkItemStatus.Failed && agentCaller is not null && _providerFailures is not null
+            && ReadProviderFailure(request.Result) is { } providerFailure)
+        {
+            return await _providerFailures.HandleAsync(id, agentCaller, providerFailure, ct)
+                ? StatusTransitionOutcome.Transitioned
+                : StatusTransitionOutcome.AlreadyAtTarget;
+        }
 
         // TODO: [WARNING] id is not validated for Guid.Empty. Passing Guid.Empty flows through to
         // TryRecoverFromInfrastructureFailureAsync and then TransitionDetailedAsync, which will issue
@@ -169,6 +184,21 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
+
+    /// <summary>The provider failure of a completion payload; null when absent or the payload cannot be read.</summary>
+    private static AgentProviderFailure? ReadProviderFailure(string? resultJson)
+    {
+        if (string.IsNullOrEmpty(resultJson))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<JobCompletionPayload>(resultJson, PipelineJsonOptions.Lenient)?.ProviderFailure;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static bool IsTerminal(WorkItemStatus? status)
         => status is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded or WorkItemStatus.Failed;

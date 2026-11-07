@@ -60,11 +60,17 @@ public static class WorkItemAgentEndpoints
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await PostStatus(id, request, statusTransitionService, ct))
+                    ?? await PostStatus(id, request, statusTransitionService, ct, agentCaller: AgentCallerOf(httpContext)))
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(1_048_576)); // 1 MB limit
     }
 
     // ── Agent → work item binding ─────────────────────────────────────────
+
+    /// <summary>The agent id of an agent-authenticated caller; null for the operator key (spec 056 DD11).</summary>
+    internal static string? AgentCallerOf(HttpContext httpContext) =>
+        string.Equals(httpContext.User.FindFirst("auth_kind")?.Value, "agent", StringComparison.Ordinal)
+            ? httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            : null;
 
     /// <summary>
     /// Confirms that an agent-authenticated caller owns the work item it is addressing.
@@ -409,9 +415,10 @@ public static class WorkItemAgentEndpoints
         WorkItemStatusRequest request,
         WorkItemStatusTransitionService statusTransitionService,
         CancellationToken ct = default,
-        bool awaitTelemetry = false)
+        bool awaitTelemetry = false,
+        string? agentCaller = null)
     {
-        var outcome = await statusTransitionService.TransitionAsync(id, request, ct, awaitTelemetry);
+        var outcome = await statusTransitionService.TransitionAsync(id, request, ct, awaitTelemetry, agentCaller);
 
         return outcome switch
         {

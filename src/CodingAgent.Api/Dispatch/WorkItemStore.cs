@@ -24,6 +24,33 @@ internal enum WorkItemCreateOutcome
 }
 
 /// <summary>
+/// Spec 056 DD11 step 4: what a requeued work item carries over from the item it replaces, and the hold it starts with.
+/// </summary>
+internal sealed record WorkItemCreateOptions(
+    int RetryCount,
+    int PriorityWeight,
+    DateTimeOffset? OriginalEnqueuedAt,
+    string? HoldReason,
+    string? HoldText,
+    string? Credential,
+    DateTimeOffset HeldAt)
+{
+    public void ApplyTo(CodingAgent.Infrastructure.Persistence.Entities.WorkItemEntity entity)
+    {
+        entity.RetryCount = RetryCount;
+        entity.PriorityWeight = PriorityWeight;
+        entity.OriginalEnqueuedAt = OriginalEnqueuedAt;
+        entity.Credential = Credential;
+        if (HoldReason is not null)
+        {
+            entity.HoldReason = HoldReason;
+            entity.HoldText = HoldTexts.Cut(HoldText ?? "");
+            entity.HeldAt = HeldAt;
+        }
+    }
+}
+
+/// <summary>
 /// The work-item reads and writes of the queue paths (spec 051 2.3a): enqueue, status, and the
 /// dedup queries. The <c>/api/work-items</c> handlers and the in-process <see cref="ApiWorkDistributor"/>
 /// both go through here, so a request behaves the same over HTTP and in the API process.
@@ -39,7 +66,7 @@ internal sealed class WorkItemStore(
     /// </summary>
     /// <returns>The outcome and the work item's ID.</returns>
     public async Task<(WorkItemCreateOutcome Outcome, Guid WorkItemId)> CreateAsync(
-        JobDistributionRequest request, CancellationToken ct)
+        JobDistributionRequest request, CancellationToken ct, WorkItemCreateOptions? options = null)
     {
         var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
             ? parsedRunId
@@ -58,6 +85,7 @@ internal sealed class WorkItemStore(
             // 2. No route at creation (spec 056 DD1): the dispatcher routes every Pending item.
             request = request with { Route = null, ResolvedProfileId = null, AgentSelector = "" };
             var entity = WorkItemEntityBuilder.BuildWorkItemEntity(request, workItemId);
+            options?.ApplyTo(entity);
 
             // 3. A live item for the same issue and provider (the partial unique index's predicate).
             var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;

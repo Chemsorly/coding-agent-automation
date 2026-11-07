@@ -51,7 +51,8 @@ public static class AgentHubServiceCollectionExtensions
                 sp.GetRequiredService<IChangeNotifier>(),
                 sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
                 sp.GetRequiredService<IFeedbackCommentOutbox>(),
-                Log.Logger)));
+                Log.Logger,
+                sp.GetService<IProviderFailureHandler>())));
 
         services.AddSingleton<IAgentTokenRefreshService>(sp => new AgentTokenRefreshService(
             sp.GetRequiredService<IAgentHubFacade>(),
@@ -65,7 +66,8 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IChangeNotifier>(),
             sp.GetRequiredService<IRunLifecycleManager>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetService<IProviderFailureHandler>()));
 
         // IHubTriageOperations is registered by the host that stores triages (the API); without it the hub
         // refuses triage results.

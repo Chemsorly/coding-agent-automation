@@ -157,6 +157,10 @@ public static partial class RunOutcomeTelemetry
         if (payload?.AnalysisRecommendation == AnalysisGateResult.NotReady)
             return ("needs_refinement", "none");
 
+        // 4a. Spec 056: ended because its credential could not be used, and queued again.
+        if (failureReason == FailureReason.ProviderUnavailable)
+            return ("requeued", "provider_unavailable");
+
         // 5. PR created (non-draft).
         if (!string.IsNullOrEmpty(payload?.PullRequestUrl) && !payload.IsDraftPr)
             return ("pr_created", "none");

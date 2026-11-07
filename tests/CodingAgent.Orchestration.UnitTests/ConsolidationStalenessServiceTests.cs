@@ -36,9 +36,11 @@ public sealed class ConsolidationStalenessServiceTests
         RunFeedback? feedback = null,
         string? issueIdentifier = "test-scope",
         DateTimeOffset? startedAt = null,
-        DateTimeOffset? completedAt = null) => new()
+        DateTimeOffset? completedAt = null,
+        FailureReason? failureCategory = null) => new()
         {
             RunId = Guid.NewGuid().ToString(),
+            FailureCategory = failureCategory,
             IssueIdentifier = new IssueIdentifier(issueIdentifier ?? "test-scope"),
             IssueTitle = "Test Issue",
             FinalStep = finalStep,
@@ -197,6 +199,25 @@ public sealed class ConsolidationStalenessServiceTests
     }
 
     // ── IsPausedAsync ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task IsPaused_WhenTheLatestRunWasRequeuedForAPausedCredential_ShouldIgnoreIt_Spec056()
+    {
+        const string scopeKey = "BrainConsolidation:bp-1";
+        var succeeded = MakeSummary(issueIdentifier: scopeKey, finalStep: PipelineStep.Completed,
+            startedAt: DateTimeOffset.UtcNow.AddMinutes(-20));
+        var requeued = MakeSummary(issueIdentifier: scopeKey, finalStep: PipelineStep.Failed,
+            startedAt: DateTimeOffset.UtcNow.AddMinutes(-5), failureCategory: FailureReason.ProviderUnavailable);
+        _history
+            .Setup(h => h.GetRunHistoryAsync(
+                It.Is<RunHistoryQuery>(q => q.RunType == PipelineRunType.Consolidation),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PageOf([succeeded, requeued]));
+
+        var paused = await CreateSut().IsPausedAsync(scopeKey, CancellationToken.None);
+
+        paused.Should().BeFalse("a requeue for a paused credential does not pause automatic consolidation");
+    }
 
     [Fact]
     public async Task IsPaused_LatestRunFailed_ReturnsTrue()

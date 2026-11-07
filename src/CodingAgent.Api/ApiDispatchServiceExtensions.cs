@@ -95,6 +95,15 @@ public static class ApiDispatchServiceExtensions
             Log.Logger));
         services.AddSingleton<CodingAgent.Api.Dispatch.WorkItemStore>();
         services.AddSingleton<IWorkDistributor, CodingAgent.Api.Dispatch.ApiWorkDistributor>();
+        // Spec 056 DD11: a run that hits its credential's quota is ended, the credential paused, the work queued again.
+        services.AddSingleton<IProviderFailureHandler>(sp => new CodingAgent.Api.Dispatch.ProviderFailureHandler(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<CredentialPauseStore>(),
+            sp.GetRequiredService<IRunLifecycleManager>(),
+            sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemStore>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            Log.Logger));
 
         // ── Browse (spec 051 2.3b) ─────────────────────────────────────────────
         // The pages' provider browsing runs here with the stored credentials.

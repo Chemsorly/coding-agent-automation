@@ -27,6 +27,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private readonly Microsoft.Extensions.Hosting.IHostApplicationLifetime _appLifetime;
     private readonly IFeedbackCommentOutbox _outbox;
     private readonly ILogger _logger;
+    private readonly IProviderFailureHandler? _providerFailures;
 
     private readonly IJobCompletionStrategy _regularStrategy;
     private readonly IJobCompletionStrategy _consolidationStrategy;
@@ -43,6 +44,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         _appLifetime = deps.AppLifetime;
         _outbox = deps.Outbox;
         _logger = deps.Logger;
+        _providerFailures = deps.ProviderFailures;
 
         _regularStrategy = new RegularJobCompletionStrategy(deps.Facade, deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
         _consolidationStrategy = new ConsolidationJobCompletionStrategy(deps.LifecycleManager, deps.ChangeNotifier, deps.Logger);
@@ -204,6 +206,17 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         activity?.SetTag("job_id", jobId.Value);
 
         var run = _facade.GetRun(jobId);
+
+        // Spec 056 DD11: a provider failure is handled first and never falls through — the handler ends the run,
+        // pauses the credential and queues the work again (or does nothing when another path already did).
+        if (payload.ProviderFailure is { } providerFailure && _providerFailures is not null
+            && (agent?.AgentId.Value ?? run?.AgentId) is { Length: > 0 } reporter
+            && Guid.TryParse(jobId.Value, out var workItemId))
+        {
+            await _providerFailures.HandleAsync(workItemId, reporter, providerFailure, ct);
+            _idleTransitioner.TransitionToIdle(agent, run, jobId.Value, "HandleJobCompletedAsync");
+            return;
+        }
 
         // runWasAlive: true if the run existed in memory and was processed normally (or if the run
         // was not found at all — orphan path has its own handling). false only when

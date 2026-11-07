@@ -170,7 +170,8 @@ public class ConsolidationStalenessService
             ct);
 
         var latestRun = result.Items
-            .Where(r => r.IssueIdentifier == scopeKey)
+            // Spec 056: a run ended because its credential was paused is queued again; it neither pauses nor clears.
+            .Where(r => r.IssueIdentifier == scopeKey && r.FailureCategory != FailureReason.ProviderUnavailable)
             .MaxBy(r => r.StartedAtOffset);
 
         return latestRun?.FinalStep == PipelineStep.Failed;
