@@ -117,6 +117,100 @@ public class AgentStallMonitorProviderRetryTests : IDisposable
         VerifyExecuteCalls(Times.Exactly(3));
     }
 
+    // ── Progress between bursts ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ProgressBetweenBursts_ResetsTheCount()
+    {
+        var busy = Busy(AgentErrorCategory.ProviderRateLimit);
+        SetupResults(
+            [.. Enumerable.Repeat(busy, 9),
+             BusyAfterProgress(AgentErrorCategory.ProviderRateLimit),
+             .. Enumerable.Repeat(busy, 9),
+             Success()]);
+
+        var result = await RunAsync(FreshRequest(), CreateConfig());
+
+        result.Success.Should().BeTrue();
+        VerifyExecuteCalls(Times.Exactly(20));
+    }
+
+    [Fact]
+    public async Task AfterAProgressReset_TenMoreBurstsWithoutProgress_EndTheCall()
+    {
+        var busy = Busy(AgentErrorCategory.ProviderRateLimit);
+        var lastBusy = Busy(AgentErrorCategory.ProviderRateLimit);
+        SetupResults(
+            [.. Enumerable.Repeat(busy, AgentStallMonitor.MaxProviderRetries - 1),
+             BusyAfterProgress(AgentErrorCategory.ProviderRateLimit),
+             .. Enumerable.Repeat(busy, AgentStallMonitor.MaxProviderRetries - 1),
+             lastBusy]);
+
+        var result = await RunAsync(FreshRequest(), CreateConfig());
+
+        result.Should().BeSameAs(lastBusy, "the count restarts at 0 after progress, not at a partial value");
+        VerifyExecuteCalls(Times.Exactly(2 * AgentStallMonitor.MaxProviderRetries));
+    }
+
+    [Fact]
+    public async Task TenBurstsWithoutProgress_StillEndTheCall()
+    {
+        var busy = Busy(AgentErrorCategory.ProviderRateLimit);
+        SetupResults([.. Enumerable.Repeat(busy, AgentStallMonitor.MaxProviderRetries + 1)]);
+
+        var result = await RunAsync(FreshRequest(), CreateConfig());
+
+        result.Should().BeSameAs(busy);
+        VerifyExecuteCalls(Times.Exactly(AgentStallMonitor.MaxProviderRetries + 1));
+    }
+
+    [Fact]
+    public async Task ProgressOnTheTenthBurst_StillRetries()
+    {
+        var busy = Busy(AgentErrorCategory.ProviderOverload);
+        SetupResults(
+            [.. Enumerable.Repeat(busy, AgentStallMonitor.MaxProviderRetries),
+             BusyAfterProgress(AgentErrorCategory.ProviderOverload),
+             Success()]);
+
+        var result = await RunAsync(FreshRequest(), CreateConfig());
+
+        result.Success.Should().BeTrue("progress resets the count before the limit is checked");
+        VerifyExecuteCalls(Times.Exactly(AgentStallMonitor.MaxProviderRetries + 2));
+    }
+
+    [Fact]
+    public async Task EveryAttemptMakingProgress_StopsAtThePerCallCap()
+    {
+        var busy = BusyAfterProgress(AgentErrorCategory.ProviderRateLimit);
+        SetupResults([.. Enumerable.Repeat(busy, AgentStallMonitor.MaxProviderRetriesPerCall + 1)]);
+
+        var result = await RunAsync(FreshRequest(), CreateConfig());
+
+        result.Should().BeSameAs(busy);
+        VerifyExecuteCalls(Times.Exactly(AgentStallMonitor.MaxProviderRetriesPerCall + 1));
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(500, 0)]
+    public async Task BusyAttemptWithoutOutputTokens_IsNotProgress(long inputTokens, long outputTokens)
+    {
+        var busy = new AgentResult
+        {
+            ExitCode = 1,
+            OutputLines = ["provider is busy"],
+            ErrorCategory = AgentErrorCategory.ProviderRateLimit,
+            Usage = new TokenUsage { InputTokens = inputTokens, OutputTokens = outputTokens }
+        };
+        SetupResults([.. Enumerable.Repeat(busy, AgentStallMonitor.MaxProviderRetries + 1)]);
+
+        var result = await RunAsync(FreshRequest(), CreateConfig());
+
+        result.Should().BeSameAs(busy);
+        VerifyExecuteCalls(Times.Exactly(AgentStallMonitor.MaxProviderRetries + 1));
+    }
+
     // ── Results that are not retried ───────────────────────────────────────────
 
     [Theory]
@@ -259,6 +353,42 @@ public class AgentStallMonitorProviderRetryTests : IDisposable
     }
 
     [Fact]
+    public async Task OutputLine_ShowsTheConsecutiveCount()
+    {
+        SetupResults(
+            Busy(AgentErrorCategory.ProviderRateLimit),
+            BusyAfterProgress(AgentErrorCategory.ProviderRateLimit),
+            Busy(AgentErrorCategory.ProviderRateLimit),
+            Success());
+        var lines = new ConcurrentQueue<string>();
+
+        await RunAsync(FreshRequest(), CreateConfig(), onOutputLine: lines.Enqueue);
+
+        lines.Should().HaveCount(3);
+        lines.Should().AllSatisfy(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit), retrying in 0 s (", StringComparison.Ordinal));
+        lines.Select(l => l[l.LastIndexOf('(')..]).Should().Equal("(1/10)", "(1/10)", "(2/10)");
+    }
+
+    [Fact]
+    public async Task Retry_LogsTheConsecutiveAndTheTotalCount()
+    {
+        SetupResults(
+            Busy(AgentErrorCategory.ProviderRateLimit),
+            BusyAfterProgress(AgentErrorCategory.ProviderRateLimit),
+            Busy(AgentErrorCategory.ProviderRateLimit),
+            Success());
+        var sink = new LifecycleCaptureSink();
+        using var logger = new Serilog.LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+
+        await RunAsync(FreshRequest(), CreateConfig(), logger: logger);
+
+        var warnings = sink.Events.Where(e => e.MessageTemplate.Text.Contains("model provider busy")).ToList();
+        warnings.Select(w => ScalarValueOf(w, "Attempt")).Should().Equal(1, 1, 2);
+        warnings.Select(w => ScalarValueOf(w, "TotalRetries")).Should().Equal(1, 2, 3);
+        warnings.Should().OnlyContain(w => (int)ScalarValueOf(w, "MaxRetries")! == AgentStallMonitor.MaxProviderRetries);
+    }
+
+    [Fact]
     public async Task Retry_WithoutAnOutputCallback_StillRetries()
     {
         SetupResults(Busy(AgentErrorCategory.ProviderRateLimit), Success());
@@ -371,10 +501,40 @@ public class AgentStallMonitorProviderRetryTests : IDisposable
             .GetTagItem("agent.error_category").Should().Be("ProviderRateLimit");
     }
 
+    [Fact]
+    public async Task ProviderRetryTag_KeepsCountingTheWholeCall_AcrossAProgressReset()
+    {
+        var phase = $"codegen_{_testRunTag}_reset";
+        SetupResults(
+            Busy(AgentErrorCategory.ProviderRateLimit),
+            BusyAfterProgress(AgentErrorCategory.ProviderRateLimit),
+            Busy(AgentErrorCategory.ProviderOverload),
+            Success());
+
+        await RunAsync(FreshRequest(), CreateConfig(), phase: phase);
+
+        _stoppedActivities
+            .Where(a => (string?)a.GetTagItem("pipeline.phase_key") == phase)
+            .Select(a => a.GetTagItem("agent.provider_retry"))
+            .Where(tag => tag is not null)
+            .Select(tag => Convert.ToInt32(tag))
+            .Should().BeEquivalentTo(new[] { 1, 2, 3 });
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private static AgentResult Busy(AgentErrorCategory category) =>
         new() { ExitCode = 1, OutputLines = ["provider is busy"], ErrorCategory = category };
+
+    /// <summary>A busy result of an attempt that did work before the provider turned it down: it produced output tokens.</summary>
+    private static AgentResult BusyAfterProgress(AgentErrorCategory category) =>
+        new()
+        {
+            ExitCode = 1,
+            OutputLines = ["provider is busy"],
+            ErrorCategory = category,
+            Usage = new TokenUsage { OutputTokens = 100 }
+        };
 
     private static AgentResult Success() => new() { ExitCode = 0, OutputLines = [] };
 

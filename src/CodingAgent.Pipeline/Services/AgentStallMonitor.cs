@@ -32,10 +32,16 @@ internal sealed record AgentMonitorContext(
 internal static class AgentStallMonitor
 {
     /// <summary>
-    /// How many times a call is sent again after the model provider answered with a rate limit or an
-    /// overload. When they are used up, the last result is returned as it is.
+    /// How many times in a row a call is sent again after the model provider answered with a rate limit or an
+    /// overload, counting only attempts that made no progress. When they are used up, the last result is
+    /// returned as it is.
     /// </summary>
     internal const int MaxProviderRetries = 10;
+
+    /// <summary>
+    /// Upper bound on retries of one call, also when attempts in between made progress.
+    /// </summary>
+    internal const int MaxProviderRetriesPerCall = 30;
 
     /// <summary>
     /// Put in front of the prompt of a retried call that continues a session, so the agent knows its
@@ -79,13 +85,25 @@ internal static class AgentStallMonitor
     {
         timeProvider ??= TimeProvider.System;
         var attemptRequest = request;
-        for (var retry = 0; ; retry++)
+        var consecutive = 0; // retries since the last attempt that made progress
+        var total = 0; // all retries of this call
+        while (true)
         {
             var result = await ExecuteMonitoredCallAsync(
-                monitor, attemptRequest, ct, onOutputLine, reportStallEvent, timeProvider, phase, retry);
+                monitor, attemptRequest, ct, onOutputLine, reportStallEvent, timeProvider, phase, total);
 
-            if (retry == MaxProviderRetries || !IsProviderBusy(result))
+            if (!IsProviderBusy(result))
                 return result;
+
+            // An attempt that produced output tokens moved the call forward, so the count starts again.
+            if (result.Usage?.OutputTokens > 0)
+                consecutive = 0;
+
+            if (consecutive == MaxProviderRetries || total == MaxProviderRetriesPerCall)
+                return result;
+
+            consecutive++;
+            total++;
 
             // TODO [WARNING] Tokens, cost, tool calls and usage details of every discarded busy attempt never reach the
             // run totals: callers call run.AccumulateTokenUsage only on the result returned here, while AccumulateAgentSession
@@ -94,14 +112,13 @@ internal static class AgentStallMonitor
             // decision: thread-safe accumulation, or folding the discarded usage into the returned result.
 
             // The wait is outside every monitored call: no stall monitor runs while the provider recovers.
-            var attempt = retry + 1;
             var delay = monitor.Config.TransientRetryDelay;
             var delaySeconds = (int)delay.TotalSeconds;
             monitor.Logger.Warning(
-                "Pipeline {RunId} {Phase}: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s",
-                monitor.Run.RunId, monitor.PhaseDescription, result.ErrorCategory, attempt, MaxProviderRetries, delaySeconds);
+                "Pipeline {RunId} {Phase}: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s ({TotalRetries} in this call)",
+                monitor.Run.RunId, monitor.PhaseDescription, result.ErrorCategory, consecutive, MaxProviderRetries, delaySeconds, total);
             onOutputLine?.Invoke(
-                $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {delaySeconds} s ({attempt}/{MaxProviderRetries})");
+                $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {delaySeconds} s ({consecutive}/{MaxProviderRetries})");
 
             await Task.Delay(delay, timeProvider, ct);
             attemptRequest = BuildProviderRetryRequest(request);
