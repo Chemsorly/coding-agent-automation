@@ -21,12 +21,14 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    // A rate limit or overload is sent again by the agent call itself (AgentStallMonitor) before the phase sees it;
+    // credentials and configuration problems cannot recover, so they are sent once.
     [Theory]
-    [InlineData(AgentErrorCategory.ProviderRateLimit)]
-    [InlineData(AgentErrorCategory.ProviderOverload)]
-    [InlineData(AgentErrorCategory.PermanentAuthFailure)]
-    [InlineData(AgentErrorCategory.ProviderMisconfigured)]
-    public async Task ProviderOutageDuringAnalysis_FailsAsInfrastructure_WithoutRetryingOrLabellingTheIssue(AgentErrorCategory category)
+    [InlineData(AgentErrorCategory.ProviderRateLimit, AgentStallMonitor.MaxProviderRetries + 1)]
+    [InlineData(AgentErrorCategory.ProviderOverload, AgentStallMonitor.MaxProviderRetries + 1)]
+    [InlineData(AgentErrorCategory.PermanentAuthFailure, 1)]
+    [InlineData(AgentErrorCategory.ProviderMisconfigured, 1)]
+    public async Task ProviderOutageDuringAnalysis_FailsAsInfrastructure_WithoutLabellingTheIssue(AgentErrorCategory category, int expectedAgentCalls)
     {
         var agent = new Mock<IAgentProvider>();
         var issueOps = new Mock<IAgentIssueOperations>();
@@ -54,7 +56,8 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
                 StallPollInterval = TimeSpan.FromMilliseconds(50),
                 StallWarningInterval = TimeSpan.FromHours(1),
                 MaxAnalysisRetries = 2,
-                AnalysisReviewEnabled = false
+                AnalysisReviewEnabled = false,
+                TransientRetryDelay = TimeSpan.Zero
             },
             AgentProvider = agent.Object,
             IssueOps = issueOps.Object,
@@ -71,8 +74,8 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
         run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
         run.FailureReason.Should().EndWith(": provider said no", "the operator needs the provider's own reason");
         issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Never);
-        agent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once,
-            "retrying at once cannot help while the provider is unavailable");
+        agent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(expectedAgentCalls),
+            "the analysis phase never retries a provider failure; only the agent call retries a rate limit or overload");
         callbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
     }
 

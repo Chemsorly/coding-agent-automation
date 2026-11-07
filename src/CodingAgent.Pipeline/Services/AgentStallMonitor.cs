@@ -32,7 +32,22 @@ internal sealed record AgentMonitorContext(
 internal static class AgentStallMonitor
 {
     /// <summary>
+    /// How many times a call is sent again after the model provider answered with a rate limit or an
+    /// overload. When they are used up, the last result is returned as it is.
+    /// </summary>
+    internal const int MaxProviderRetries = 10;
+
+    /// <summary>
+    /// Put in front of the prompt of a retried call that continues a session, so the agent knows its
+    /// previous turn ended with a provider error and carries on instead of starting over.
+    /// </summary>
+    internal const string ProviderRetryNote = "Your previous turn on this task was cut off by a model-provider error (rate limit or overload). Your work so far is in this conversation and in the workspace: continue from where you stopped instead of starting over.\n\n";
+
+    /// <summary>
     /// Executes an agent request with background stall monitoring and per-session span.
+    /// A result that failed with a provider rate limit or overload is sent again after
+    /// <see cref="PipelineConfiguration.TransientRetryDelay"/>, up to <see cref="MaxProviderRetries"/> times in a row;
+    /// each attempt is a full monitored call with its own span and stall monitoring.
     /// </summary>
     /// <param name="monitor">The agent, run, configuration, phase description and stall sinks to monitor with.</param>
     /// <param name="request">The agent request to execute.</param>
@@ -62,9 +77,54 @@ internal static class AgentStallMonitor
         TimeProvider? timeProvider = null,
         string? phase = null)
     {
+        timeProvider ??= TimeProvider.System;
+        var attemptRequest = request;
+        for (var retry = 0; ; retry++)
+        {
+            var result = await ExecuteMonitoredCallAsync(
+                monitor, attemptRequest, ct, onOutputLine, reportStallEvent, timeProvider, phase, retry);
+
+            if (retry == MaxProviderRetries || !IsProviderBusy(result))
+                return result;
+
+            // TODO [WARNING] Tokens, cost, tool calls and usage details of every discarded busy attempt never reach the
+            // run totals: callers call run.AccumulateTokenUsage only on the result returned here, while AccumulateAgentSession
+            // still counts each attempt, so SessionCount and the PR cost text disagree (the span still carries the usage).
+            // Accumulating here would race with parallel review agents, which merge their usage serially, so the fix needs a
+            // decision: thread-safe accumulation, or folding the discarded usage into the returned result.
+
+            // The wait is outside every monitored call: no stall monitor runs while the provider recovers.
+            var attempt = retry + 1;
+            var delay = monitor.Config.TransientRetryDelay;
+            var delaySeconds = (int)delay.TotalSeconds;
+            monitor.Logger.Warning(
+                "Pipeline {RunId} {Phase}: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s",
+                monitor.Run.RunId, monitor.PhaseDescription, result.ErrorCategory, attempt, MaxProviderRetries, delaySeconds);
+            onOutputLine?.Invoke(
+                $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {delaySeconds} s ({attempt}/{MaxProviderRetries})");
+
+            await Task.Delay(delay, timeProvider, ct);
+            attemptRequest = BuildProviderRetryRequest(request);
+        }
+    }
+
+    /// <summary>
+    /// One monitored agent call: its own session span, its own stall monitor and its own entry in the
+    /// run's phase breakdown. <paramref name="providerRetry"/> is 0 for the first attempt and the retry
+    /// number (1 for the first retry) for a call sent again after a provider rate limit or overload.
+    /// </summary>
+    private static async Task<AgentResult> ExecuteMonitoredCallAsync(
+        AgentMonitorContext monitor,
+        AgentRequest request,
+        CancellationToken ct,
+        Action<string>? onOutputLine,
+        Action<string, string>? reportStallEvent,
+        TimeProvider timeProvider,
+        string? phase,
+        int providerRetry)
+    {
         var agentProvider = monitor.AgentProvider;
         var run = monitor.Run;
-        timeProvider ??= TimeProvider.System;
         var startTime = timeProvider.GetUtcNow();
         var providerName = GetProviderName(agentProvider);
         var phaseTag = phase is not null
@@ -87,6 +147,8 @@ internal static class AgentStallMonitor
             sessionSpan.SetTag("agent.session.resumed", request.UseResume || request.ResumeSessionId is not null);
             if (model is not null)
                 sessionSpan.SetTag("gen_ai.request.model", model);
+            if (providerRetry > 0)
+                sessionSpan.SetTag("agent.provider_retry", providerRetry);
         }
 
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -126,6 +188,33 @@ internal static class AgentStallMonitor
 
         return result;
     }
+
+    /// <summary>
+    /// True when the call failed because the model provider rate-limited or overloaded it: short-lived
+    /// by definition, unlike a used-up quota or rejected credentials. A null result (an agent that
+    /// reported nothing) is not a provider failure.
+    /// </summary>
+    private static bool IsProviderBusy(AgentResult result) =>
+        result is { Success: false, ErrorCategory: AgentErrorCategory.ProviderRateLimit or AgentErrorCategory.ProviderOverload };
+
+    /// <summary>
+    /// Copies <paramref name="original"/> for a retry. A request that continues a session gets
+    /// <see cref="ProviderRetryNote"/> in front of the original prompt; a fresh one is sent as it was.
+    /// Always built from the original, so the note is never added twice.
+    /// </summary>
+    private static AgentRequest BuildProviderRetryRequest(AgentRequest original) => new()
+    {
+        Prompt = original.UseResume || original.ResumeSessionId is not null
+            ? ProviderRetryNote + original.Prompt
+            : original.Prompt,
+        WorkspacePath = original.WorkspacePath,
+        Timeout = original.Timeout,
+        UseResume = original.UseResume,
+        ResumeSessionId = original.ResumeSessionId,
+        ImagePaths = original.ImagePaths,
+        EnvironmentVariables = original.EnvironmentVariables,
+        EffortOverride = original.EffortOverride
+    };
 
     /// <summary>
     /// Sets the exit code, token usage, cost and provider-reported usage details on the session span.
