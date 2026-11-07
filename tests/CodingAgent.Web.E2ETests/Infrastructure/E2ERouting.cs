@@ -24,6 +24,16 @@ internal static class E2ERouting
         await fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(profile.Id, model, effort));
     }
 
+    /// <summary>
+    /// Spec 056: dispatch routes every Pending item, so a test that dispatches a row it inserted routes the row's job
+    /// template: one profile per template (a stable Id), and the global default route to it.
+    /// </summary>
+    public static Task SeedRoutedTemplateAsync(this E2EFixture fixture, string jobTemplate)
+    {
+        var id = new Guid(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(jobTemplate)));
+        return fixture.SeedRoutedProfileAsync(AgentRoutingTestData.Profile(id.ToString(), jobTemplate, $"E2E {jobTemplate}"));
+    }
+
     /// <summary>Replaces the global routing table.</summary>
     public static Task SeedRoutingAsync(this E2EFixture fixture, AgentRouting routing) =>
         AgentRoutingTestData.SeedRoutingAsync(fixture.DbContextFactory, routing);

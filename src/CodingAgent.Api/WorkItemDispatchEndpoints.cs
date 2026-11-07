@@ -55,10 +55,9 @@ public static class WorkItemDispatchEndpoints
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
     /// <para>
-    /// The API routes the request here (spec 053 DD1): the caller sends the task type and the repository, and
-    /// <see cref="WorkItemRouter"/> pins the profile, model and effort. When no route resolves, or the route cannot
-    /// run (for consolidation: its job template is missing, #3642), the request is refused with 422 and a
-    /// ProblemDetails <c>detail</c> that names the reason, before any row or in-memory run exists (DD2).
+    /// Spec 056 DD1: creation never routes and never refuses for routing. The caller sends the task type and the
+    /// repository; <see cref="DispatchRouter"/> resolves the route when the item is dispatched and holds it, with the
+    /// reason, when it cannot start.
     /// </para>
     /// <para>
     /// Only identity fields are serialized to <c>WorkItems.Payload</c> (issue #2171).
@@ -72,12 +71,9 @@ public static class WorkItemDispatchEndpoints
         WorkItemStore store,
         CancellationToken ct = default)
     {
-        var (outcome, workItemId, reason) = await store.CreateAsync(request, ct);
+        var (outcome, workItemId) = await store.CreateAsync(request, ct);
         return outcome switch
         {
-            // 422 Unprocessable Entity — a permanent configuration error, distinct from 409 (a live run already exists).
-            WorkItemCreateOutcome.Refused => TypedResults.Problem(
-                detail: reason, statusCode: StatusCodes.Status422UnprocessableEntity, title: "Work item refused"),
             WorkItemCreateOutcome.LiveItemExists => DispatchWorkItemService.HandleUniqueViolationFallback(),
             _ => TypedResults.Created($"/api/work-items/{workItemId}", workItemId),
         };
@@ -92,23 +88,21 @@ public static class WorkItemDispatchEndpoints
     /// <c>Pending</c> via <c>POST /api/work-items</c> and then dispatches them via this endpoint.
     ///
     /// <para>
-    /// Runs the count → limit checks → PVC gate → CAS → Job creation inside the agent start gate (spec 057): one
-    /// Postgres advisory lock, <c>dispatch-agents</c>, that every agent start takes, chats included, so two starts
-    /// cannot both pass a limit that only one of them may pass.
+    /// Spec 056 D14: the route, the job template and the credential are resolved first, outside the lock; a held item
+    /// never takes it. Then the count → limit checks → PVC gate → CAS → Job creation run inside the agent start gate
+    /// (spec 057): one Postgres advisory lock, <c>dispatch-agents</c>, that every agent start takes, chats included,
+    /// so two starts cannot both pass a limit that only one of them may pass.
     /// </para>
     ///
     /// Returns:
     /// <list type="bullet">
     ///   <item>200 <c>{ "dispatched": true, "reason": "none" }</c> — dispatch succeeded (K8s Job running, WorkItem=Dispatched)</item>
-    ///   <item>200 <c>{ "dispatched": false, "reason": "not_pending" | "no_template" | "concurrency_limit" }</c>
-    ///     — expected backpressure outcome; Scheduler stops this selector for the cycle</item>
-    ///   <item>200 <c>{ "dispatched": false, "reason": "global_concurrency_limit" }</c> — the limit for all agents is
-    ///     reached; the Scheduler ends its cycle</item>
-    ///   <item>200 <c>{ "dispatched": false, "reason": "no_route" }</c> — an item stored without a selector (spec 053
-    ///     rollout) whose route is refused; it is failed with the reason</item>
+    ///   <item>200 <c>{ "dispatched": false, "reason", "holdText", "templateKey", "credential" }</c> — the item is held
+    ///     (spec 056) and stays Pending with the hold recorded; the Scheduler stops the template
+    ///     (<c>concurrency_limit</c>, <c>pvc_unavailable</c>) or the credential (<c>credential_paused</c>) for the cycle,
+    ///     or ends the cycle (<c>global_concurrency_limit</c>); <c>not_pending</c> when the item moved on</item>
     ///   <item>404 Not Found — no WorkItem with this ID</item>
-    ///   <item>503 Service Unavailable — no PVC available, lock timeout, running agents not countable, or K8s Job
-    ///     creation failed</item>
+    ///   <item>503 Service Unavailable — lock timeout, running agents not countable, or K8s Job creation failed</item>
     /// </list>
     /// </summary>
     internal static async Task<IResult> DispatchPendingWorkItem(
@@ -116,14 +110,14 @@ public static class WorkItemDispatchEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
         DispatchWorkItemService dispatchService,
-        RolloutRouting rollout,
+        DispatchRouter router,
         CancellationToken ct = default)
     {
         // Delegate entirely to the service method which owns the full dispatch lifecycle
         // (fast-path check, agent start gate and its limits, PVC gate, K8s Job creation,
         // result interpretation, and telemetry). The static endpoint exists as the ASP.NET
         // Core minimal-API handler that the DI container resolves parameters for.
-        return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, rollout, ct);
+        return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, router, ct);
     }
 
     /// <summary>

@@ -136,6 +136,12 @@ public sealed record TriageDetail
     /// <summary>The running attempt's WorkItem (and run) id, or null.</summary>
     public string? ActiveWorkItemId { get; init; }
 
+    /// <summary>
+    /// Spec 056 DD12: why the attempt just started waits (its route cannot run now, or its credential is paused); null
+    /// when it would start, and on reads.
+    /// </summary>
+    public string? WaitText { get; init; }
+
     /// <summary>Run facts per attempt WorkItem id, for the attempts whose run record still exists.</summary>
     public IReadOnlyDictionary<string, TriageAttemptRunInfo> AttemptRuns { get; init; } =
         new Dictionary<string, TriageAttemptRunInfo>();

@@ -1,6 +1,7 @@
 using CodingAgent.Contracts.Ui;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 
@@ -16,7 +17,9 @@ internal sealed class AgentCapacityReader(
     JobTemplateStore templates,
     DispatchServiceOptions options,
     AgentCapacityStore capacity,
-    Serilog.ILogger log)
+    Serilog.ILogger log,
+    IAgentProfileStore? profiles = null,
+    CredentialPauseStore? pauses = null)
 {
     private sealed record Snapshot(
         AgentCapacityLimits Ui,
@@ -29,6 +32,7 @@ internal sealed class AgentCapacityReader(
     public async Task<UiAgentCapacityPage> ReadPageAsync(CancellationToken ct)
     {
         var s = await ReadAsync(ct);
+        var pausedByKey = await PausedTextByTemplateAsync(s.ToolsByKey, ct);
         var all = new UiAgentCapacityRow(
             null, "", Runs(s.Counts.ByTemplate.Values, s.Counts.UnknownTemplate.Runs, r => r.Runs),
             Runs(s.Counts.ByTemplate.Values, s.Counts.UnknownTemplate.Chats, r => r.Chats),
@@ -42,7 +46,7 @@ internal sealed class AgentCapacityReader(
             var (runs, chats) = s.Counts.ByTemplate.GetValueOrDefault(key);
             var (value, source) = Effective(helm, ui);
             var tool = AgentToolCatalog.Find(s.ToolsByKey.GetValueOrDefault(key))?.Id ?? "";
-            return new UiAgentCapacityRow(key, tool, runs, chats, helm, ui, value, source);
+            return new UiAgentCapacityRow(key, tool, runs, chats, helm, ui, value, source, pausedByKey.GetValueOrDefault(key));
         }).ToList();
         return new UiAgentCapacityPage(all, rows, s.Counts.UnknownTemplate.Runs, s.Counts.UnknownTemplate.Chats, s.CountsAvailable);
     }
@@ -74,6 +78,30 @@ internal sealed class AgentCapacityReader(
                 helmByKey.Keys.ToDictionary(k => k, _ => (0, 0), StringComparer.Ordinal), (0, 0), 0);
             return new Snapshot(ui, toolsByKey, helmByKey, empty, CountsAvailable: false);
         }
+    }
+
+    /// <summary>
+    /// Spec 056 req 4.6: per job template, the pause text of the credentials its profiles use that are paused (a Claude
+    /// template can carry both Claude credentials). Empty when no store is wired or nothing is paused.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> PausedTextByTemplateAsync(
+        IReadOnlyDictionary<string, string> toolsByKey, CancellationToken ct)
+    {
+        if (profiles is null || pauses is null)
+            return new Dictionary<string, string>();
+        var active = (await pauses.LoadAllAsync(ct)).ToDictionary(p => p.Credential, StringComparer.Ordinal);
+        if (active.Count == 0)
+            return new Dictionary<string, string>();
+
+        return (await profiles.LoadAgentProfilesAsync(ct))
+            .Select(p => (Key: JobTemplateStore.NormalizeLabels(p.JobTemplateKey()), Credential: AgentCredentials.For(p, toolsByKey)))
+            .Where(x => x.Credential is not null && active.ContainsKey(x.Credential))
+            .GroupBy(x => x.Key, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g => string.Join("; ", g.Select(x => x.Credential!).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
+                    .Select(c => HoldTexts.CredentialPaused(active[c]))),
+                StringComparer.Ordinal);
     }
 
     private static int Runs(IEnumerable<(int Runs, int Chats)> rows, int unknown, Func<(int Runs, int Chats), int> pick) =>

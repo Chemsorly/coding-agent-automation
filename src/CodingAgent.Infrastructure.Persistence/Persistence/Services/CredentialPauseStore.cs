@@ -184,7 +184,7 @@ public sealed class CredentialPauseStore
     /// so they regain their place in the queue.
     /// </summary>
     private static Task ClearHoldsAsync(PipelineDbContext db, string credential, CancellationToken ct) =>
-        Task.CompletedTask;
+        PendingHoldResets.ClearCredentialHoldsAsync(db, credential, ct);
 
     private static AgentCredentialPause? Deserialize(string? json)
     {

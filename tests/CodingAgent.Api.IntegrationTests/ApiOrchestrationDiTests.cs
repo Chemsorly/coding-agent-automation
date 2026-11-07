@@ -143,8 +143,8 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         sp.GetRequiredService<ConsolidationTemplateResolver>().Should().NotBeNull();
         sp.GetRequiredService<AssignmentEnricher>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchLifecycleService>().Should().NotBeNull();
-        sp.GetRequiredService<CodingAgent.Api.Dispatch.WorkItemRouter>().Should().NotBeNull();
-        sp.GetRequiredService<CodingAgent.Api.Dispatch.RolloutRouting>().Should().NotBeNull();
+        sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>().Should().NotBeNull();
+        sp.GetRequiredService<CodingAgent.Infrastructure.Persistence.Services.CredentialPauseStore>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Infrastructure.Persistence.Services.AgentRoutingStore>().Should().NotBeNull();
         sp.GetRequiredService<CodingAgent.Api.Dispatch.DispatchWorkItemService>().Should().NotBeNull();
 

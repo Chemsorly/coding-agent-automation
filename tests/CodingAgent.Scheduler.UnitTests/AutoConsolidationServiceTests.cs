@@ -457,11 +457,10 @@ public sealed class AutoConsolidationServiceTests
     // ── WorkItemRefusedException handler ──────────────────────────────────
 
     [Fact]
-    public async Task RunOnce_TriggerThrowsWorkItemRefusedException_DoesNotPropagateAndLogsWarning()
+    public async Task RunOnce_TriggerThrowsWorkItemRefusedException_IsCaughtPerScope_AndLogged()
     {
-        // Exercises the catch (WorkItemRefusedException ex) block in TryTriggerIfThresholdReachedAsync
-        // (L268–L275). When the API refuses a run (no agent route, or one that cannot run), the
-        // exception must be absorbed and a warning logged — the loop must NOT exit.
+        // Spec 056 DD1: the API no longer refuses for routing; only an API of the previous release can (rollout window).
+        // The per-scope catch absorbs it and logs a warning — the loop must NOT exit.
         _staleness.Setup(s => s.CountBrainRunsSinceLastConsolidationAsync("bp-auto-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(5); // meets the threshold of 5
 
@@ -478,14 +477,11 @@ public sealed class AutoConsolidationServiceTests
         // Must complete without throwing
         await sut.RunOnceAsync(CancellationToken.None);
 
-        // A warning with the refusal reason must have been logged.
-        // Production call: _logger.Warning(ex, "...{Type}...{Scope}...{RefusalText}", type, scopeKey, ex.Message)
-        // resolves to Warning<ConsolidationRunType, string, string>(Exception, string, T0, T1, T2).
+        // Production call: _logger.Warning(ex, "Auto consolidation: error checking {Type} for {Scope}", type, scopeKey).
         _logger.Verify(l => l.Warning(
-                It.IsAny<Exception>(),
+                It.IsAny<WorkItemRefusedException>(),
                 It.IsAny<string>(),
                 It.IsAny<ConsolidationRunType>(),
-                It.IsAny<string>(),
                 It.IsAny<string>()),
             Times.Once);
     }

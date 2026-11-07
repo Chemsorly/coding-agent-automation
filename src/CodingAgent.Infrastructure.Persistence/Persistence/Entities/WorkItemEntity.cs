@@ -92,4 +92,22 @@ public class WorkItemEntity
     /// Allowed range: 0–1000.
     /// </summary>
     public int PriorityWeight { get; set; }
+
+    /// <summary>
+    /// Spec 056 D15, DD7: why dispatch last did not start this Pending item (<c>HoldReasons</c>); null when it was never
+    /// held or was dispatched. Written only when the reason or the text changes.
+    /// </summary>
+    public string? HoldReason { get; set; }
+
+    /// <summary>The text of <see cref="HoldReason"/> as the Work page shows it (at most 500 characters).</summary>
+    public string? HoldText { get; set; }
+
+    /// <summary>When <see cref="HoldReason"/> first appeared; kept while the same reason repeats.</summary>
+    public DateTimeOffset? HeldAt { get; set; }
+
+    /// <summary>
+    /// Spec 056 DD7: the credential (<c>AgentCredentials</c>) of the item's last route resolution; null before it. The
+    /// Scheduler's loop skips items of a credential it stopped for the cycle.
+    /// </summary>
+    public string? Credential { get; set; }
 }

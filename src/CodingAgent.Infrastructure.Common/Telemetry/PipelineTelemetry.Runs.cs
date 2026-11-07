@@ -312,7 +312,7 @@ public static partial class PipelineTelemetry
         // ── Routing and dispatch ─────────────────────────────────────────────────
         RoutingRefusals = Meter.CreateCounter<long>(
             "pipeline.routing.refusals", "{refusal}",
-            "Agent routing refusals by task type, stage (create, dispatch, claim) and reason");
+            "Agent routing refusals by task type, stage (claim) and reason");
         ConsolidationDispatchPermanentFailures = Meter.CreateCounter<long>(
             "consolidation.dispatch.permanent_failures", UnitFailure,
             "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");

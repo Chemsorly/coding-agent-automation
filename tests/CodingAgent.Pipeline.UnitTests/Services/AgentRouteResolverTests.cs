@@ -134,15 +134,15 @@ public class AgentRouteResolverTests
     }
 
     [Fact]
-    public void Resolve_RepositoryRowNamingADisabledProfile_IsRefused_AndDoesNotFallThroughToTheDefault()
+    // Spec 056 req 1.4: the profile flag Enabled no longer affects routing; a route to such a profile resolves.
+    public void Resolve_RepositoryRowNamingAProfileFlaggedDisabled_Resolves()
     {
         var template = Template((WorkItemTaskType.Implementation, AgentRoutingTestData.Route("profile-off", "auto", "auto")));
 
         var result = AgentRouteResolver.Resolve(WorkItemTaskType.Implementation, template, Routing(), Profiles, Tools);
 
-        result.RefusalReason.Should().Be(AgentRouteRefusalReason.ProfileUnavailable);
-        result.RefusalText.Should().Be(
-            "The repository route for Implementation names agent profile 'Retired', which does not exist or is disabled");
+        result.IsRefused.Should().BeFalse();
+        result.Profile!.Id.Should().Be("profile-off");
     }
 
     [Fact]
@@ -154,18 +154,18 @@ public class AgentRouteResolverTests
 
         result.RefusalReason.Should().Be(AgentRouteRefusalReason.ProfileUnavailable);
         result.RefusalText.Should().Be(
-            "The global route for PR review names agent profile 'deleted-id', which does not exist or is disabled");
+            "The global route for PR review names agent profile 'deleted-id', which does not exist");
     }
 
     [Fact]
-    public void Resolve_DefaultNamingADisabledProfile_IsRefused()
+    public void Resolve_DefaultNamingAMissingProfile_IsRefused()
     {
-        var routing = AgentRoutingTestData.Routing("profile-off");
+        var routing = AgentRoutingTestData.Routing("gone");
 
         var result = AgentRouteResolver.Resolve(WorkItemTaskType.Triage, null, routing, Profiles, Tools);
 
         result.RefusalText.Should().Be(
-            "The global default route for Triage names agent profile 'Retired', which does not exist or is disabled");
+            "The global default route for Triage names agent profile 'gone', which does not exist");
     }
 
     [Theory]

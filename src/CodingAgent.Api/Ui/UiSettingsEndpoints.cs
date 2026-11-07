@@ -1,10 +1,12 @@
 using CodingAgent.Contracts.Ui;
+using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.Ui;
 
@@ -111,13 +113,14 @@ internal static class UiSettingsEndpoints
     /// </summary>
     internal static async Task<IResult> SaveAgentRouting(
         [FromBody] AgentRouting? routing, AgentRoutingStore store, IAgentProfileStore profiles, JobTemplateStore templates,
-        CancellationToken ct)
+        IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
     {
         var errors = AgentRouteValidator.ValidateRouting(routing, await profiles.LoadAgentProfilesAsync(ct), templates.ToolsByKey());
         if (errors.Count > 0)
             return TypedResults.BadRequest(string.Join("\n", errors));
 
         await store.SaveAsync(routing!, ct);
+        await ClearOperatorHoldsAsync(dbFactory, ct);
         return TypedResults.Ok();
     }
 
@@ -243,7 +246,8 @@ internal static class UiSettingsEndpoints
     /// </summary>
     internal static async Task<IResult> SaveTemplate(
         string projectId, [FromBody] PipelineJobTemplate template, IUserAccess access, IProjectStore store,
-        IAgentProfileStore profiles, JobTemplateStore jobTemplates, CancellationToken ct)
+        IAgentProfileStore profiles, JobTemplateStore jobTemplates, IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
     {
         access.DemandAdminister(projectId);
         if (!access.IsGlobalAdmin)
@@ -254,7 +258,30 @@ internal static class UiSettingsEndpoints
             template = ProjectAdminEdits.Apply(stored, template);
         }
 
-        return await ConfigEndpoints.SaveTemplate(projectId, template, store, profiles, jobTemplates, ct);
+        var result = await ConfigEndpoints.SaveTemplate(projectId, template, store, profiles, jobTemplates, ct);
+        if (result is IStatusCodeHttpResult { StatusCode: >= 200 and < 300 })
+            await ClearOperatorHoldsAsync(dbFactory, ct);
+        return result;
+    }
+
+    /// <summary>
+    /// Spec 056 DD7, req 3.8: a saved routing table (global, or a repository's rows on its template) applies to queued work
+    /// at its next dispatch; held items lose their operator hold so they regain their place in the queue. Best effort: a
+    /// failure leaves the holds, which the next dispatch attempt replaces.
+    /// </summary>
+    private static async Task ClearOperatorHoldsAsync(IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
+            var cleared = await PendingHoldResets.ClearOperatorHoldsAsync(db, ct);
+            if (cleared > 0)
+                Serilog.Log.Information("Routing saved: cleared the holds of {HeldItems} waiting work items", cleared);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Serilog.Log.Warning(ex, "Routing saved, but the holds of waiting work items could not be cleared");
+        }
     }
 
     /// <summary>GET /api/ui/settings/first-run — what the first-run banner needs.</summary>

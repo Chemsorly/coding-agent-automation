@@ -57,12 +57,26 @@ public static class WorkItemQueryEndpoints
     // DI/route/query — no IConfiguration argument is passed explicitly and none will leak. Confirmed
     // correct: the registration site does not pass IConfiguration positionally. If IConfiguration
     // is ever re-added here, verify the registration site matches.
-    internal static async Task<IResult> GetPendingWorkItems(
+    internal static Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
         IPipelineConfigStore configStore,
         int maxResults = 50,
         string? projectId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        QueryPendingWorkItemsAsync(dbFactory, configStore, maxResults, projectId, derive: null, ct);
+
+    /// <summary>
+    /// The pending query of <see cref="GetPendingWorkItems"/>. With <paramref name="derive"/> (the Work page), an item
+    /// without a stored hold gets a derived hold text (spec 056 DD7): its credential is paused, the limit for all agents
+    /// is reached, or its job template is at its limit. A stored hold wins.
+    /// </summary>
+    internal static async Task<IResult> QueryPendingWorkItemsAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IPipelineConfigStore configStore,
+        int maxResults,
+        string? projectId,
+        PendingHoldSources? derive,
+        CancellationToken ct)
     {
         // PostgreSQL refuses a negative LIMIT (500); EF InMemory hides it, so T9 cannot see it.
         if (maxResults < 1)
@@ -102,7 +116,11 @@ public static class WorkItemQueryEndpoints
                 w.ProjectId,
                 w.TimeoutSeconds,
                 w.PriorityWeight,
-                w.TraceParent
+                w.TraceParent,
+                w.HoldReason,
+                w.HoldText,
+                w.HeldAt,
+                w.Credential
             })
             .ToListAsync(ct);
 
@@ -128,9 +146,16 @@ public static class WorkItemQueryEndpoints
                 InitiatedBy = req?.InitiatedBy,
                 ProjectName = req?.ProjectName,
                 ProjectId = w.ProjectId,
-                TraceParent = w.TraceParent
+                TraceParent = w.TraceParent,
+                HoldReason = w.HoldReason,
+                HoldText = w.HoldText,
+                HeldAt = w.HeldAt,
+                Credential = w.Credential
             };
         }).ToList();
+
+        if (derive is not null && items.Any(i => i.HoldReason is null))
+            items = await PendingHoldTexts.DeriveAsync(items, derive, ct);
 
         return TypedResults.Ok((IReadOnlyList<PendingWorkItemDto>)items);
     }

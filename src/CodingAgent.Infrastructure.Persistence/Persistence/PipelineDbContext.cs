@@ -46,6 +46,8 @@ public class PipelineDbContext : DbContext
                 .IsUnique();
             e.Property(w => w.Payload).HasColumnType(JsonbColumnType);
             e.Property(w => w.Result).HasColumnType(JsonbColumnType);
+            // Spec 056 DD7: the hold record of a Pending item.
+            e.Property(w => w.HoldText).HasMaxLength(500);
             // Partial index for the per-project retention sweep (DatabaseMaintenanceService).
             // The sweep partitions by ProjectId and orders by CompletedAt DESC — without this index
             // the ROW_NUMBER() window function performs a full sequential scan on every sweep cycle.

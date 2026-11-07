@@ -96,11 +96,12 @@ public static partial class PipelineTelemetry
 
     // ── Nested tag classes ───────────────────────────────────────────────────────
 
-    /// <summary>Where a route was refused: the <c>stage</c> tag of <see cref="RoutingRefusals"/>.</summary>
+    /// <summary>
+    /// Where a route was refused: the <c>stage</c> tag of <see cref="RoutingRefusals"/>. Spec 056 req 7.2: only the claim
+    /// refuses; a route that does not resolve at dispatch holds the item and is not counted here.
+    /// </summary>
     public static class RoutingStages
     {
-        public const string Create = "create";
-        public const string Dispatch = "dispatch";
         public const string Claim = "claim";
     }
 

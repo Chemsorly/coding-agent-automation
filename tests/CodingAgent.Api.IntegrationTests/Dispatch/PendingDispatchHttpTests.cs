@@ -123,8 +123,10 @@ public sealed class PendingDispatchHttpTests
 
         await using var db = _factory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking().SingleAsync(w => w.Id == id);
-        item.Status.Should().Be(WorkItemStatus.Failed);
-        item.ErrorMessage.Should().Be(AgentRouteRefusalReason.NoRouteText);
+        // Spec 056 DD2: an item no route resolves for is held, not failed.
+        item.Status.Should().Be(WorkItemStatus.Pending);
+        item.HoldReason.Should().Be("no_route");
+        item.HoldText.Should().NotBeNullOrEmpty();
     }
 
     // ── AC2: Non-existent ID → 404 ────────────────────────────────────────────

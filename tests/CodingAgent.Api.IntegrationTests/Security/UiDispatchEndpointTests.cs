@@ -144,7 +144,8 @@ public sealed class UiDispatchEndpointTests
 
         var message = await Dispatch(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).DispatchIssueAsync(TemplateT, "7");
 
-        message.Should().Be("⏳ Queued #7 — the job controller will start an agent pod for it");
+        // Spec 056 DD12: queued; the message says why it waits when dispatch would hold it now (this host routes nothing).
+        message.Should().StartWith("⏳ Queued #7");
         _factory.Orchestration.Verify(o => o.PrepareDistributionRequestAsync(It.Is<ImplementationDispatchOrchestrationRequest>(r =>
             r.IssueIdentifier.Value == "7" && r.IssueProviderId.Value == IssueProviderT && r.RepoProviderId.Value == RepoProviderT
             && r.Project.Id == ProjectT), It.IsAny<CancellationToken>()), Times.Once);
@@ -161,7 +162,7 @@ public sealed class UiDispatchEndpointTests
 
         var message = await Dispatch(TestUserTokens.Global(AccessRole.Operator)).DispatchPullRequestAsync(TemplateT, 12);
 
-        message.Should().Be("⏳ Queued PR #12 for review — the job controller will start an agent pod for it");
+        message.Should().StartWith("⏳ Queued PR #12 for review");
         _factory.Orchestration.Verify(o => o.PrepareReviewDistributionRequestAsync(
             It.Is<ReviewDispatchRequest>(r => r.PrNumber == 12 && r.PrBranchName == "feat/x"), It.Is<PipelineProject>(p => p.Id == ProjectT), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -174,7 +175,7 @@ public sealed class UiDispatchEndpointTests
 
         var message = await Dispatch(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).DispatchEpicAsync(TemplateT, "30");
 
-        message.Should().Be("⏳ Queued epic #30 for decomposition — the job controller will start an agent pod for it");
+        message.Should().StartWith("⏳ Queued epic #30 for decomposition");
         _factory.Orchestration.Verify(o => o.PrepareDecompositionDistributionRequestAsync(
             It.Is<DecompositionDispatchOrchestrationRequest>(r => r.PhaseType == PipelineRunType.Decomposition && r.EpicIdentifier.Value == "30"), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -255,7 +256,7 @@ public sealed class UiDispatchEndpointTests
 
         var message = await Runs(TestUserTokens.Scoped(ProjectT, AccessRole.Operator)).RedispatchAsync(Guid.Parse(run.RunId));
 
-        message.Should().Be("⏳ Queued #77 — the job controller will start an agent pod for it");
+        message.Should().StartWith("⏳ Queued #77");
         _factory.Orchestration.Verify(o => o.PrepareDistributionRequestAsync(It.Is<ImplementationDispatchOrchestrationRequest>(r =>
             r.IssueIdentifier.Value == "77" && r.IssueProviderId.Value == IssueProviderT && r.RepoProviderId.Value == RepoProviderT
             && r.Project.Id == ProjectT), It.IsAny<CancellationToken>()), Times.Once);

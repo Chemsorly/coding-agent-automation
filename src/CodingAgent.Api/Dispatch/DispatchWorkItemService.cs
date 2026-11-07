@@ -320,25 +320,24 @@ internal sealed class DispatchWorkItemService
     /// <param name="id">The GUID of the Pending WorkItem to dispatch.</param>
     /// <param name="dbFactory">Factory for opening the caller-owned <see cref="PipelineDbContext"/>.</param>
     /// <param name="lifecycle">The shared singleton <see cref="DispatchLifecycleService"/>.</param>
-    /// <param name="rollout">Routes an item a previous-release API stored without a selector (spec 053 DD10).</param>
+    /// <param name="router">Routes the item at dispatch and holds what cannot start (spec 056 DD2), before the gate.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// <list type="bullet">
     ///   <item>200 <c>DispatchPendingResponse(true,"none")</c> — dispatch succeeded.</item>
-    ///   <item>200 <c>DispatchPendingResponse(false,"not_pending"|"no_template"|"concurrency_limit"|"global_concurrency_limit")</c>
-    ///     — expected backpressure outcome.</item>
-    ///   <item>200 <c>DispatchPendingResponse(false,"no_route")</c> — the item had no route and none resolves; it was
-    ///     failed with the reason.</item>
+    ///   <item>200 <c>DispatchPendingResponse(false, reason, holdText, templateKey, credential)</c> — the item is held
+    ///     (spec 056: <c>no_route</c>, <c>profile_unavailable</c>, <c>no_tool</c>, <c>no_template</c>,
+    ///     <c>credential_paused</c>, <c>concurrency_limit</c>, <c>global_concurrency_limit</c>, <c>pvc_unavailable</c>)
+    ///     or <c>not_pending</c>. The hold is recorded on the item.</item>
     ///   <item>404 Not Found — no WorkItem with this ID.</item>
-    ///   <item>503 Service Unavailable — no PVC available, lock timeout, running agents not countable, K8s failure,
-    ///     or a routing error.</item>
+    ///   <item>503 Service Unavailable — lock timeout, running agents not countable, or K8s failure.</item>
     /// </list>
     /// </returns>
     internal async Task<IResult> DispatchPendingWorkItemAsync(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
-        RolloutRouting rollout,
+        DispatchRouter router,
         CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -375,27 +374,38 @@ internal sealed class DispatchWorkItemService
             return TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason));
         }
 
-        var agentSelector = quickCheck.AgentSelector;
-        if (string.IsNullOrEmpty(agentSelector))
+        // Spec 056 DD2 (D14): route at dispatch and check the job template and the credential before the agent start
+        // gate. A held item never takes the dispatch-agents lock.
+        DispatchRouteOutcome route;
+        try
         {
-            // Spec 053 DD10: a previous-release API replica stored the request of a current-release caller without
-            // a selector or route. Route it now, before the start gate; a refusal fails it.
-            var (routedSelector, early) = await rollout.RouteAsync(id, ct);
-            if (early is not null)
-                return early;
-            agentSelector = routedSelector!;
+            route = await router.RouteAsync(id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Never a 500: any other status than 200 and 503 aborts the Scheduler's whole cycle.
+            Log.Error(ex, "DispatchPendingWorkItem: routing work item {WorkItemId} failed — returning 503", id);
+            WorkDistributionTelemetry.RecordDispatchAttempt(TransientResult, "routing_error");
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
-        // Sanitize agentSelector before embedding it in any log message or HTTP response body.
-        // agentSelector originates from a database column set by POST /api/work-items callers;
-        // a crafted value containing \r\n can inject fake log lines (log forging). All log
-        // call sites below use sanitizedSelector / sanitizedEffectiveSelector instead
-        // of the raw values. See also: LogSanitizer in CodingAgent.Infrastructure.Common.
-        var sanitizedSelector = LogSanitizer.SanitizeForLog(agentSelector);
+        switch (route.Status)
+        {
+            case DispatchRouteStatus.NotFound:
+                return TypedResults.NotFound();
+            case DispatchRouteStatus.NotPending:
+                WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
+                return TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason));
+            case DispatchRouteStatus.Held:
+                WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, route.HoldReason!);
+                return TypedResults.Ok(new DispatchPendingResponse(
+                    false, route.HoldReason!, route.HoldText, route.TemplateKey, route.Credential));
+        }
 
-        // Template: the job template key the API pinned when it routed the item (spec 053 req 4.9). The limit check
-        // and the Job label key on it. A missing template is reported after the gate and the post-lock re-check.
-        var (template, effectiveSelector) = ResolveTemplate(agentSelector);
+        // The job template the route resolved to (normalized); the limit check and the Job label key on it. Sanitized
+        // for logs: the key comes from stored configuration.
+        var template = route.Template!;
+        var effectiveSelector = JobTemplateStore.NormalizeLabels(route.TemplateKey!);
         var sanitizedEffectiveSelector = LogSanitizer.SanitizeForLog(effectiveSelector);
 
         // Enter the agent start gate (spec 057) and perform the post-lock TOCTOU re-read. Both are encapsulated in
@@ -406,20 +416,18 @@ internal sealed class DispatchWorkItemService
             return lockEarlyReturn;
         await using var lease = enteredLease!;
 
-        if (template is null)
-        {
-            Log.Warning("DispatchPendingWorkItem: no job template for selector {Selector} — returning 200/deferred", sanitizedSelector);
-            WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, "no_template");
-            return TypedResults.Ok(new DispatchPendingResponse(false, "no_template"));
-        }
-
         // Spec 057 req 3.1: the limit for all agents first, then the template's limit (lowest of Helm and UI each).
         var decision = lease.CheckWorkItem(effectiveSelector);
         if (!decision.Allowed)
-            return HoldForLimit(decision, sanitizedEffectiveSelector);
+            return await HoldForLimitAsync(db, id, decision, route, sanitizedEffectiveSelector, ct);
 
         // Spec 057 DD1: the PVCs running agent Jobs (chats included) hold come from the gate's one Job list.
         var pvcResult = await lifecycle.QueryDispatchablePvcsAsync(db, lease.Jobs.HeldPvcs, ct);
+
+        // Spec 056 DD8: a Kiro item without a free credential PVC is a deferral of its template, not a 503 that aborts
+        // the Scheduler's cycle.
+        if (JobTemplateProviderType.IsKiro(template.ProviderType) && pvcResult.AvailablePvcs.Count == 0)
+            return await HoldForPvcAsync(db, id, route, sanitizedEffectiveSelector, ct);
 
         // Build the projection for the shared dispatch helper (issue #2988). Its AgentSelector is the
         // canonical effectiveSelector, which the Job label and the dispatch metrics carry (#2777).
@@ -462,7 +470,9 @@ internal sealed class DispatchWorkItemService
     /// Pending; the Scheduler stops the selector for the cycle (<c>concurrency_limit</c>) or ends the cycle
     /// (<c>global_concurrency_limit</c>).
     /// </summary>
-    private static Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse> HoldForLimit(AgentStartDecision decision, string sanitizedSelector)
+    private static async Task<IResult> HoldForLimitAsync(
+        PipelineDbContext db, Guid id, AgentStartDecision decision, DispatchRouteOutcome route, string sanitizedSelector,
+        CancellationToken ct)
     {
         var scope = AgentCapacityRules.TagValue(decision.Scope!.Value);
         var source = AgentCapacityRules.TagValue(decision.Source!.Value);
@@ -474,7 +484,35 @@ internal sealed class DispatchWorkItemService
             "{CallerName}: {Scope} concurrency limit reached for selector {Selector} ({Current}/{Max}, {LimitSource}) — deferred",
             "DispatchPendingWorkItem", scope, sanitizedSelector, decision.Running, decision.Limit, source);
         WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, decision.Reason!);
-        return TypedResults.Ok(new DispatchPendingResponse(false, decision.Reason!));
+
+        // Spec 056 D15: the limit holds are recorded on the item like every other hold (inside the lock: one write per
+        // held start, N13).
+        var text = AgentStartTexts.WorkItemHold(decision, JobTemplateStore.NormalizeLabels(route.TemplateKey!));
+        await WorkItemHolds.SetAsync(db, id, decision.Reason!, text, DateTimeOffset.UtcNow, ct);
+        SetHoldAttributes(decision.Reason!, text);
+        return TypedResults.Ok(new DispatchPendingResponse(false, decision.Reason!, text, route.TemplateKey, route.Credential));
+    }
+
+    /// <summary>
+    /// Spec 056 DD8: the answer for a Kiro item no credential PVC is free for. It stays Pending with the hold; the
+    /// Scheduler stops its job template for the cycle.
+    /// </summary>
+    private static async Task<IResult> HoldForPvcAsync(
+        PipelineDbContext db, Guid id, DispatchRouteOutcome route, string sanitizedSelector, CancellationToken ct)
+    {
+        Log.Information("DispatchPendingWorkItem: no PVC available for kiro agent selector {Selector} — deferred", sanitizedSelector);
+        WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, HoldReasons.PvcUnavailable);
+        WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
+        await WorkItemHolds.SetAsync(db, id, HoldReasons.PvcUnavailable, HoldTexts.PvcUnavailable, DateTimeOffset.UtcNow, ct);
+        SetHoldAttributes(HoldReasons.PvcUnavailable, HoldTexts.PvcUnavailable);
+        return TypedResults.Ok(new DispatchPendingResponse(
+            false, HoldReasons.PvcUnavailable, HoldTexts.PvcUnavailable, route.TemplateKey, route.Credential));
+    }
+
+    private static void SetHoldAttributes(string reason, string text)
+    {
+        Activity.Current?.SetTag(PipelineTelemetry.CredentialAttributes.HoldReason, reason);
+        Activity.Current?.SetTag(PipelineTelemetry.CredentialAttributes.HoldText, text);
     }
 
     /// <summary>

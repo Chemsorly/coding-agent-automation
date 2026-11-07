@@ -43,6 +43,7 @@ public sealed class FakeJobController : IAsyncDisposable
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly WorkItemTransitionService _transitions;
     private readonly ILabelSwapService _labelSwap;
+    private readonly CodingAgent.Api.Dispatch.DispatchRouter _router;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
 
@@ -90,6 +91,7 @@ public sealed class FakeJobController : IAsyncDisposable
         _dbFactory = dbFactory;
         _transitions = apiServices.GetRequiredService<WorkItemTransitionService>();
         _labelSwap = apiServices.GetRequiredService<ILabelSwapService>();
+        _router = apiServices.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>();
         _loop = Task.Run(() => PollAsync(_cts.Token));
     }
 
@@ -140,7 +142,11 @@ public sealed class FakeJobController : IAsyncDisposable
         var pending = await _workItems.GetPendingAsync(50, ct: ct);
         foreach (var item in pending)
         {
-            var agent = FindIdleAgentFor(item.AgentSelector);
+            // Spec 056 DD2: POST /dispatch routes the item first and holds what cannot start; a held item stays Pending.
+            var route = await _router.RouteAsync(item.Id, ct);
+            if (route.Status != CodingAgent.Api.Dispatch.DispatchRouteStatus.Routed) continue;
+
+            var agent = FindIdleAgentFor(route.TemplateKey!);
             if (agent is null) continue; // no capacity — the item stays Pending, as in production
 
             var dispatched = await _transitions.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched,

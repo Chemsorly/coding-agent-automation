@@ -68,9 +68,9 @@ public sealed class ConsolidationTriggerTests(ApiWebApplicationFactory factory)
         item.TaskType.Should().Be(WorkItemTaskType.Consolidation);
         item.IssueIdentifier.Should().Be($"{ConsolidationRunType.RefactoringDetection}:{Template}");
         item.IssueProviderConfigId.Should().Be(ConsolidationConstants.ProviderConfigId);
-        item.AgentSelector.Should().Be(AgentRoutingTestData.DefaultJobTemplate, "the routed profile's job template");
+        item.AgentSelector.Should().BeEmpty("spec 056 DD1: the dispatcher routes it");
         item.ProjectId.Should().Be(Guid.Parse(Project));
-        JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload!, PipelineJsonOptions.Default)!.ResolvedProfileId.Should().Be(Profile);
+        JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload!, PipelineJsonOptions.Default)!.ConsolidationTemplateId.Should().Be(Template);
 
         // The same scope is live now, so a second trigger is refused as a duplicate.
         (await Consolidation.TriggerAsync(ConsolidationRunType.RefactoringDetection, new TemplateId(Template), CancellationToken.None))

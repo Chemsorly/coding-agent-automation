@@ -11,14 +11,11 @@ public static class AgentRouteRefusalReason
     /// <summary>No row at any level.</summary>
     public const string NoRoute = "no_route";
 
-    /// <summary>The route names a profile that does not exist or is disabled.</summary>
+    /// <summary>The route names a profile that does not exist.</summary>
     public const string ProfileUnavailable = "profile_unavailable";
 
     /// <summary>The profile's job template has no known tool.</summary>
     public const string NoTool = "no_tool";
-
-    /// <summary>The profile's job template does not exist (consolidation at creation).</summary>
-    public const string TemplateMissing = "template_missing";
 
     /// <summary>The profile's job template is not the one the work item was queued for.</summary>
     public const string TemplateChanged = "template_changed";
@@ -27,7 +24,7 @@ public static class AgentRouteRefusalReason
     public const string ConfigCollision = "config_collision";
 
     public static IReadOnlyList<string> All { get; } =
-        [NoRoute, ProfileUnavailable, NoTool, TemplateMissing, TemplateChanged, ConfigCollision];
+        [NoRoute, ProfileUnavailable, NoTool, TemplateChanged, ConfigCollision];
 
     /// <summary>The text shown and logged when no route resolves (req 2.9).</summary>
     public const string NoRouteText = "No agent route: set the default route in Settings → Agents → Routing";
@@ -116,12 +113,12 @@ public static class AgentRouteResolver
             return AgentRouteResult.Refused(AgentRouteRefusalReason.NoRoute, AgentRouteRefusalReason.NoRouteText);
 
         var profile = profiles.FirstOrDefault(p => string.Equals(p.Id, row.ProfileId, StringComparison.Ordinal));
-        if (profile is null || !profile.Enabled)
+        if (profile is null)
         {
             return AgentRouteResult.Refused(
                 AgentRouteRefusalReason.ProfileUnavailable,
                 $"The {SourceText(source)} route for {AgentRouteLabels.TaskType(taskType)} names agent profile " +
-                $"'{profile?.DisplayName ?? row.ProfileId}', which does not exist or is disabled");
+                $"'{row.ProfileId}', which does not exist");
         }
 
         var key = profile.JobTemplateKey();

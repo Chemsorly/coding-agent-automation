@@ -296,39 +296,17 @@ public sealed class AssignmentEnricherTests
         result.Route.Should().Be(PinnedRoute);
     }
 
+    // Spec 056 DD3: the claim never resolves a route, even when the current routing would resolve one.
     [Fact]
-    public async Task EnrichAsync_ItemQueuedBeforeAgentRouting_IsRoutedAtClaim()
+    public async Task EnrichAsync_ItemWithoutAPinnedRoute_IsRefused_NoRoute_AlthoughTheRoutingResolves()
     {
-        // Spec 053 req 4.6: an item stored without a route runs on the current routing, recorded as source "claim".
         var setup = new Setup { Routing = AgentRoutingTestData.Routing(ProfileId, "sonnet", "low") };
         var identity = MakeIdentity() with { Route = null, ResolvedProfileId = null };
 
-        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
+        var result = await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        result.Route.Should().Be(new AgentRouteSnapshot(
-            ProfileId, ProfileName, JobTemplateProviderType.Kiro, "sonnet", "low", AgentRouteSource.Claim));
-        result.ResolvedProfileId.Should().Be(ProfileId);
-        setup.Infra.CapturedRequest!.AgentConfig!.Settings.Should().Contain(ProviderSettingKeys.Model, "sonnet");
-    }
-
-    [Fact]
-    public async Task EnrichAsync_RepositoryRowsApply_ToAnItemRoutedAtClaim()
-    {
-        var setup = new Setup
-        {
-            Profiles = [MakeProfile(), MakeProfile("profile-2")],
-            Routing = AgentRoutingTestData.Routing(ProfileId),
-            Templates = [RepoTemplate(rows: new Dictionary<WorkItemTaskType, AgentRoute>
-            {
-                [WorkItemTaskType.Implementation] = AgentRoutingTestData.Route("profile-2", "row-model"),
-            })],
-        };
-        var identity = MakeIdentity() with { Route = null };
-
-        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
-
-        result.ResolvedProfileId.Should().Be("profile-2");
-        result.Route!.Model.Should().Be("row-model");
+        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be("the work item was dispatched without an agent route");
+        setup.Infra.CapturedRequest.Should().BeNull();
     }
 
     [Fact]
@@ -605,18 +583,27 @@ public sealed class AssignmentEnricherTests
 
     // ── Refusals (spec 053 design "Claim") ───────────────────────────────────────────
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task EnrichAsync_PinnedProfileGoneOrDisabled_IsRefused_ProfileUnavailable(bool disabled)
+    [Fact]
+    public async Task EnrichAsync_PinnedProfileGone_IsRefused_ProfileUnavailable()
     {
-        var setup = new Setup { Profiles = disabled ? [MakeProfile(enabled: false)] : [MakeProfile("profile-other")] };
+        var setup = new Setup { Profiles = [MakeProfile("profile-other")] };
 
         var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
 
         Refused(result, AgentRouteRefusalReason.ProfileUnavailable).Text
             .Should().Be($"agent profile '{ProfileName}' no longer exists");
         setup.Infra.CapturedRequest.Should().BeNull("a refused claim prepares nothing");
+    }
+
+    // Spec 056 req 1.4: the profile flag Enabled no longer refuses a claim.
+    [Fact]
+    public async Task EnrichAsync_PinnedProfileFlaggedDisabled_IsNotRefused()
+    {
+        var setup = new Setup { Profiles = [MakeProfile(enabled: false)] };
+
+        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
+
+        Enriched(result).ResolvedProfileId.Should().Be(ProfileId);
     }
 
     [Fact]
@@ -671,7 +658,7 @@ public sealed class AssignmentEnricherTests
 
         var result = await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
-        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be(AgentRouteRefusalReason.NoRouteText);
+        Refused(result, AgentRouteRefusalReason.NoRoute).Text.Should().Be("the work item was dispatched without an agent route");
         setup.Infra.CapturedRequest.Should().BeNull();
         setup.Preparer.VerifyNoOtherCalls();
     }
@@ -1012,29 +999,6 @@ public sealed class AssignmentEnricherTests
         result.AgentProviderConfigId.Should().Be(ProfileId,
             "AgentProviderConfigId is the built agent config's Id, never the repository provider");
         result.Route.Should().Be(PinnedRoute);
-    }
-
-    [Fact]
-    public async Task EnrichAsync_ConsolidationTask_ItemQueuedBeforeAgentRouting_UsesTheConsolidationTemplatesRow()
-    {
-        // Req 4.3: a consolidation routes by the template that triggered it, not by the repository.
-        var trigger = new PipelineJobTemplate
-        {
-            Id = "tmpl-1", Name = "brain", IssueProviderId = "ip", RepoProviderId = "other-repo",
-            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
-            {
-                [WorkItemTaskType.Consolidation] = AgentRoutingTestData.Route("profile-2", "brain-model"),
-            },
-        };
-        var setup = ConsolidationSetup(
-            profiles: [MakeProfile(), MakeProfile("profile-2")], templates: [trigger], routing: AgentRoutingTestData.Routing(ProfileId));
-        var identity = MakeConsolidationIdentity() with { Route = null };
-
-        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
-
-        result.ResolvedProfileId.Should().Be("profile-2");
-        result.Route!.Source.Should().Be(AgentRouteSource.Claim);
-        PrepareCall(setup).AgentConfig!.Settings.Should().Contain(ProviderSettingKeys.Model, "brain-model");
     }
 
     [Fact]

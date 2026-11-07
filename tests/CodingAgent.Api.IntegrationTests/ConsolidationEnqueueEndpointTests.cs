@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using AwesomeAssertions;
+using CodingAgent.Api;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
@@ -100,9 +101,10 @@ public sealed class ConsolidationEnqueueEndpointTests : IClassFixture<Consolidat
     }
 
     [Fact]
-    public async Task PostWorkItems_Consolidation_RoutedToAProfileWithoutAJobTemplate_Returns422_EvenThoughOtherTemplatesExist()
+    public async Task PostWorkItems_Consolidation_RoutedToAProfileWithoutAJobTemplate_IsCreated_AndHeldAtDispatch()
     {
-        // #3642 and spec 053: the dispatcher could never start it. The next test's constructor restores the default route.
+        // Spec 056 DD1 replaces #3642's refusal at creation: the dispatcher holds it as no_template. The next test's
+        // constructor restores the default route.
         const string profileId = "0e5e0000-0000-4000-8000-0000000000a1";
         await _factory.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
             AgentRoutingTestData.Profile(profileId, "kiro,python,python312", "Python agent"), CancellationToken.None);
@@ -112,12 +114,12 @@ public sealed class ConsolidationEnqueueEndpointTests : IClassFixture<Consolidat
 
         var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
 
-        response.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
-        (await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>())!.Detail
-            .Should().Be("Job template kiro,python,python312 of agent profile 'Python agent' does not exist in the Helm values");
-        using var db = _factory.CreateDbContext();
-        db.WorkItems.Where(w => w.IssueIdentifier == request.IssueIdentifier.Value).Should().BeEmpty(
-            "a refused request must not leave a row behind");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>();
+        var dispatch = await _client.PostAsync($"/api/work-items/{id}/dispatch", null);
+        var answer = await dispatch.Content.ReadFromJsonAsync<DispatchPendingResponse>(PipelineJsonOptions.Default);
+        answer!.Reason.Should().Be("no_template");
+        answer.HoldText.Should().Be("Job template kiro,python,python312 of agent profile 'Python agent' does not exist in the Helm values");
     }
 
     /// <summary>

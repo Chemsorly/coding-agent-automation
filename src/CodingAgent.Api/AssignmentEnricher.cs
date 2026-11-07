@@ -186,10 +186,10 @@ public class AssignmentEnricher
         AgentProfile Profile, AgentRouteSnapshot Route, ProviderConfig AgentConfig, PipelineJobTemplate? Template);
 
     /// <summary>
-    /// Spec 053 design "Claim": the pinned route, or for a work item queued before spec 053 the current routing
-    /// (source <c>claim</c>); then the profile must exist and be enabled, its job template key must still be the one
-    /// the item was queued for, and the template must have a tool. Never re-resolves a pinned route, and never picks a
-    /// profile no route names (D15).
+    /// Spec 056 DD3: the claim runs on the route pinned at dispatch and never resolves one. It refuses an item without
+    /// a pinned route (only one a pre-053 release dispatched), a profile that no longer exists, a profile whose job
+    /// template is not the one pinned at dispatch (the pod runs the old template's image), and a template without a
+    /// tool. Never picks a profile no route names (D15).
     /// </summary>
     private async Task<(ClaimRoute? Route, EnrichmentResult.Refused? Refusal)> ResolveClaimRouteAsync(
         JobDistributionRequest identity, CancellationToken ct)
@@ -201,25 +201,10 @@ public class AssignmentEnricher
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
         var toolsByKey = _jobTemplates.ToolsByKey();
 
-        AgentRouteSnapshot route;
-        if (identity.Route is { } pinned)
-        {
-            route = pinned;
-        }
-        else
-        {
-            var routing = await _routing.LoadAsync(ct) ?? AgentRouting.Empty;
-            var resolved = AgentRouteResolver.Resolve(identity.TaskType, template, routing, profiles, toolsByKey);
-            if (resolved.IsRefused)
-                return Refuse(identity, template, resolved.RefusalReason!, resolved.RefusalText!);
-            route = resolved.Snapshot! with { Source = AgentRouteSource.Claim };
-            _logger.Information(
-                "Routed {TaskType} work for {TemplateName} at claim to {AgentProfile} · {Model} · {Effort} ({RouteSource}; queued before agent routing, profile {AgentProfileId}, template {TemplateId})",
-                identity.TaskType, template?.Name ?? "no template", route.ProfileName, route.Model, route.Effort,
-                AgentRouteLabels.Source(route.Source), route.ProfileId, template?.Id);
-        }
+        if (identity.Route is not { } route)
+            return Refuse(identity, template, AgentRouteRefusalReason.NoRoute, "the work item was dispatched without an agent route");
 
-        var profile = profiles.FirstOrDefault(p => string.Equals(p.Id, route.ProfileId, StringComparison.Ordinal) && p.Enabled);
+        var profile = profiles.FirstOrDefault(p => string.Equals(p.Id, route.ProfileId, StringComparison.Ordinal));
         if (profile is null)
         {
             return Refuse(identity, template, AgentRouteRefusalReason.ProfileUnavailable,

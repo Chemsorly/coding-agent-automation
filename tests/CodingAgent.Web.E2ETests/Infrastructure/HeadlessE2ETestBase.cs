@@ -1,3 +1,4 @@
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline.Interfaces;
@@ -226,6 +227,9 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         Guid? projectId = null)
     {
         var workItemId = Guid.NewGuid();
+        // Spec 056: dispatch routes the row, so its request is readable and its job template is routed.
+        if (!string.IsNullOrEmpty(agentSelector))
+            await Fixture.SeedRoutedTemplateAsync(agentSelector);
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         db.WorkItems.Add(new WorkItemEntity
         {
@@ -234,7 +238,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             IssueIdentifier = issueIdentifier,
             IssueProviderConfigId = "issue-e2e",
             Status = WorkItemStatus.Pending,
-            Payload = "{}",
+            Payload = WorkItemTestData.RoutablePayload(WorkItemTaskType.Implementation, issueIdentifier, "issue-e2e", "repo-e2e"),
             AgentSelector = agentSelector,
             CreatedAt = DateTimeOffset.UtcNow,
             TimeoutSeconds = timeoutSeconds,

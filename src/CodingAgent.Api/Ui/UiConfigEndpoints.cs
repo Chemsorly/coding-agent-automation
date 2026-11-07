@@ -58,7 +58,7 @@ internal static class UiConfigEndpoints
         IUserAccess access, IProjectStore projects, IProviderConfigStore providers, IConfigurationStore config,
         [AsParameters] PipelinesPageRoutingStores routingStores, CancellationToken ct)
     {
-        var (profiles, routing, jobTemplates) = routingStores;
+        var (profiles, routing, jobTemplates, pauses) = routingStores;
         var global = access.CanRead(null);
         var readable = (await projects.LoadProjectsAsync(ct)).Where(p => access.CanRead(p.Id)).ToList();
         var owned = readable.SelectMany(p => p.TemplateIds).ToHashSet(StringComparer.Ordinal);
@@ -79,7 +79,8 @@ internal static class UiConfigEndpoints
         var settings = await config.LoadPipelineConfigAsync(ct);
         var allProfiles = await profiles.LoadAgentProfilesAsync(ct);
         var routes = ResolvedRoutes.For(
-            templates, await routing.LoadAsync(ct) ?? AgentRouting.Empty, allProfiles, jobTemplates.ToolsByKey());
+            templates, await routing.LoadAsync(ct) ?? AgentRouting.Empty, allProfiles, jobTemplates.ToolsByKey(),
+            await pauses.LoadAllAsync(ct));
         var admin = access.Grant.GlobalRole == AccessRole.Admin;
         return TypedResults.Ok(new UiPipelinesPage(
             readable.Select(p => new PipelineProject { Id = p.Id, Name = p.Name, Enabled = p.Enabled, TemplateIds = p.TemplateIds, EpicIssueProviderId = p.EpicIssueProviderId }).ToList(),
@@ -104,4 +105,4 @@ internal static class UiConfigEndpoints
 
 /// <summary>The stores the Pipelines page resolves its routes from.</summary>
 internal sealed record PipelinesPageRoutingStores(
-    IAgentProfileStore Profiles, AgentRoutingStore Routing, JobTemplateStore JobTemplates);
+    IAgentProfileStore Profiles, AgentRoutingStore Routing, JobTemplateStore JobTemplates, CredentialPauseStore Pauses);

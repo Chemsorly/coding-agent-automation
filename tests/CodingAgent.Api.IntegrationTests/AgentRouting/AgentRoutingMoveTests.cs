@@ -65,8 +65,8 @@ public sealed class AgentRoutingMoveTests
             }
             if (Fixture.ProfilesMovedDisabled.Contains(golden.ProfileId))
             {
-                // Req 7.2: its profile is moved disabled, so the work is refused with the reason (D15).
-                result.RefusalReason.Should().Be(AgentRouteRefusalReason.ProfileUnavailable, because);
+                // Req 7.2 moved the profile disabled; spec 056 req 1.4 retired the flag, so it no longer refuses the route.
+                result.RefusalReason.Should().NotBe(AgentRouteRefusalReason.ProfileUnavailable, because);
                 continue;
             }
 

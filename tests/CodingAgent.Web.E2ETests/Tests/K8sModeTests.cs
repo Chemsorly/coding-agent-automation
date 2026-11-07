@@ -197,12 +197,14 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
     [Fact]
     public async Task K8sMode_AgentFetchesAssignment_ReturnsValidPayload()
     {
-        // Arrange: route to a kiro,dotnet profile (the work item pins it when it is created, and the claim checks it),
+        // Arrange: route to a kiro,dotnet profile (the dispatcher pins it, and the claim checks it),
         // then insert a WorkItem via Pending enqueue path
         await SeedKiroDotnetRouteAsync("profile-kiro-dotnet-fetch", "K8s Fetch Test Profile");
         var result = await DistributeDirectlyAsync("k8s-fetch-assign-900");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
+        // Spec 056 DD2: the route is pinned when the item is dispatched; route it as POST /dispatch does.
+        await Fixture.ApiServices.GetRequiredService<CodingAgent.Api.Dispatch.DispatchRouter>().RouteAsync(workItemId, CancellationToken.None);
 
         // Seed the issue so AssignmentEnricher can fetch context during GetAssignment
         Fixture.IssueProvider.Issues.Add(new IssueDetail
