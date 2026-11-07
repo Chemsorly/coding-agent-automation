@@ -131,6 +131,9 @@ internal static class AgentHostRegistration
         services.AddSingleton<IHubConnectionManager>(sp =>
             sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
+        // ── Spec 056 DD13: the job's first quota or login failure, recorded by every agent provider ──
+        services.AddSingleton<ProviderFailureRecorder>();
+
         // ── Pipeline executor ──
         services.AddSingleton<IPipelineReporterFactory>(sp => new PipelineReporterFactory(logger));
         services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
@@ -142,7 +145,8 @@ internal static class AgentHostRegistration
                 logger,
                 sp.GetRequiredService<IBrainUpdateService>(),
                 AgentIdentity: sp.GetRequiredService<AgentId>(),
-                ReporterFactory: sp.GetRequiredService<IPipelineReporterFactory>())));
+                ReporterFactory: sp.GetRequiredService<IPipelineReporterFactory>(),
+                ProviderFailureRecorder: sp.GetRequiredService<ProviderFailureRecorder>())));
 
         // ── Consolidation executor ──
         services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
@@ -150,7 +154,8 @@ internal static class AgentHostRegistration
             sp.GetRequiredService<IHttpClientFactory>(),
             logger,
             sp.GetRequiredService<IBrainUpdateService>(),
-            reporterFactory: sp.GetRequiredService<IPipelineReporterFactory>()));
+            reporterFactory: sp.GetRequiredService<IPipelineReporterFactory>(),
+            failureRecorder: sp.GetRequiredService<ProviderFailureRecorder>()));
 
         return services;
     }

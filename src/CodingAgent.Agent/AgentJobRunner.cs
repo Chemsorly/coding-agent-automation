@@ -43,6 +43,9 @@ public static class AgentJobRunner
         {
             var payload = await req.Execute(req.Assignment, req.Connection, req.OutputBatcher, req.OnStepChanged, req.Ct);
 
+            // Spec 056 DD11: a Failed run that stopped on a used-up quota or a rejected login says so.
+            payload = req.ProviderFailureRecorder?.Attach(payload) ?? payload;
+
             // The pipeline turns a cancellation into a Cancelled payload. When SIGTERM caused it, the pod reports
             // nothing and exits non-zero, so the Job decides about a retry (decisions.md, "Agent Jobs").
             if (payload.FinalStep == PipelineStep.Cancelled
@@ -73,7 +76,9 @@ public static class AgentJobRunner
         }
         catch (Exception ex)
         {
-            return new JobCompletionPayload
+            // Spec 056 DD16 (V11): a provider whose credential is missing fails here, before any agent call; the
+            // recorder holds the auth failure its ValidateAsync recorded.
+            var failed = new JobCompletionPayload
             {
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
@@ -82,6 +87,7 @@ public static class AgentJobRunner
                 RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
                 HarnessVersion = Environment.GetEnvironmentVariable(AgentDefaults.EnvServiceVersion)
             };
+            return req.ProviderFailureRecorder?.Attach(failed) ?? failed;
         }
     }
 
@@ -142,4 +148,5 @@ public sealed record AgentJobExecutionRequest(
     Action<PipelineStep?>? OnStepChanged,
     string? CancelledLabel = null,
     CancellationToken Ct = default,
-    CancellationToken RethrowOnSigterm = default);
+    CancellationToken RethrowOnSigterm = default,
+    ProviderFailureRecorder? ProviderFailureRecorder = null);

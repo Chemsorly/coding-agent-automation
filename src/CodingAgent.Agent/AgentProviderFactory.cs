@@ -26,12 +26,14 @@ public sealed class AgentProviderFactory : IProviderFactory
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PipelineConfiguration _pipelineConfig;
     private readonly OrchestratorProxy? _orchestratorProxy;
+    private readonly ProviderFailureRecorder? _failureRecorder;
 
     public AgentProviderFactory(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         PipelineConfiguration pipelineConfig,
-        OrchestratorProxy? orchestratorProxy = null)
+        OrchestratorProxy? orchestratorProxy = null,
+        ProviderFailureRecorder? failureRecorder = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -41,6 +43,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         _httpClientFactory = httpClientFactory;
         _pipelineConfig = pipelineConfig;
         _orchestratorProxy = orchestratorProxy;
+        _failureRecorder = failureRecorder;
     }
 
     /// <summary>
@@ -66,7 +69,18 @@ public sealed class AgentProviderFactory : IProviderFactory
             $"Unsupported repository provider type: '{config.ProviderType}'");
     }
 
+    /// <summary>
+    /// Creates the agent provider <paramref name="config"/> names. With a failure recorder (spec 056 DD13) every
+    /// provider is wrapped in <see cref="ProviderFailureRecordingAgentProvider"/>, so every agent call of the job
+    /// records a used-up quota or a rejected login.
+    /// </summary>
     public IAgentProvider CreateAgentProvider(ProviderConfig config)
+    {
+        var provider = CreateUnwrappedAgentProvider(config);
+        return _failureRecorder is null ? provider : new ProviderFailureRecordingAgentProvider(provider, _failureRecorder);
+    }
+
+    private IAgentProvider CreateUnwrappedAgentProvider(ProviderConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 

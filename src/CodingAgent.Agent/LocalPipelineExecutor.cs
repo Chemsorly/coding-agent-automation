@@ -50,6 +50,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     /// <see cref="LocalPipelineExecutorDependencies.ProviderFactoryOverride"/>.
     /// </summary>
     private readonly IProviderFactory? _providerFactoryOverride;
+    private readonly ProviderFailureRecorder? _failureRecorder;
 
     public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
     {
@@ -73,6 +74,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 deps.BrainUpdateService, deps.HistoryService, finalization));
         _logger = deps.Logger;
         _providerFactoryOverride = deps.ProviderFactoryOverride;
+        _failureRecorder = deps.ProviderFailureRecorder;
     }
 
     /// <summary>
@@ -149,12 +151,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // a real AgentProviderFactory. This allows fake repository / agent providers to be
         // substituted without modifying the rest of the execution path.
         var providerFactory = _providerFactoryOverride
-            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps, _failureRecorder);
 
         // The project repositories a project epic clones next to its own use the token vended into
         // their own config: the proxy's token refresh covers only this job's primary repository.
         var projectRepoFactory = _providerFactoryOverride
-            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config, failureRecorder: _failureRecorder);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;

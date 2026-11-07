@@ -18,4 +18,5 @@ public sealed record WorkItemAgentServiceDependencies(
     AgentId AgentId,
     IHostApplicationLifetime Lifetime,
     Serilog.ILogger Logger,
-    IServiceProvider? ServiceProvider = null);
+    IServiceProvider? ServiceProvider = null,
+    ProviderFailureRecorder? ProviderFailureRecorder = null);

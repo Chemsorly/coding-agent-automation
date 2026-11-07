@@ -224,11 +224,12 @@ public class QualityGateExecutorRetryDecisionTests
             Times.Once,
             "loop must break after the first auth-abort — retry prompt must be sent exactly once");
 
-        // ShouldBreak → draft PR finalized.
+        // Spec 056 DD14: a rejected login ends the run Failed without a draft PR.
         _mockCallbacks.Verify(
-            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
-            Times.Once,
-            "ShouldBreak path must finalize as draft PR");
+            c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a permanent provider failure opens no draft PR (DD14)");
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
     }
 
     // ── Test 3: RestartSession → ShouldContinue, RetryCount == 1 ─────────────

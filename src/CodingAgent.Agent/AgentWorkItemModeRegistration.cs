@@ -102,7 +102,8 @@ internal static class AgentWorkItemModeRegistration
                 AgentId: sp.GetRequiredService<AgentId>(),
                 Lifetime: sp.GetRequiredService<IHostApplicationLifetime>(),
                 Logger: logger,
-                ServiceProvider: sp)));
+                ServiceProvider: sp,
+                ProviderFailureRecorder: sp.GetRequiredService<ProviderFailureRecorder>())));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemAgentService>());
         services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<WorkItemAgentService>());
 

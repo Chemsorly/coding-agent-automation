@@ -46,6 +46,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly IServiceProvider? _serviceProvider;
     private readonly Serilog.ILogger _logger;
+    private readonly ProviderFailureRecorder? _failureRecorder;
 
     private volatile CancellationTokenSource? _pipelineCts;
 
@@ -72,6 +73,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _lifetime = deps.Lifetime;
         _serviceProvider = deps.ServiceProvider;
         _logger = deps.Logger;
+        _failureRecorder = deps.ProviderFailureRecorder;
 
         // Use the injected connection manager
         _connectionManager = deps.ConnectionManager;
@@ -307,7 +309,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         var completion = await AgentJobRunner.ExecuteAsync(new AgentJobExecutionRequest(
             _workItemExecutor.ExecuteAsync, assignment, _connectionManager.Connection, outputBatcher,
             step => _connectionManager.UpdateCurrentStep(step),
-            Ct: pipelineCt, RethrowOnSigterm: ct));
+            Ct: pipelineCt, RethrowOnSigterm: ct, ProviderFailureRecorder: _failureRecorder));
 
         // Step 5: Report completion via unified reporter. Once the outcome is recorded the pod exits 0,
         // whatever the outcome was, so the Job starts no further pod. Failing to record it exits

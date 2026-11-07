@@ -361,12 +361,13 @@ public class ClaudeStreamJsonParserTests
     }
 
     [Fact]
-    public void ClassifyFailure_RejectedRateLimit_IsProviderRateLimit()
+    // Spec 056 req 5.3: a rejected subscription window is the quota, not a transient limit.
+    public void ClassifyFailure_RejectedRateLimit_IsProviderQuotaExhausted_Req5_3()
     {
         var state = new ClaudeStreamState();
         state.RateLimits["five_hour"] = new AgentRateLimitObservation { Window = "five_hour", Status = "rejected" };
 
-        state.ClassifyFailure().Should().Be(AgentErrorCategory.ProviderRateLimit);
+        state.ClassifyFailure().Should().Be(AgentErrorCategory.ProviderQuotaExhausted);
     }
 
     // ── MCP / web tool counting ──────────────────────────────────────────

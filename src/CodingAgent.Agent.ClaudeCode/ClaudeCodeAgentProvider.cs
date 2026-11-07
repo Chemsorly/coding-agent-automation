@@ -232,6 +232,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             Cost = cost,
             UsageDetails = details,
             ErrorCategory = errorCategory,
+            ProviderFailure = state.ProviderFailure(errorCategory),
             ToolCalls = state.ToolCalls.Count > 0
                 ? new Dictionary<string, McpCallCounts>(state.ToolCalls)
                 : null,

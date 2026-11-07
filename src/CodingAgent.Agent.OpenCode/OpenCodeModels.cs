@@ -100,6 +100,12 @@ public sealed record OpenCodeErrorData
 {
     public string? Message { get; init; }
     public int? StatusCode { get; init; }
+
+    /// <summary>The provider's response body of an <c>APIError</c>, when OpenCode passes it on (spec 056 req 5.4).</summary>
+    public string? ResponseBody { get; init; }
+
+    /// <summary>Whether OpenCode would retry the call itself.</summary>
+    public bool? IsRetryable { get; init; }
 }
 
 /// <summary>Request body for POST /permission/:requestID/reply.</summary>

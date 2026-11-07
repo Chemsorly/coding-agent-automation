@@ -127,10 +127,27 @@ internal sealed class ClaudeStreamState
     /// <summary>Failed counted calls in order, for logging after the run.</summary>
     public List<(string Key, McpFailureCategory Category, string Error)> ToolFailures { get; } = [];
 
+    /// <summary>Spec 056: a rate-limit event reported <c>errorCode</c> <c>credits_required</c>.</summary>
+    public bool CreditsRequired { get; set; }
+
+    /// <summary>The reset time of the rate-limit event that reported <see cref="CreditsRequired"/>.</summary>
+    public DateTimeOffset? CreditsRequiredResetsAt { get; set; }
+
+    /// <summary>The text of the main conversation's message that carried <see cref="LastErrorCategory"/>.</summary>
+    public string? LastErrorText { get; set; }
+
+    /// <summary>The message of an error <c>result</c> (its <c>result</c> text or its <c>errors</c>).</summary>
+    public string? ResultErrorText { get; set; }
+
+    // Spec 056 req 5.3: error texts that mean the quota or the credit is used up.
+    private static readonly string[] QuotaPhrases =
+        ["credit balance is too low", "spend limit", "enforced_spend_limit_reached", "usage_limit_reached"];
+
     /// <summary>Classifies a failed invocation as a provider-side error, from what the stream reported.</summary>
     public AgentErrorCategory ClassifyFailure()
     {
-        if (LastErrorCategory is "billing_error")
+        // Spec 056 req 5.3: these mean every further call fails until a reset or a top-up.
+        if (IsQuotaExhausted())
             return AgentErrorCategory.ProviderQuotaExhausted;
 
         var status = ApiErrorStatus ?? LastErrorStatus;
@@ -139,10 +156,7 @@ internal sealed class ClaudeStreamState
             || status is 401 or 403)
             return AgentErrorCategory.PermanentAuthFailure;
 
-        // The overage window reads "rejected" on any account without extra usage, even while the
-        // subscription window allows requests, so only the subscription windows count here.
-        if (LastErrorCategory is "rate_limit" || status is 429
-            || RateLimits.Any(r => r.Key != OverageWindow && r.Value.Status == "rejected"))
+        if (LastErrorCategory is "rate_limit" || status is 429)
             return AgentErrorCategory.ProviderRateLimit;
 
         if (LastErrorCategory is "overloaded" or "server_error" || status is 500 or 502 or 503 or 529)
@@ -150,6 +164,85 @@ internal sealed class ClaudeStreamState
 
         return AgentErrorCategory.None;
     }
+
+    /// <summary>
+    /// Spec 056 DD13: what the agent reports for a <see cref="AgentErrorCategory.ProviderQuotaExhausted"/> or
+    /// <see cref="AgentErrorCategory.PermanentAuthFailure"/> invocation: the reset time if the stream gave one and the
+    /// provider's text (unmasked; the recording decorator masks and cuts it). Null for any other category.
+    /// </summary>
+    public AgentProviderFailure? ProviderFailure(AgentErrorCategory category) => category switch
+    {
+        AgentErrorCategory.ProviderQuotaExhausted =>
+            new AgentProviderFailure(AgentProviderFailure.QuotaExhausted, QuotaResetsAt(), FailureDetail()),
+        AgentErrorCategory.PermanentAuthFailure =>
+            new AgentProviderFailure(AgentProviderFailure.AuthFailed, null, FailureDetail()),
+        _ => null,
+    };
+
+    private bool IsQuotaExhausted() =>
+        LastErrorCategory is "billing_error" or "usage_limit_reached"
+        || CreditsRequired
+        || RejectedWindow() is not null
+        || HasQuotaPhrase(ResultErrorText)
+        || HasQuotaPhrase(LastErrorText);
+
+    /// <summary>
+    /// A subscription window the CLI reported as rejected. The overage window reads "rejected" on any account without
+    /// extra usage, even while the subscription window allows requests, so it never counts.
+    /// </summary>
+    private AgentRateLimitObservation? RejectedWindow() =>
+        RateLimits.Values.FirstOrDefault(r => r.Window != OverageWindow && r.Status == "rejected");
+
+    private DateTimeOffset? QuotaResetsAt() =>
+        RejectedWindow()?.ResetsAt
+        ?? CreditsRequiredResetsAt
+        ?? ClaudeQuotaText.RegainAccessOn(ResultErrorText)
+        ?? ClaudeQuotaText.RegainAccessOn(LastErrorText);
+
+    private string FailureDetail()
+    {
+        if (!string.IsNullOrWhiteSpace(ResultErrorText))
+            return ResultErrorText;
+        if (!string.IsNullOrWhiteSpace(LastErrorText))
+            return LastErrorText;
+        if (RejectedWindow() is { } window)
+            return $"Claude {window.Window} usage limit reached";
+        var status = ApiErrorStatus ?? LastErrorStatus;
+        return $"Claude Code: {LastErrorCategory ?? (CreditsRequired ? "credits_required" : "error")}"
+            + (status is null ? "" : $" (HTTP {status})");
+    }
+
+    private static bool HasQuotaPhrase(string? text) =>
+        text is not null && QuotaPhrases.Any(p => text.Contains(p, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>Spec 056 req 5.3: reading a reset date from a Claude billing message.</summary>
+internal static partial class ClaudeQuotaText
+{
+    /// <summary>
+    /// The date of "… regain access on &lt;date&gt;" in <paramref name="text"/>, read as UTC when it names no offset;
+    /// null when the text has none or the date cannot be read.
+    /// </summary>
+    public static DateTimeOffset? RegainAccessOn(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        var match = RegainAccessRegex().Match(text);
+        if (!match.Success)
+            return null;
+        var value = match.Groups["date"].Value.Trim().TrimEnd('.', ',', ';')
+            .Replace(" at ", " ", StringComparison.OrdinalIgnoreCase);
+        if (value.EndsWith(" UTC", StringComparison.OrdinalIgnoreCase) || value.EndsWith(" GMT", StringComparison.OrdinalIgnoreCase))
+            value = value[..^4];
+        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AllowWhiteSpaces, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"regain access on (?<date>[^\r\n]+?)(?:\.\s|\.$|$|\r|\n)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private static partial System.Text.RegularExpressions.Regex RegainAccessRegex();
 }
 
 /// <summary>
@@ -318,10 +411,12 @@ internal static class ClaudeStreamJsonParser
         if (GetString(root, "error") is { } error)
         {
             state.LastErrorCategory = error;
+            state.LastErrorText = MessageText(root) ?? state.LastErrorText;
             return;
         }
         state.LastErrorCategory = null;
         state.LastErrorStatus = null;
+        state.LastErrorText = null;
     }
 
     private static IReadOnlyList<string> ProcessResult(JsonElement root, ClaudeStreamState state)
@@ -343,6 +438,7 @@ internal static class ClaudeStreamJsonParser
         if (string.IsNullOrWhiteSpace(message)
             && root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
             message = string.Join("; ", errors.EnumerateArray().Select(e => e.ValueKind == JsonValueKind.String ? e.GetString() : e.ToString()));
+        state.ResultErrorText = string.IsNullOrWhiteSpace(message) ? null : message;
 
         return [$"✖ Claude Code failed ({state.ResultSubtype ?? "error"}): {message}"];
     }
@@ -353,6 +449,13 @@ internal static class ClaudeStreamJsonParser
             return [];
 
         var lines = new List<string>();
+
+        // Spec 056 req 5.3: credits_required means the extra-usage credit is used up, not a transient limit.
+        if (GetString(info, "errorCode", "error_code") is "credits_required")
+        {
+            state.CreditsRequired = true;
+            state.CreditsRequiredResetsAt = GetUnixTime(info, "resetsAt", "resets_at") ?? state.CreditsRequiredResetsAt;
+        }
 
         // The CLI reports each window's use under unifiedWindows, e.g.
         // {"five_hour":{"utilization":0.73,"resetsAt":…},"seven_day":{…}}, not next to the status.
@@ -609,6 +712,19 @@ internal static class ClaudeStreamJsonParser
 
         var firstLine = value.ReplaceLineEndings("\n").Split('\n')[0].Trim();
         return firstLine.Length <= MaxSummaryLength ? firstLine : firstLine[..MaxSummaryLength] + "…";
+    }
+
+    /// <summary>The text blocks of an assistant event's message, joined; null when it has none.</summary>
+    private static string? MessageText(JsonElement root)
+    {
+        if (!root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
+            || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            return null;
+        var text = string.Join(" ", content.EnumerateArray()
+            .Where(b => GetString(b, "type") == "text")
+            .Select(b => GetString(b, "text"))
+            .Where(t => !string.IsNullOrWhiteSpace(t)));
+        return text.Length == 0 ? null : text;
     }
 
     private static string? GetString(JsonElement element, params string[] names)

@@ -46,6 +46,15 @@ public interface IKiroCliOrchestrator : IDisposable
     bool LastRunRejectedConfiguration { get; }
 
     /// <summary>
+    /// Spec 056 req 5.2: the kiro-cli error line that said the monthly usage or overage limit is reached, when the last
+    /// <see cref="ExecutePromptAsync"/> failed; null otherwise. Only kiro-cli's own <c>error:</c> lines count.
+    /// </summary>
+    string? LastRunQuotaExhausted => null;
+
+    /// <summary>Spec 056 req 5.2: true when the last <see cref="ExecutePromptAsync"/> failed and kiro-cli said it was throttled.</summary>
+    bool LastRunRateLimited => false;
+
+    /// <summary>
     /// MCP and web tool calls of the last <see cref="ExecutePromptAsync"/>, keyed <c>server/tool</c>
     /// (<c>web/search</c> for web search); empty before the first run.
     /// </summary>

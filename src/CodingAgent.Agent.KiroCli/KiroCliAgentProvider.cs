@@ -269,9 +269,10 @@ public partial class KiroCliAgentProvider : IAgentProvider
                         {
                             ExitCode = exitCode,
                             OutputLines = outputLines.AsReadOnly(),
-                            ErrorCategory = orchestrator.LastRunRejectedConfiguration
-                                ? AgentErrorCategory.ProviderMisconfigured
-                                : AgentErrorCategory.None,
+                            ErrorCategory = ToErrorCategory(orchestrator),
+                            ProviderFailure = orchestrator.LastRunQuotaExhausted is { } quotaLine
+                                ? new AgentProviderFailure(AgentProviderFailure.QuotaExhausted, null, quotaLine)
+                                : null,
                             ToolCalls = ToToolCalls(orchestrator.LastRunToolCalls),
                             UsageDetails = ReadContextUsage(normalizedPath, resumeSessionId, callStart)
                         };
@@ -315,6 +316,19 @@ public partial class KiroCliAgentProvider : IAgentProvider
             if (isIsolatedCall && orchestrator is IDisposable disposable)
                 disposable.Dispose();
         }
+    }
+
+    /// <summary>
+    /// The category of the last call (spec 056 req 5.2): a refused configuration, the monthly usage or overage limit,
+    /// throttling, or nothing known.
+    /// </summary>
+    private static AgentErrorCategory ToErrorCategory(IKiroCliOrchestrator orchestrator)
+    {
+        if (orchestrator.LastRunRejectedConfiguration)
+            return AgentErrorCategory.ProviderMisconfigured;
+        if (orchestrator.LastRunQuotaExhausted is not null)
+            return AgentErrorCategory.ProviderQuotaExhausted;
+        return orchestrator.LastRunRateLimited ? AgentErrorCategory.ProviderRateLimit : AgentErrorCategory.None;
     }
 
     private static IReadOnlyDictionary<string, McpCallCounts>? ToToolCalls(
