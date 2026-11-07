@@ -455,8 +455,13 @@ public class ClaudeCodeAgentProviderTests : IDisposable
             {
                 ["opus"] = new()
                 {
-                    InputTokens = 100, OutputTokens = 50, ThinkingTokens = 10, CacheReadTokens = 1_000,
-                    CacheWriteTokens = 200, WebSearchRequests = 1, CostUsd = 0.40m
+                    InputTokens = 100,
+                    OutputTokens = 50,
+                    ThinkingTokens = 10,
+                    CacheReadTokens = 1_000,
+                    CacheWriteTokens = 200,
+                    WebSearchRequests = 1,
+                    CostUsd = 0.40m
                 }
             }
         };
@@ -476,13 +481,23 @@ public class ClaudeCodeAgentProviderTests : IDisposable
             {
                 ["opus"] = new()
                 {
-                    InputTokens = 130, OutputTokens = 70, ThinkingTokens = 20, CacheReadTokens = 1_500,
-                    CacheWriteTokens = 230, WebSearchRequests = 2, CostUsd = 0.80m
+                    InputTokens = 130,
+                    OutputTokens = 70,
+                    ThinkingTokens = 20,
+                    CacheReadTokens = 1_500,
+                    CacheWriteTokens = 230,
+                    WebSearchRequests = 2,
+                    CostUsd = 0.80m
                 },
                 ["haiku"] = new()
                 {
-                    InputTokens = 30, OutputTokens = 20, ThinkingTokens = 5, CacheReadTokens = 300,
-                    CacheWriteTokens = 30, WebSearchRequests = 1, CostUsd = 0.15m
+                    InputTokens = 30,
+                    OutputTokens = 20,
+                    ThinkingTokens = 5,
+                    CacheReadTokens = 300,
+                    CacheWriteTokens = 30,
+                    WebSearchRequests = 1,
+                    CostUsd = 0.15m
                 }
             }
         };
@@ -503,8 +518,13 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         result.Models.Should().HaveCount(2);
         result.Models["opus"].Should().Be(new ClaudeModelTotals
         {
-            InputTokens = 30, OutputTokens = 20, ThinkingTokens = 10, CacheReadTokens = 500,
-            CacheWriteTokens = 30, WebSearchRequests = 1, CostUsd = 0.40m
+            InputTokens = 30,
+            OutputTokens = 20,
+            ThinkingTokens = 10,
+            CacheReadTokens = 500,
+            CacheWriteTokens = 30,
+            WebSearchRequests = 1,
+            CostUsd = 0.40m
         });
         // A model the earlier totals do not have is taken as it is.
         result.Models["haiku"].Should().Be(current.Models["haiku"]);
@@ -532,14 +552,27 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
     private static ClaudeUsageTotals RunningTotal() => new()
     {
-        InputTokens = 10, OutputTokens = 10, ThinkingTokens = 10, CacheReadTokens = 10, CacheWriteTokens = 10,
-        WebSearchRequests = 10, CostUsd = 1m, Turns = 10, ApiDurationMs = 10, ContextWindowTokens = 10,
+        InputTokens = 10,
+        OutputTokens = 10,
+        ThinkingTokens = 10,
+        CacheReadTokens = 10,
+        CacheWriteTokens = 10,
+        WebSearchRequests = 10,
+        CostUsd = 1m,
+        Turns = 10,
+        ApiDurationMs = 10,
+        ContextWindowTokens = 10,
         Models = new Dictionary<string, ClaudeModelTotals>
         {
             ["opus"] = new()
             {
-                InputTokens = 10, OutputTokens = 10, ThinkingTokens = 10, CacheReadTokens = 10,
-                CacheWriteTokens = 10, WebSearchRequests = 10, CostUsd = 1m
+                InputTokens = 10,
+                OutputTokens = 10,
+                ThinkingTokens = 10,
+                CacheReadTokens = 10,
+                CacheWriteTokens = 10,
+                WebSearchRequests = 10,
+                CostUsd = 1m
             }
         }
     };
@@ -581,8 +614,15 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         var previous = RunningTotal();
         var larger = previous with
         {
-            InputTokens = 11, OutputTokens = 11, ThinkingTokens = 11, CacheReadTokens = 11, CacheWriteTokens = 11,
-            WebSearchRequests = 11, CostUsd = 1.5m, Turns = 11, ApiDurationMs = 11,
+            InputTokens = 11,
+            OutputTokens = 11,
+            ThinkingTokens = 11,
+            CacheReadTokens = 11,
+            CacheWriteTokens = 11,
+            WebSearchRequests = 11,
+            CostUsd = 1.5m,
+            Turns = 11,
+            ApiDurationMs = 11,
             Models = new Dictionary<string, ClaudeModelTotals>
             {
                 ["opus"] = previous.Models["opus"] with { InputTokens = 11, CostUsd = 1.5m },
