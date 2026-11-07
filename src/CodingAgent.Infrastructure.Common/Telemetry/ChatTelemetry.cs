@@ -42,8 +42,9 @@ public static class ChatTelemetry
 
     /// <summary>
     /// Spec 057: chat launches refused before a pod was created. Tag <c>reason</c>: <c>helm_template_limit</c>,
-    /// <c>helm_global_limit</c> (a Helm agent limit is reached) or <c>agent_count_unavailable</c> (the running agents
-    /// could not be counted).
+    /// <c>helm_global_limit</c> (a Helm agent limit is reached), <c>agent_count_unavailable</c> (the running agents
+    /// could not be counted) or <c>credential_paused</c> (spec 056: the profile's credential is paused; refused before the
+    /// agent start gate).
     /// </summary>
     public static readonly Counter<long> LaunchRefusals =
         Meter.CreateCounter<long>("workdistribution.chat.launch_refusals", "{launch}",

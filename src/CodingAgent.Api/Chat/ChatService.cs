@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgent.AgentGateway;
 using CodingAgent.Contracts;
 using CodingAgent.Contracts.Ui;
@@ -8,6 +9,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgent.Api.Chat;
@@ -34,17 +36,20 @@ internal sealed class ChatService(
     IAgentRegistryService registry,
     IHubContext<AgentHub, IAgentHubClient> hub,
     DispatchServiceOptions options,
-    ILogger<ChatService> logger)
+    ILogger<ChatService> logger,
+    CredentialPauseStore? pauses = null)
 {
     /// <summary>
-    /// The profiles a chat can be launched for (spec 053 req 6.1, 6.5): enabled, with a job template that exists and
-    /// has a tool. Each with the models a chat may use and the preselection.
+    /// The profiles a chat can be launched for (spec 053 req 6.1, 6.5): with a job template that exists and has a tool. Each
+    /// with the models a chat may use, the preselection and, when its credential is paused, the pause text (spec 056 DD15:
+    /// the profile stays offered; the launch answers 409 with the same text).
     /// </summary>
     /// <param name="chatTemplates">The templates whose repository rows count: the chat project's, or the readable ones.</param>
     public async Task<UiChatOptions> GetOptionsAsync(IReadOnlyList<PipelineJobTemplate> chatTemplates, CancellationToken ct)
     {
         var table = await routing.LoadAsync(ct) ?? AgentRouting.Empty;
         var toolsByKey = templates.ToolsByKey();
+        var paused = await ActivePausesAsync(ct);
         var chatProfiles = (await profiles.LoadAgentProfilesAsync(ct))
             .Select(p => (Profile: p, Tool: LaunchableTool(p, toolsByKey)))
             .Where(x => x.Tool is not null)
@@ -56,7 +61,8 @@ internal sealed class ChatService(
                     x.Profile.Id, x.Profile.DisplayName, x.Tool!.Id,
                     ModelsFor(x.Profile, x.Tool, table, chatTemplates),
                     [AgentToolCatalog.Auto, .. x.Tool.Efforts],
-                    defaultModel, defaultEffort);
+                    defaultModel, defaultEffort,
+                    PausedTextOf(AgentCredentials.For(x.Profile, toolsByKey), paused));
             })
             .ToList();
         return new UiChatOptions(chatProfiles, options.ChatPodConnectTimeoutSeconds);
@@ -96,11 +102,43 @@ internal sealed class ChatService(
         return (route.Model, effort);
     }
 
-    /// <summary>The profile's tool when a chat can be launched for it: enabled, its job template exists and has a tool.</summary>
+    /// <summary>The profile's tool when a chat can be launched for it: its job template exists and has a tool (spec 056: a
+    /// profile is not switched off; its credential is paused instead).</summary>
     private static AgentTool? LaunchableTool(AgentProfile profile, IReadOnlyDictionary<string, string> toolsByKey) =>
-        profile.Enabled && toolsByKey.TryGetValue(profile.JobTemplateKey(), out var providerType)
+        toolsByKey.TryGetValue(profile.JobTemplateKey(), out var providerType)
             ? AgentToolCatalog.Find(providerType)
             : null;
+
+    /// <summary>The active pauses by credential; empty when no pause store is wired.</summary>
+    private async Task<IReadOnlyDictionary<string, AgentCredentialPause>> ActivePausesAsync(CancellationToken ct) =>
+        pauses is null
+            ? new Dictionary<string, AgentCredentialPause>()
+            : (await pauses.LoadAllAsync(ct)).ToDictionary(p => p.Credential, StringComparer.Ordinal);
+
+    private static string? PausedTextOf(string? credential, IReadOnlyDictionary<string, AgentCredentialPause> paused) =>
+        credential is not null && paused.TryGetValue(credential, out var pause) ? HoldTexts.CredentialPaused(pause) : null;
+
+    /// <summary>
+    /// Spec 056 DD15, req 4.5: a chat on a paused credential is refused with 409 and the pause text before the agent start
+    /// gate, so it never takes the <c>dispatch-agents</c> lock (D14). A chat already running keeps running.
+    /// </summary>
+    private async Task RefuseIfPausedAsync(AgentProfile profile, IReadOnlyDictionary<string, string> toolsByKey, CancellationToken ct)
+    {
+        var credential = AgentCredentials.For(profile, toolsByKey);
+        Activity.Current?.SetTag(PipelineTelemetry.CredentialAttributes.Credential, credential);
+        if (pauses is null || credential is null || await pauses.LoadAsync(credential, ct) is not { } pause)
+            return;
+
+        ChatTelemetry.LaunchRefusals.Add(1,
+            new KeyValuePair<string, object?>("agent_selector", JobTemplateStore.NormalizeLabels(profile.JobTemplateKey()).Replace(',', '_')),
+            new KeyValuePair<string, object?>("reason", "credential_paused"));
+        var text = HoldTexts.CredentialPaused(pause);
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation("Chat for profile {ProfileId} refused: {Credential} is paused", profile.Id, credential);
+        }
+        throw new ChatRequestException(StatusCodes.Status409Conflict, text);
+    }
 
     /// <summary>
     /// Launches a chat pod for the profile, model and effort and waits until it connects, then records the session for
@@ -124,7 +162,7 @@ internal sealed class ChatService(
         if (profile is null || tool is null)
         {
             throw new ChatRequestException(StatusCodes.Status400BadRequest,
-                "The selected agent profile is disabled, or its job template does not exist or has no tool. Reload the page.");
+                "The selected agent profile's job template does not exist or has no tool. Reload the page.");
         }
 
         var table = await routing.LoadAsync(ct) ?? AgentRouting.Empty;
@@ -141,6 +179,8 @@ internal sealed class ChatService(
             throw new ChatRequestException(StatusCodes.Status400BadRequest,
                 $"{tool.DisplayName} does not accept effort '{effort}'.");
         }
+
+        await RefuseIfPausedAsync(profile, toolsByKey, ct);
 
         string agentId;
         try
