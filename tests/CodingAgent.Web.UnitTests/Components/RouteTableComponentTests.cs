@@ -12,10 +12,10 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class RouteTableComponentTests : BunitContext
 {
-    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro", true);
-    private static readonly UiRoutingProfile Claude = new("p-claude", "Claude dotnet", JobTemplateProviderType.Claude, "claude,dotnet", true);
-    private static readonly UiRoutingProfile OpenCode = new("p-opencode", "OpenCode python", JobTemplateProviderType.Opencode, "opencode,python", true);
-    private static readonly UiRoutingProfile Retired = new("p-retired", "Retired", JobTemplateProviderType.Kiro, "dotnet,kiro", false);
+    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro");
+    private static readonly UiRoutingProfile Claude = new("p-claude", "Claude dotnet", JobTemplateProviderType.Claude, "claude,dotnet");
+    private static readonly UiRoutingProfile OpenCode = new("p-opencode", "OpenCode python", JobTemplateProviderType.Opencode, "opencode,python");
+    private static readonly UiRoutingProfile Retired = new("p-retired", "Retired", JobTemplateProviderType.Kiro, "dotnet,kiro");
     private static readonly UiRoutingProfile[] Profiles = [Kiro, Claude, OpenCode, Retired];
 
     private static readonly AgentRouting Global = new()

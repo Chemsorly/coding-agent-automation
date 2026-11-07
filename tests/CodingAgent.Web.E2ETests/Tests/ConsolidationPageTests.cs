@@ -220,7 +220,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s1",
             DisplayName = "S1 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-consol-s1");
@@ -322,7 +321,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s2",
             DisplayName = "S2 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-consol-s2");
@@ -432,7 +430,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s3b",
             DisplayName = "S3b Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-consol-s3b");
@@ -515,7 +512,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s5",
             DisplayName = "S5 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -597,7 +593,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
             Id = "profile-consol-s6",
             DisplayName = "S6 Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         var page = new ConsolidationPage(Page, BaseUrl);

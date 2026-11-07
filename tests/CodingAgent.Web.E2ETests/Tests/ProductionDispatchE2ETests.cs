@@ -88,7 +88,6 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
             Id = "profile-dispatch-j1",
             DisplayName = "Dispatch J1 profile",
             JobTemplate = E2ERouting.Key(["jc-e2e"]),
-            Enabled = true
         });
 
         Fixture.AgentProvider
@@ -353,7 +352,6 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
             Id = "profile-refused",
             DisplayName = "Refused profile",
             JobTemplate = E2ERouting.Key(["jc-e2e"]),
-            Enabled = true
         };
         await Fixture.SeedRoutedProfileAsync(profile);
 
@@ -419,7 +417,6 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
             Id = "profile-refused-j8",
             DisplayName = "Refused profile J8",
             JobTemplate = E2ERouting.Key(["jc-e2e"]),
-            Enabled = true
         };
         await Fixture.SeedRoutedProfileAsync(profile);
 

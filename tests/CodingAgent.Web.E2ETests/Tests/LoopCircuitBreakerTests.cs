@@ -50,7 +50,6 @@ public sealed class LoopCircuitBreakerTests : E2ETestBase
             Id = "profile-circuit",
             DisplayName = "Circuit Breaker Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
     }
 

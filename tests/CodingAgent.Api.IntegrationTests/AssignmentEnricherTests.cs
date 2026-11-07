@@ -16,7 +16,7 @@ namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
 /// <see cref="AssignmentEnricher.EnrichAsync"/> (spec 053 design "Claim", DD6): the claim runs on the route pinned at
-/// creation, or for an item queued before agent routing on the current routing; the profile must exist and be enabled,
+/// creation, or for an item queued before agent routing on the current routing; the profile must exist,
 /// its job template must still be the one the item was queued for and must have a tool, and the built agent config's
 /// Id must be unique. Each of those is <see cref="EnrichmentResult.Refused"/>; every other reason to serve no assignment
 /// is <see cref="EnrichmentResult.Unavailable"/>. The repository template's stack labels pick the quality gates and
@@ -125,9 +125,9 @@ public sealed class AssignmentEnricherTests
     };
 
     private static AgentProfile MakeProfile(
-        string id = ProfileId, string jobTemplate = JobTemplate, bool enabled = true,
+        string id = ProfileId, string jobTemplate = JobTemplate,
         IReadOnlyList<McpServerConfig>? mcpServers = null) =>
-        AgentRoutingTestData.Profile(id, jobTemplate, id == ProfileId ? ProfileName : $"{id} profile", enabled,
+        AgentRoutingTestData.Profile(id, jobTemplate, id == ProfileId ? ProfileName : $"{id} profile",
             new Dictionary<string, string> { [ProviderSettingKeys.AgentName] = "dev" }, mcpServers);
 
     private static DispatchInfrastructure.IssueContextResult MakeIssueContext() =>
@@ -593,17 +593,6 @@ public sealed class AssignmentEnricherTests
         Refused(result, AgentRouteRefusalReason.ProfileUnavailable).Text
             .Should().Be($"agent profile '{ProfileName}' no longer exists");
         setup.Infra.CapturedRequest.Should().BeNull("a refused claim prepares nothing");
-    }
-
-    // Spec 056 req 1.4: the profile flag Enabled no longer refuses a claim.
-    [Fact]
-    public async Task EnrichAsync_PinnedProfileFlaggedDisabled_IsNotRefused()
-    {
-        var setup = new Setup { Profiles = [MakeProfile(enabled: false)] };
-
-        var result = await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None);
-
-        Enriched(result).ResolvedProfileId.Should().Be(ProfileId);
     }
 
     [Fact]

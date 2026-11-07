@@ -36,7 +36,6 @@ public sealed class TriageE2ETests : HeadlessE2ETestBase
             Id = "profile-triage",
             DisplayName = "Triage profile",
             JobTemplate = E2ERouting.Key([AgentLabel]),
-            Enabled = true,
         });
     }
 

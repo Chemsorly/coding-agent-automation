@@ -90,7 +90,6 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
             Id = "profile-jc-e2e",
             DisplayName = "JobController E2E Profile",
             JobTemplate = E2ERouting.Key(TestLabels.Jce2e),
-            Enabled = true
         });
 
         // ── Act: distribute and dispatch ──────────────────────────────────────────────

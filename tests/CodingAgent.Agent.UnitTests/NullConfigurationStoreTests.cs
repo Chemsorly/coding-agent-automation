@@ -685,12 +685,10 @@ public static class NullConfigStoreArbitrary
         var gen =
             from displayName in Gen.Elements(DisplayNames)
             from agentConfigId in Gen.Elements("config-1", "config-2", "config-3")
-            from enabled in Gen.Elements(true, false)
             from priority in Gen.Choose(0, 10)
             select new AgentProfile
             {
                 DisplayName = displayName,
-                Enabled = enabled,
             };
 
         return gen.ToArbitrary();

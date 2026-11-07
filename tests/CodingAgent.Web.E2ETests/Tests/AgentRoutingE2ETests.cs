@@ -247,7 +247,7 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
         // Display names "Repro A (disabled)", "Repro B", "Repro C" sort alphabetically,
         // which matches the API's OrderBy(DisplayName) ordering → [A, B, C] in the select.
         await Fixture.ConfigStore.SaveAgentProfileAsync(
-            AgentRoutingTestData.Profile(DisabledId, "kiro,dotnet", "Repro A (disabled)", enabled: false),
+            AgentRoutingTestData.Profile(DisabledId, "kiro,dotnet", "Repro A (disabled)"),
             CancellationToken.None);
         await Fixture.ConfigStore.SaveAgentProfileAsync(
             AgentRoutingTestData.Profile(ProfileB, "kiro,dotnet", "Repro B"), CancellationToken.None);

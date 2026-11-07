@@ -71,7 +71,6 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
@@ -171,7 +170,6 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
@@ -250,7 +248,6 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Act: attempt dispatch without any agents connected

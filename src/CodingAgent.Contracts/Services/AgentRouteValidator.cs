@@ -112,10 +112,6 @@ public static partial class AgentRouteValidator
         {
             errors.Add($"{rowLabel}: agent profile '{route.ProfileId}' does not exist");
         }
-        else if (!profile.Enabled)
-        {
-            errors.Add($"{rowLabel}: agent profile '{profile.DisplayName}' is disabled");
-        }
         else if (toolsByKey.Count > 0)
         {
             var key = profile.JobTemplateKey();

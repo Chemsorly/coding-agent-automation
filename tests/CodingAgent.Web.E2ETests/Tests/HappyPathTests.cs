@@ -44,7 +44,6 @@ public sealed class HappyPathTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         // Connect a fake agent (must be done before dispatch so it's available)

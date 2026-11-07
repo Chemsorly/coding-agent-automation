@@ -385,7 +385,7 @@ public class RepositoryPageServiceTests
     public async Task InitializeAsync_KeepsTheTemplatesResolvedRoutes_AndLoadsTheRoutingEditorForTheAdmin()
     {
         UiResolvedRoute[] routes = [new(WorkItemTaskType.Implementation, "Kiro", "kiro", "auto", "auto", AgentRouteSource.GlobalDefault, "dotnet,kiro", null)];
-        var routing = new UiAgentRoutingPage(new AgentRouting(), [new UiRoutingProfile("p-1", "Kiro", "kiro", "dotnet,kiro", true)], []);
+        var routing = new UiAgentRoutingPage(new AgentRouting(), [new UiRoutingProfile("p-1", "Kiro", "kiro", "dotnet,kiro")], []);
         SetupPage(routes: routes);
         _settings.Setup(s => s.GetAgentRoutingAsync(It.IsAny<CancellationToken>())).ReturnsAsync(routing);
         var svc = CreateService();

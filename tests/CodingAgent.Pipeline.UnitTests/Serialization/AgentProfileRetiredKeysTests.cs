@@ -6,7 +6,8 @@ namespace CodingAgent.Pipeline.UnitTests.Serialization;
 
 /// <summary>
 /// Spec 053 task 6.1: <see cref="AgentProfile"/> keys 2 (MatchLabels), 3 (AgentProviderConfigId) and 5 (Priority) are
-/// retired. A profile serialized with values in them, as the release before spec 053 wrote it, still deserializes, and
+/// retired, and spec 056 retired key 4 (Enabled). A profile serialized with values in them, as earlier releases wrote it,
+/// still deserializes, and
 /// every member that stays is kept. The payload is written by hand (as in <see cref="RetiredKeysDeserializationTests"/>)
 /// because a frozen <c>[MessagePackObject]</c> copy in this assembly would clash with the generated resolver.
 /// </summary>
@@ -21,7 +22,6 @@ public sealed class AgentProfileRetiredKeysTests
         {
             Id = "p-legacy",
             DisplayName = "Kiro dotnet",
-            Enabled = false,
             McpServers = [new McpServerConfig { Name = "context7", Command = "uvx" }],
             JobTemplate = "dotnet,kiro",
         };
@@ -47,6 +47,9 @@ public sealed class AgentProfileRetiredKeysTests
                     break;
                 case 3: // AgentProviderConfigId
                     writer.Write("agent-config");
+                    break;
+                case 4: // Enabled (spec 056)
+                    writer.Write(false);
                     break;
                 case 5: // Priority
                     writer.Write(7);

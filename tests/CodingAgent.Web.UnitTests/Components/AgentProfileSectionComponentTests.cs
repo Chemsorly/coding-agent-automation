@@ -67,7 +67,7 @@ public class AgentProfileSectionComponentTests : BunitContext
 
         var cut = RenderSection();
 
-        cut.FindAll("th").Select(h => h.TextContent.Trim()).Should().Equal("Name", "Job template", "Credential", "MCP", "Enabled", "Actions");
+        cut.FindAll("th").Select(h => h.TextContent.Trim()).Should().Equal("Name", "Job template", "Credential", "MCP", "Actions");
         var row = cut.Find("[data-testid='profile-row-p-1']");
         row.TextContent.Should().Contain("Claude dotnet").And.Contain(ClaudeTemplate);
         row.QuerySelector("[data-testid='profile-tool']")!.TextContent.Should().Be("Claude Code");

@@ -35,7 +35,6 @@ public sealed class AgentChatErrorPathsTests : E2ETestBase
             Id = ProfileId,
             DisplayName = "Chat Edge Profile",
             JobTemplate = E2ERouting.Key("kiro", "dotnet"),
-            Enabled = true
         }, DefaultModel);
     }
 

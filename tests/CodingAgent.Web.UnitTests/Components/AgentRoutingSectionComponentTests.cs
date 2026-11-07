@@ -15,7 +15,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class AgentRoutingSectionComponentTests : BunitContext
 {
-    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro", true);
+    private static readonly UiRoutingProfile Kiro = new("p-kiro", "Kiro dotnet", JobTemplateProviderType.Kiro, "dotnet,kiro");
 
     private readonly Mock<IUiSettingsClient> _settings = new();
     private readonly Mock<IUiProviderClient> _providers = new();

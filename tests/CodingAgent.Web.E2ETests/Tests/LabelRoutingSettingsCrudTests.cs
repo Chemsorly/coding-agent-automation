@@ -28,11 +28,12 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
 
     /// <summary>
     /// Spec 053 req 1.1–1.5: add a profile on a Helm job template (the form shows that template's tool settings) →
-    /// edit its tool setting → disable → delete. The table and status toasts reflect each step, including after a
-    /// reload; the store holds the job template and the tool settings and none of the retired label fields.
+    /// edit its tool setting → delete. The table and status toasts reflect each step, including after a reload; the store
+    /// holds the job template and the tool settings and none of the retired label fields. Spec 056: a profile has no
+    /// enabled flag; the table shows its credential.
     /// </summary>
     [Fact]
-    public async Task AgentProfile_AddEditDisableDelete()
+    public async Task AgentProfile_AddEditDelete()
     {
         // Arrange
         var settingsPage = new SettingsPage(Page, BaseUrl);
@@ -49,7 +50,6 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         await profiles.SelectJobTemplateAsync("dotnet,kiro");
         Assert.True(await profiles.IsAgentNameShownAsync(), "A Kiro job template shows the Kiro tool's Agent Name setting");
         await profiles.FillAgentNameAsync("e2e-agent");
-        await profiles.SetEnabledAsync(true);
         await profiles.SaveAsync();
 
         // Assert: row appears with its job template and tool, save toast shown
@@ -70,24 +70,13 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         await profiles.FillAgentNameAsync("e2e-reviewer");
         await profiles.SaveAsync();
 
-        // Assert: saved and still enabled
+        // Assert: saved; the row shows the credential the profile uses
         Assert.True(await profiles.IsStatusMessageVisibleAsync("saved"), "Expected 'saved' status message after edit");
-        Assert.True(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile should remain enabled after the edit");
+        Assert.Equal("Kiro", await profiles.GetCredentialCellAsync("E2E Test Profile"));
         var storedAfterEdit = (await Fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).Single(p => p.DisplayName == "E2E Test Profile");
         Assert.Equal("e2e-reviewer", storedAfterEdit.Settings![ProviderSettingKeys.AgentName]);
 
-        // Act: disable the profile (no route names it, so that is allowed)
-        await profiles.EditRowAsync("E2E Test Profile");
-        await profiles.SetEnabledAsync(false);
-        await profiles.SaveAsync();
-
-        // Assert: row shows the disabled icon, also after a reload
-        Assert.False(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile row should show disabled icon after disabling");
-        await settingsPage.NavigateAsync();
-        await settingsPage.SelectTreeNodeAsync("Agent Profiles");
-        Assert.False(await profiles.IsRowEnabledAsync("E2E Test Profile"), "Profile row should still show disabled icon after reload");
-
-        // Act: delete the profile
+        // Act: delete the profile (no route names it, so that is allowed)
         await profiles.DeleteRowAsync("E2E Test Profile");
 
         // Assert: row removed, delete toast shown, store no longer has it

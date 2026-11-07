@@ -37,7 +37,6 @@ internal static class TriageTestData
             Id = "profile-triage",
             DisplayName = "Triage profile",
             JobTemplate = E2ERouting.Key([AgentLabel]),
-            Enabled = true,
         });
     }
 

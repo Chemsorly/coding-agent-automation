@@ -14,8 +14,8 @@ public class AgentRouteResolverTests
     private static readonly AgentProfile Kiro = AgentRoutingTestData.Profile("profile-kiro", "dotnet,kiro", "Kiro");
     private static readonly AgentProfile Claude = AgentRoutingTestData.Profile("profile-claude", "claude,dotnet", "Claude");
     private static readonly AgentProfile OpenCode = AgentRoutingTestData.Profile("profile-opencode", "dotnet,opencode", "OpenCode");
-    private static readonly AgentProfile Disabled = AgentRoutingTestData.Profile("profile-off", "dotnet,kiro", "Retired", enabled: false);
-    private static readonly IReadOnlyList<AgentProfile> Profiles = [Kiro, Claude, OpenCode, Disabled];
+    private static readonly AgentProfile Retired = AgentRoutingTestData.Profile("profile-off", "dotnet,kiro", "Retired");
+    private static readonly IReadOnlyList<AgentProfile> Profiles = [Kiro, Claude, OpenCode, Retired];
 
     private static readonly IReadOnlyDictionary<string, string> Tools = AgentRoutingTestData.ToolsByKey(
         ("dotnet,kiro", "kiro"), ("claude,dotnet", "claude"), ("dotnet,opencode", "OpenCode"));
@@ -134,8 +134,8 @@ public class AgentRouteResolverTests
     }
 
     [Fact]
-    // Spec 056 req 1.4: the profile flag Enabled no longer affects routing; a route to such a profile resolves.
-    public void Resolve_RepositoryRowNamingAProfileFlaggedDisabled_Resolves()
+    // Spec 056 req 1.4: a profile has no enabled flag; a repository row naming a second profile on the same template resolves.
+    public void Resolve_RepositoryRowNamingASecondProfileOnTheSameTemplate_Resolves()
     {
         var template = Template((WorkItemTaskType.Implementation, AgentRoutingTestData.Route("profile-off", "auto", "auto")));
 

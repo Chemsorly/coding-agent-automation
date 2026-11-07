@@ -104,7 +104,6 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
             Id = $"profile-terminal-{issueId}",
             DisplayName = "Terminal Label E2E Agent Profile",
             JobTemplate = E2ERouting.Key([AgentSelector]),
-            Enabled = true
         });
     }
 
@@ -597,7 +596,6 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
             Id = $"profile-review-{prNumber}",
             DisplayName = "Review E2E Agent Profile",
             JobTemplate = E2ERouting.Key([AgentSelector]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient($"review-agent-{prNumber}", AgentSelector);

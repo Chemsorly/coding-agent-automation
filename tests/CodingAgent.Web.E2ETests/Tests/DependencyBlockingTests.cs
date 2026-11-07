@@ -33,7 +33,6 @@ public sealed class DependencyBlockingTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -89,7 +88,6 @@ public sealed class DependencyBlockingTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -139,7 +137,6 @@ public sealed class DependencyBlockingTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail

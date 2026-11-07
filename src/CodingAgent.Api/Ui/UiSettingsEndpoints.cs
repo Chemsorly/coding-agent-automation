@@ -104,7 +104,7 @@ internal static class UiSettingsEndpoints
         var paused = (await pauses.LoadAllAsync(ct)).ToDictionary(p => p.Credential, StringComparer.Ordinal);
         var routingProfiles = (await profiles.LoadAgentProfilesAsync(ct))
             .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(), p.Enabled,
+            .Select(p => new UiRoutingProfile(p.Id, p.DisplayName, ToolOf(p, toolsByKey), p.JobTemplateKey(),
                 AgentCredentials.For(p, toolsByKey) is { } c && paused.TryGetValue(c, out var pause) ? HoldTexts.CredentialPaused(pause) : null))
             .ToList();
         return TypedResults.Ok(new UiAgentRoutingPage(

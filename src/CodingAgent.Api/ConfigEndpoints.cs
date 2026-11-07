@@ -188,12 +188,6 @@ public static class ConfigEndpoints
             return TypedResults.BadRequest(error);
 
         var stored = profiles.FirstOrDefault(p => p.Id == profile.Id);
-        if (!profile.Enabled && stored?.Enabled != false)
-        {
-            var routes = await RoutesNamingAsync(profile.Id, routing, projects, ct);
-            if (routes.Count > 0)
-                return TypedResults.BadRequest(AgentRouteReferences.RefusalText(stored?.DisplayName ?? profile.DisplayName, "disabled", routes));
-        }
 
         if (stored is not null && stored.JobTemplateKey() != profile.JobTemplateKey()
             && await RefusedEffortsAsync(profile, templates, routing, projects, ct) is { } refused)
@@ -252,7 +246,14 @@ public static class ConfigEndpoints
         var key = profile.JobTemplateKey();
         if (!toolsByKey.TryGetValue(key, out var providerType))
             return $"Job template [{key}] does not exist in the Helm values (jobTemplates).";
-        return AgentToolCatalog.Find(providerType) is null ? AgentRouteResolver.NoToolText(key, profile) : null;
+        var tool = AgentToolCatalog.Find(providerType);
+        if (tool is null)
+            return AgentRouteResolver.NoToolText(key, profile);
+        // Spec 056 DD16: Claude Code runs with exactly the named credential; auto is gone.
+        if (ReferenceEquals(tool, AgentToolCatalog.ClaudeCode)
+            && !ClaudeCodeAuthModes.IsKnown(profile.Settings?.GetValueOrDefault(ProviderSettingKeys.AuthMode)))
+            return $"Auth mode must be {ClaudeCodeAuthModes.Subscription} or {ClaudeCodeAuthModes.ApiKey}.";
+        return null;
     }
 
     private static async Task<IReadOnlyList<string>> RoutesNamingAsync(
@@ -623,6 +624,8 @@ public static class ConfigEndpoints
             // becomes agent routing. Both are idempotent, so a bundle of this release passes through unchanged.
             await DatabaseStartupService.ApplyRepositorySettingsMigrationAsync(db, Log.Logger, cancellationToken);
             moveSummary = await AgentRoutingMove.RunAsync(db, toolsByKey, Log.Logger, cancellationToken);
+            // Spec 056: a bundle from an earlier release can carry Claude profiles with authMode auto.
+            await ClaudeAuthModeConversion.RunAsync(db, toolsByKey, Log.Logger, cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
         }, ct);

@@ -151,7 +151,6 @@ public sealed class SettingsPersistenceTests : E2ETestBase
             Id = Guid.NewGuid().ToString(),
             DisplayName = "MCP U05",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true,
         });
 
         var helper = new AgentProfileSectionHelper(Page);

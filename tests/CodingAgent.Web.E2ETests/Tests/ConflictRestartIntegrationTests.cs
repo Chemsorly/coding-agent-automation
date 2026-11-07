@@ -56,7 +56,6 @@ public sealed class ConflictRestartIntegrationTests : HeadlessE2ETestBase
                 Id = "profile-conflict-e2e",
                 DisplayName = "Conflict Restart Agent Profile",
                 JobTemplate = E2ERouting.Key("conflict-e2e"),
-                Enabled = true
             });
         }
     }

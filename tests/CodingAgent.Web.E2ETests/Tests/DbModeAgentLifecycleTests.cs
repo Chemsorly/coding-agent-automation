@@ -61,7 +61,6 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
                 Id = profileId,
                 DisplayName = $"Profile {profileId}",
                 JobTemplate = E2ERouting.Key(matchLabels),
-                Enabled = true
             });
         }
     }

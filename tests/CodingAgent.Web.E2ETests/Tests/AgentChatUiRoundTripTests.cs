@@ -55,7 +55,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             Id = ChatProfileId,
             DisplayName = "Chat Round Trip Profile",
             JobTemplate = E2ERouting.Key("kiro", "dotnet"),
-            Enabled = true
         }, DefaultModel);
         await Fixture.SeedRoutingAsync(AgentRoutingTestData.Routing(ChatProfileId, DefaultModel, "auto",
             (WorkItemTaskType.Triage, AgentRoutingTestData.Route(ChatProfileId, ChosenModel, "high"))));
@@ -411,7 +410,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
                 Id = ChatProfileId,
                 DisplayName = "Chat Kiro Profile",
                 JobTemplate = E2ERouting.Key("kiro", "dotnet"),
-                Enabled = true
             }), CancellationToken.None);
         await Fixture.ConfigStore.SaveAgentProfileAsync(
             E2ERouting.Converted(new AgentProfile
@@ -419,7 +417,6 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
                 Id = ClaudeChatProfileId,
                 DisplayName = "Chat Claude Profile",
                 JobTemplate = E2ERouting.Key("claude", "dotnet"),
-                Enabled = true
             }), CancellationToken.None);
         // Global default route → Claude Code / auto / max.
         // OnProfileSelected reads UiChatProfile.DefaultEffort, which is the route's effort.

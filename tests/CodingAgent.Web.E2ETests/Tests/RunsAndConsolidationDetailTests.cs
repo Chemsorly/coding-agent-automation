@@ -225,7 +225,6 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
             Id = "profile-disable-brain",
             DisplayName = "Disable Brain Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-disable-brain");
@@ -404,7 +403,6 @@ public sealed class RunsAndConsolidationDetailTests : E2ETestBase
             Id = "profile-focus-autodispatch",
             DisplayName = "Focus AutoDispatch Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("agent-focus-autodispatch");

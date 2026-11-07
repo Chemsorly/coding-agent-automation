@@ -248,7 +248,6 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = id,
             DisplayName = "Test Profile",
-            Enabled = true,
         };
         await _store.SaveAgentProfileAsync(profile, CancellationToken.None);
 
@@ -266,7 +265,6 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = id,
             DisplayName = "Delete Me",
-            Enabled = true,
         };
         await _store.SaveAgentProfileAsync(profile, CancellationToken.None);
         await _store.DeleteAgentProfileAsync(id, CancellationToken.None);
@@ -875,7 +873,6 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = Guid.NewGuid().ToString(),
             DisplayName = "P1",
-            Enabled = true,
         }, CancellationToken.None);
 
         var reloaded = await _store.LoadAgentProfilesAsync(CancellationToken.None);
@@ -945,14 +942,12 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             Id = id,
             DisplayName = "V1",
-            Enabled = true,
         }, CancellationToken.None);
 
         await _store.SaveAgentProfileAsync(new AgentProfile
         {
             Id = id,
             DisplayName = "V2",
-            Enabled = true,
         }, CancellationToken.None);
 
         var loaded = await _store.LoadAgentProfilesAsync(CancellationToken.None);

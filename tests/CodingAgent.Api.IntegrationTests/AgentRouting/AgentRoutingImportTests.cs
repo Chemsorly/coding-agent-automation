@@ -96,6 +96,24 @@ public sealed class AgentRoutingImportTests : IClassFixture<AgentRoutingImportFa
             "of the key-value rows only the routing table is configuration (V5)");
     }
 
+    // Spec 056 DD16: the import runs the auth mode conversion in its transaction, so a bundle from an earlier release
+    // with a Claude profile on auto lands as subscription.
+    [Fact]
+    public async Task ABundleWithAClaudeProfileOnAuto_IsImportedAsSubscription()
+    {
+        const string claudeId = "0e5e0000-0000-4000-8000-0000000001a2";
+        var claude = AgentRoutingTestData.Profile(claudeId, "claude,dotnet", "Claude from an old bundle",
+            settings: new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = "auto" });
+
+        (await ImportAsync(Bundle(AgentRoutingStore.Serialize(AgentRoutingTestData.Routing(claudeId, "auto", "auto")), claude)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var stored = JsonSerializer.Deserialize<AgentProfile>(
+            (await db.AgentProfiles.AsNoTracking().SingleAsync(p => p.Id == Guid.Parse(claudeId))).Configuration!, PipelineJsonOptions.Lenient)!;
+        stored.Settings![ProviderSettingKeys.AuthMode].Should().Be(ClaudeCodeAuthModes.Subscription);
+    }
+
     [Theory]
     [InlineData("""{"default":{"profileId":"0e5e0000-0000-4000-8000-0000000001a1","model":"bad model!","effort":"auto"},"byTaskType":{}}""", "model")]
     [InlineData("""{"default":{"profileId":"0e5e0000-0000-4000-8000-0000000009ff","model":"auto","effort":"auto"},"byTaskType":{}}""", "is not in the bundle")]

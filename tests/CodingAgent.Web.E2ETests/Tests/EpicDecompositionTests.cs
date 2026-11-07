@@ -48,7 +48,6 @@ public sealed class EpicDecompositionTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-1", "e2e");
@@ -131,7 +130,6 @@ public sealed class EpicDecompositionTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-2", "e2e");
@@ -228,7 +226,6 @@ public sealed class EpicDecompositionTests : E2ETestBase
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-3", "e2e");

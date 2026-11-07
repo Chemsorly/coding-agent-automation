@@ -67,7 +67,6 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
             Id = "profile-lifecycle",
             DisplayName = "Lifecycle Agent Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
     }
 
@@ -595,7 +594,6 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
             Id = "profile-loop-review",
             DisplayName = "Loop Review Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
 
         await using var fakeAgent = new FakeAgentClient("loop-review-agent-1", "e2e");
@@ -675,7 +673,6 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
             Id = "profile-linked",
             DisplayName = "Linked Issues Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
     }
 

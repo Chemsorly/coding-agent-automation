@@ -57,7 +57,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Id = id,
             DisplayName = "Selection Rules Agent Profile",
             JobTemplate = E2ERouting.Key(E2EMatchLabels),
-            Enabled = true
         });
 
     private async Task SetPollIntervalAsync(int maxRunsPerCycle, TimeSpan? pollInterval = null)

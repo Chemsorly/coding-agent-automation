@@ -55,7 +55,6 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
             Id = "profile-integrity-e2e",
             DisplayName = "Integrity E2E Agent Profile",
             JobTemplate = E2ERouting.Key(s_IntegrityE2eMatchLabels),
-            Enabled = true
         });
 
         const string agentId = "integrity-agent-1";
@@ -188,7 +187,6 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
             Id = "profile-integrity-failed-e2e",
             DisplayName = "Integrity Failed E2E Agent Profile",
             JobTemplate = E2ERouting.Key(s_IntegrityE2eMatchLabels),
-            Enabled = true
         });
 
         const string agentId = "integrity-failed-agent-1";

@@ -14,10 +14,9 @@ public class AgentRouteValidatorTests
     private static readonly AgentProfile Kiro = AgentRoutingTestData.Profile("profile-kiro", "dotnet,kiro", "Kiro");
     private static readonly AgentProfile Claude = AgentRoutingTestData.Profile("profile-claude", "claude,dotnet", "Claude");
     private static readonly AgentProfile OpenCode = AgentRoutingTestData.Profile("profile-opencode", "dotnet,opencode", "OpenCode");
-    private static readonly AgentProfile Disabled = AgentRoutingTestData.Profile("profile-off", "dotnet,kiro", "Retired", enabled: false);
     private static readonly AgentProfile Homeless = AgentRoutingTestData.Profile("profile-homeless", "dotnet,gone", "Homeless");
     private static readonly AgentProfile NoTool = AgentRoutingTestData.Profile("profile-notool", "dotnet", "No tool");
-    private static readonly IReadOnlyList<AgentProfile> Profiles = [Kiro, Claude, OpenCode, Disabled, Homeless, NoTool];
+    private static readonly IReadOnlyList<AgentProfile> Profiles = [Kiro, Claude, OpenCode, Homeless, NoTool];
 
     private static readonly IReadOnlyDictionary<string, string> Tools = AgentRoutingTestData.ToolsByKey(
         ("dotnet,kiro", "kiro"), ("claude,dotnet", "claude"), ("dotnet,opencode", "opencode"), ("dotnet", ""));
@@ -55,11 +54,11 @@ public class AgentRouteValidatorTests
     {
         var table = Table(
             (WorkItemTaskType.Decomposition, AgentRoutingTestData.Route("profile-claude", "", "high")),
-            (WorkItemTaskType.Triage, AgentRoutingTestData.Route("profile-off", "opus", "high")));
+            (WorkItemTaskType.Triage, AgentRoutingTestData.Route("profile-homeless", "opus", "high")));
 
         AgentRouteValidator.ValidateRouting(table, Profiles, Tools).Should().Equal(
             "Decomposition: model is required (auto lets the tool choose)",
-            "Triage: agent profile 'Retired' is disabled");
+            "Triage: job template dotnet,gone of agent profile 'Homeless' does not exist in the Helm values");
     }
 
     [Fact]
@@ -83,7 +82,6 @@ public class AgentRouteValidatorTests
     [Theory]
     [InlineData("deleted-id", "Default: agent profile 'deleted-id' does not exist")]
     [InlineData("ip-github", "Default: agent profile 'ip-github' does not exist")] // a provider config Id: another kind
-    [InlineData("profile-off", "Default: agent profile 'Retired' is disabled")]
     [InlineData("", "Default: an agent profile is required")]
     [InlineData("profile-homeless", "Default: job template dotnet,gone of agent profile 'Homeless' does not exist in the Helm values")]
     [InlineData("profile-notool", "Default: Job template dotnet of agent profile 'No tool' has no providerType")]

@@ -140,7 +140,6 @@ public sealed class AutoConsolidationE2ETests : E2ETestBase
             Id = "auto-consol-profile",
             DisplayName = "Auto Consolidation Profile",
             JobTemplate = E2ERouting.Key("jc-e2e"),
-            Enabled = true,
         });
     }
 

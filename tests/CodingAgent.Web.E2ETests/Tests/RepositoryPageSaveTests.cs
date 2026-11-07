@@ -296,7 +296,6 @@ public sealed class RepositoryPageSaveTests : E2ETestBase
             Id = "profile-repo-scan-e2e",
             DisplayName = "Repo Scan Profile",
             JobTemplate = E2ERouting.Key([]),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("repo-page-scan-agent");

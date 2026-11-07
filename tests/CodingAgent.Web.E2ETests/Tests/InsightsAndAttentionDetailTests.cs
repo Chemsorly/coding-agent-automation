@@ -320,7 +320,6 @@ public sealed class InsightsAndAttentionDetailTests : E2ETestBase
             Id = "profile-triage-attention",
             DisplayName = "Triage Attention profile",
             JobTemplate = E2ERouting.Key([agentLabel]),
-            Enabled = true,
         });
 
         await using var agent = new FakeAgentClient("agent-triage-attention-e2e", agentLabel);

@@ -25,14 +25,12 @@ public static class AgentRoutingTestData
         string id = "profile-kiro",
         string jobTemplate = DefaultJobTemplate,
         string? displayName = null,
-        bool enabled = true,
         IReadOnlyDictionary<string, string>? settings = null,
         IReadOnlyList<McpServerConfig>? mcpServers = null) => new()
     {
         Id = id,
         DisplayName = displayName ?? id,
         JobTemplate = jobTemplate,
-        Enabled = enabled,
         Settings = settings ?? new Dictionary<string, string>(),
         McpServers = mcpServers ?? [],
     };

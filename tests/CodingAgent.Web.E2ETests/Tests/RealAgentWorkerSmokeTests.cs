@@ -91,7 +91,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "profile-e2e-real-agent",
             DisplayName = "Real agent smoke profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
         entity.Payload = System.Text.Json.JsonSerializer.Serialize(
             minimalPayload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
@@ -160,7 +159,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "real-agent-profile",
             DisplayName = "Real Agent Profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         // Queue scripted outputs for the pipeline phases:
@@ -282,7 +280,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "decomp-agent-profile",
             DisplayName = "Decomp Agent Profile",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         // ── First Phase 1 run ───────────────────────────────────────────────────────
@@ -424,7 +421,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Id = "real-agent-profile-c",
             DisplayName = "Real Agent Profile C",
             JobTemplate = E2ERouting.Key(["e2e"]),
-            Enabled = true
         });
 
         // First script: primary analysis agent returns not_ready.

@@ -48,7 +48,6 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Id = "profile-db-e2e",
             DisplayName = "DB E2E Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
     }
 
@@ -233,7 +232,6 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Id = "profile-secrets-e2e",
             DisplayName = "Secrets Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("db-agent-secrets", "db-e2e");
@@ -283,7 +281,6 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Id = "profile-multi-e2e",
             DisplayName = "Multi Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         // Connect two agents
@@ -366,7 +363,6 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Id = "profile-db-token-e2e",
             DisplayName = "DB Token Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         // Connect agent
@@ -447,7 +443,6 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Id = "profile-db-brain-e2e",
             DisplayName = "DB Brain Agent Profile",
             JobTemplate = E2ERouting.Key("db-e2e"),
-            Enabled = true
         });
 
         await using var agent = new FakeAgentClient("db-agent-brain", "db-e2e");

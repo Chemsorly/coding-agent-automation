@@ -61,7 +61,6 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
             Id = "profile-toggle-e2e",
             DisplayName = "Toggle Profile",
             JobTemplate = E2ERouting.Key("e2e"),
-            Enabled = true
         });
     }
 

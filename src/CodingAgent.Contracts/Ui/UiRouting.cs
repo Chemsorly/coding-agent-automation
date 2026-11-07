@@ -14,7 +14,7 @@ public sealed record UiJobTemplate(string Key, string Tool);
 /// </summary>
 /// <param name="Tool">The tool of its job template; empty when the template is missing or has no tool.</param>
 /// <param name="PausedText">Spec 056: the pause text when the profile's credential is paused; null otherwise.</param>
-public sealed record UiRoutingProfile(string Id, string Name, string Tool, string JobTemplateKey, bool Enabled, string? PausedText = null);
+public sealed record UiRoutingProfile(string Id, string Name, string Tool, string JobTemplateKey, string? PausedText = null);
 
 /// <summary>
 /// The Routing page (<c>GET /api/ui/settings/agent-routing</c>, admin): the global routing table, the profiles a route

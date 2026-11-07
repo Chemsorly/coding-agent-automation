@@ -77,8 +77,8 @@ public sealed class ChatServiceTests
     }
 
     private static AgentProfile Profile(
-        string id, string jobTemplate, bool enabled = true, IReadOnlyDictionary<string, string>? settings = null) =>
-        AgentRoutingTestData.Profile(id, jobTemplate, $"{id} profile", enabled, settings);
+        string id, string jobTemplate, IReadOnlyDictionary<string, string>? settings = null) =>
+        AgentRoutingTestData.Profile(id, jobTemplate, $"{id} profile", settings);
 
     private void UseProfiles(params AgentProfile[] profiles) =>
         _profiles.Setup(p => p.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(profiles);
@@ -102,13 +102,13 @@ public sealed class ChatServiceTests
     {
         UseProfiles(
             Profile("kiro", "dotnet,kiro"),
-            Profile("claude-disabled", "claude,dotnet", enabled: false),
+            Profile("claude-second", "claude,dotnet"),
             Profile("no-template", "java,spring"),
             Profile("no-tool", "dotnet,python"));
 
         var options = await _sut.GetOptionsAsync([], CancellationToken.None);
 
-        options.Profiles.Select(p => p.Id).Should().Equal("claude-disabled", "kiro");
+        options.Profiles.Select(p => p.Id).Should().Equal("claude-second", "kiro");
         options.ConnectTimeoutSeconds.Should().Be(90);
     }
 

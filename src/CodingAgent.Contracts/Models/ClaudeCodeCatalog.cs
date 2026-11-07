@@ -5,20 +5,25 @@ namespace CodingAgent.Pipeline.Models;
 /// </summary>
 public static class ClaudeCodeAuthModes
 {
-    /// <summary>Use the API key when one is configured, otherwise the subscription token.</summary>
-    public const string Auto = "auto";
-
     /// <summary>Use the Anthropic API key (billed per token).</summary>
     public const string ApiKey = "apiKey";
 
     /// <summary>Use the long-lived subscription token from <c>claude setup-token</c>.</summary>
     public const string Subscription = "subscription";
 
-    public static readonly string[] All = [Auto, ApiKey, Subscription];
+    /// <summary>The two modes; spec 056 removed <c>auto</c>, which picked the API key when one was configured.</summary>
+    public static readonly string[] All = [Subscription, ApiKey];
 
-    /// <summary>Maps any input to one of <see cref="All"/>; unknown or empty values become <see cref="Auto"/>.</summary>
+    /// <summary>True when <paramref name="value"/> is one of <see cref="All"/> (case-insensitive).</summary>
+    public static bool IsKnown(string? value) =>
+        All.Any(m => m.Equals(value?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Maps any input to one of <see cref="All"/>; unknown, empty or the former <c>auto</c> become <see cref="Subscription"/>
+    /// (spec 056 D8: prefer the subscription).
+    /// </summary>
     public static string Normalize(string? value) =>
-        All.FirstOrDefault(m => m.Equals(value?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? Auto;
+        All.FirstOrDefault(m => m.Equals(value?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? Subscription;
 }
 
 /// <summary>A Claude model the Claude Code CLI accepts through <c>--model</c>.</summary>
