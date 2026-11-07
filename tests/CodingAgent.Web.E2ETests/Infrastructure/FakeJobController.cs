@@ -158,6 +158,10 @@ public sealed class FakeJobController : IAsyncDisposable
                 {
                     entity.AssignedAgentId = agent.AgentId.Value;
                     entity.DispatchedAt = DateTimeOffset.UtcNow;
+                    // As DispatchLifecycleService does (spec 056 DD7): a dispatched item no longer waits.
+                    entity.HoldReason = null;
+                    entity.HoldText = null;
+                    entity.HeldAt = null;
                 }, ct);
             if (!dispatched) continue; // another pass won the race
 
