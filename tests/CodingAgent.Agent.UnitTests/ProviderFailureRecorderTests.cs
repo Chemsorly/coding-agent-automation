@@ -109,10 +109,10 @@ public class ProviderFailureRecorderTests
     [Fact]
     public async Task Execute_MasksTheRunsSecretsAndKeyShapes_AndCutsTo300_T4()
     {
-        const string projectSecret = "proj-secret-CANARY-123456";
+        const string canary = "proj-CANARY-123456"; // the run's project value, not a real one
         const string apiKey = "sk-ant-api03-CANARYcanaryCANARYcanary0000";
         var recorder = new ProviderFailureRecorder();
-        var line = $"billing_error: key {apiKey} and {projectSecret} rejected " + new string('x', 400);
+        var line = $"billing_error: key {apiKey} and {canary} rejected " + new string('x', 400);
         var decorator = new ProviderFailureRecordingAgentProvider(
             Provider(Result(AgentErrorCategory.ProviderQuotaExhausted, Quota with { Detail = line })).Object, recorder);
 
@@ -120,11 +120,11 @@ public class ProviderFailureRecorderTests
             new AgentRequest
             {
                 Prompt = "p", WorkspacePath = "/ws",
-                EnvironmentVariables = new Dictionary<string, string> { ["PROJECT_TOKEN"] = projectSecret },
+                EnvironmentVariables = new Dictionary<string, string> { ["PROJECT_TOKEN"] = canary },
             },
             CancellationToken.None);
 
-        recorder.Failure!.Detail.Should().NotContain(apiKey).And.NotContain(projectSecret);
+        recorder.Failure!.Detail.Should().NotContain(apiKey).And.NotContain(canary);
         recorder.Failure.Detail.Length.Should().BeLessThanOrEqualTo(AgentProviderFailure.MaxDetailLength);
     }
 
