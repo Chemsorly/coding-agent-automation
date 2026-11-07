@@ -28,7 +28,7 @@ file sealed record DispatchBody(bool Dispatched, string? Reason);
 ///   <item>J2 — PVC pool exhaustion aborts the cycle; PVC freed after release.</item>
 ///   <item>J5 — concurrency limit stops only the matching selector.</item>
 ///   <item>J6 — K8s Job creation failure fails the item and aborts the cycle.</item>
-///   <item>J7 — disabled profile → 410 on GET /assignment, item transitioned to Failed.</item>
+///   <item>J7 — deleted profile → 410 on GET /assignment, item transitioned to Failed.</item>
 ///   <item>J8 — real worker receives 410 and exits gracefully.</item>
 /// </list>
 /// </para>
@@ -120,6 +120,9 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         // CreateJobAsync, then marks the item Dispatched.
         await PollAsync();
 
+        var polled = await ReadAsync(workItemId);
+        Assert.True(polled.Status == WorkItemStatus.Dispatched,
+            $"The item was not dispatched: {polled.Status}, hold {polled.HoldReason}: {polled.HoldText}");
         var job = await jobTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var agentId = job.Spec!.Template!.Spec!.Containers![0].Env!
             .First(e => e.Name == "AGENT_ID").Value;
@@ -166,18 +169,18 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // J2 — PVC pool exhausted: cycle aborts; PVC freed after release
+    // J2 — PVC pool exhausted: only the Kiro template waits (spec 056 DD8); PVC freed after release
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task WhenThePvcPoolIsExhausted_ShouldKeepTheItemPending_AbortTheCycle_AndDispatchAfterRelease()
+    public async Task WhenThePvcPoolIsExhausted_ShouldHoldOnlyTheKiroTemplate_AndDispatchAfterRelease()
     {
         // ── Arrange ──────────────────────────────────────────────────────────
         // Insert sequentially (not Task.WhenAll) to guarantee CreatedAt ordering.
-        var idA = await InsertPendingWorkItemAsync("kiro-a", "kiro,dotnet");
-        var idB = await InsertPendingWorkItemAsync("kiro-b", "kiro,dotnet");
-        var idC = await InsertPendingWorkItemAsync("kiro-c", "kiro,dotnet");
-        var idD = await InsertPendingWorkItemAsync("other-d", "jc-e2e");
+        var idA = await InsertPendingWorkItemAsync("kiro-a", "kiro,dotnet", routeByRepository: true);
+        var idB = await InsertPendingWorkItemAsync("kiro-b", "kiro,dotnet", routeByRepository: true);
+        var idC = await InsertPendingWorkItemAsync("kiro-c", "kiro,dotnet", routeByRepository: true);
+        var idD = await InsertPendingWorkItemAsync("other-d", "jc-e2e", routeByRepository: true);
 
         // ── Act: first poll ───────────────────────────────────────────────────
         await PollAsync();
@@ -188,7 +191,8 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         var c = await ReadAsync(idC);
         var d = await ReadAsync(idD);
 
-        // a and b claim the two PVCs; c gets 503 (stays Pending); d is never reached (cycle aborted).
+        // a and b claim the two PVCs; c is held (pvc_unavailable, stays Pending), which stops only its template, so d
+        // (another template) still dispatches in the same cycle.
         Assert.Equal(WorkItemStatus.Dispatched, a.Status);
         Assert.Equal(WorkItemStatus.Dispatched, b.Status);
         Assert.NotNull(a.ClaimedPvcName);
@@ -198,13 +202,14 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
             new HashSet<string> { a.ClaimedPvcName!, b.ClaimedPvcName! });
         Assert.Equal(WorkItemStatus.Pending, c.Status);
         Assert.Null(c.ClaimedPvcName);
-        Assert.Equal(WorkItemStatus.Pending, d.Status);
-        Assert.Equal(2, Fixture.K8sClient.CreatedJobs.Count);
+        Assert.Equal(HoldReasons.PvcUnavailable, c.HoldReason);
+        Assert.Equal(WorkItemStatus.Dispatched, d.Status);
+        Assert.Equal(3, Fixture.K8sClient.CreatedJobs.Count);
 
-        // ── Act: direct 503 assertion (BEFORE releasing the PVC) ─────────────
-        // Must happen while the pool is still exhausted; after the release c would dispatch.
+        // ── Act: direct dispatch (BEFORE releasing the PVC) ───────────────────
+        // Must happen while the pool is still exhausted; after the release c would dispatch. A deferral, not a 503.
         var directResult = await Fixture.WorkItems.DispatchPendingAsync(idC);
-        Assert.Equal(DispatchPendingResult.Transient, directResult);
+        Assert.Equal(DispatchPendingResult.PermanentRejection, directResult.Result);
 
         // ── Act: free PVC from a ──────────────────────────────────────────────
         // Both the item AND its Job must be terminal for the PVC to be freed.
@@ -239,10 +244,10 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
     {
         // ── Arrange ──────────────────────────────────────────────────────────
         // jc-limit-e2e has maxConcurrent: 1 (set in E2ETestDefaults.InstallJobTemplates).
-        var idL1 = await InsertPendingWorkItemAsync("limit-1", "jc-limit-e2e");
-        var idL2 = await InsertPendingWorkItemAsync("limit-2", "jc-limit-e2e");
-        var idL3 = await InsertPendingWorkItemAsync("limit-3", "jc-limit-e2e");
-        var idO1 = await InsertPendingWorkItemAsync("other-1", "jc-e2e");
+        var idL1 = await InsertPendingWorkItemAsync("limit-1", "jc-limit-e2e", routeByRepository: true);
+        var idL2 = await InsertPendingWorkItemAsync("limit-2", "jc-limit-e2e", routeByRepository: true);
+        var idL3 = await InsertPendingWorkItemAsync("limit-3", "jc-limit-e2e", routeByRepository: true);
+        var idO1 = await InsertPendingWorkItemAsync("other-1", "jc-e2e", routeByRepository: true);
 
         // ── Act ───────────────────────────────────────────────────────────────
         await PollAsync();
@@ -273,7 +278,7 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
 
         // ── Assert: DispatchPendingAsync also returns PermanentRejection ──────
         var directResult = await Fixture.WorkItems.DispatchPendingAsync(idL3);
-        Assert.Equal(DispatchPendingResult.PermanentRejection, directResult);
+        Assert.Equal(DispatchPendingResult.PermanentRejection, directResult.Result);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -318,11 +323,11 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // J7 — disabled profile produces 410 on GET /assignment
+    // J7 — deleted profile produces 410 on GET /assignment
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task WhenTheRoutedProfileIsDisabledBeforeAssignment_ShouldFailTheItemAndAnswerGone()
+    public async Task WhenTheRoutedProfileIsDeletedBeforeAssignment_ShouldFailTheItemAndAnswerGone()
     {
         // ── Arrange ──────────────────────────────────────────────────────────
         const string issueId = "7002";
@@ -359,9 +364,8 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         await PollAsync();
         Assert.Equal(WorkItemStatus.Dispatched, (await ReadAsync(workItemId)).Status);
 
-        // Disable the profile AFTER dispatch so POST /dispatch is unaffected.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(
-            E2ERouting.Converted(profile) with { Enabled = false }, CancellationToken.None);
+        // Delete the profile AFTER dispatch so POST /dispatch is unaffected (spec 056: a profile is never disabled).
+        await Fixture.ConfigStore.DeleteAgentProfileAsync(profile.Id, CancellationToken.None);
 
         // ── Act ───────────────────────────────────────────────────────────────
         using var client = Fixture.CreateApiClient();
@@ -438,12 +442,11 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         var agentId = job.Spec!.Template!.Spec!.Containers![0].Env!
             .First(e => e.Name == "AGENT_ID").Value;
 
-        // Disable the profile AFTER PollAsync (dispatch succeeded) and BEFORE starting the worker.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(
-            E2ERouting.Converted(profile) with { Enabled = false }, CancellationToken.None);
+        // Delete the profile AFTER PollAsync (dispatch succeeded) and BEFORE starting the worker.
+        await Fixture.ConfigStore.DeleteAgentProfileAsync(profile.Id, CancellationToken.None);
 
         // ── Act ───────────────────────────────────────────────────────────────
-        // The worker calls GET /assignment, receives 410 (profile disabled), and exits 0.
+        // The worker calls GET /assignment, receives 410 (profile deleted), and exits 0.
         await using var harness = new RealAgentWorkerHarness();
         await harness.StartAsync(
             agentHubUrl: Fixture.AgentHubUrl,

@@ -139,7 +139,11 @@ public sealed class FakeJobController : IAsyncDisposable
         // Postgres advisory lock, creates the Job, moves the item to Dispatched and posts
         // agent:in-progress. The harness has neither Postgres nor Kubernetes, so it produces the same
         // outcome in process: the API's own Pending→Dispatched compare-and-swap and label service.
-        var pending = await _workItems.GetPendingAsync(50, ct: ct);
+        // Routing writes the row (spec 056), so it runs only when an idle fake agent could take the item; otherwise a test
+        // that drives POST /dispatch itself (ProductionDispatchE2ETests) would race this pass on the same rows.
+        var pending = _registry.GetIdleAgents().Any(a => !a.Disabled)
+            ? await _workItems.GetPendingAsync(50, ct: ct)
+            : [];
         foreach (var item in pending)
         {
             // Spec 056 DD2: POST /dispatch routes the item first and holds what cannot start; a held item stays Pending.

@@ -88,6 +88,23 @@ public sealed class WorkItemDispatchLoopHoldTests
         _calls.Should().HaveCount(3, "an item never resolved is always tried");
     }
 
+    // A retried 503 (the client's resilience handler) finds the item already Failed and answers not_pending; as before
+    // spec 056 that stops the item's stored selector, so a Job creation failure does not dispatch the next item of the
+    // same template in the same cycle (E2E ProductionDispatchE2ETests J6).
+    [Fact]
+    public async Task NotPending_StopsTheStoredSelector_ButNotOtherTemplates()
+    {
+        var failed = Item(Kiro);
+        var sameTemplate = Item(Kiro);
+        var claude = Item(Claude);
+        Pending(failed, sameTemplate, claude);
+        Answers(id => id == failed.Id ? Held("not_pending") : DispatchPendingResult.Dispatched);
+
+        await Loop().PollAndDispatchAsync(CancellationToken.None);
+
+        _calls.Should().Equal(failed.Id, claude.Id);
+    }
+
     [Fact]
     public async Task AStoppedCredential_SkipsItsLaterItems_ButNotOtherCredentials()
     {
@@ -136,7 +153,6 @@ public sealed class WorkItemDispatchLoopHoldTests
     [InlineData("profile_unavailable")]
     [InlineData("no_tool")]
     [InlineData("no_template")]
-    [InlineData("not_pending")]
     public async Task RoutingHolds_StopNothing(string reason)
     {
         var a = Item(Kiro, AgentCredentials.Kiro);

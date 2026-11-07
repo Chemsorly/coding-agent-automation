@@ -247,7 +247,8 @@ public sealed class WorkItemDispatchLoop : BackgroundService
     /// <summary>
     /// Spec 056 DD9: what one cycle stopped. <c>concurrency_limit</c> and <c>pvc_unavailable</c> stop the answer's job
     /// template (an earlier API names none: then the item's stored selector); <c>credential_paused</c> stops the answer's
-    /// credential (or the stored one); every other hold stops nothing. An empty key is never stopped.
+    /// credential (or the stored one); <c>not_pending</c> and an answer without a reason stop the stored selector; every other
+    /// hold stops nothing. An empty key is never stopped.
     /// </summary>
     internal sealed class CycleStops
     {
@@ -264,8 +265,9 @@ public sealed class WorkItemDispatchLoop : BackgroundService
                 case "credential_paused":
                     AddIfSet(Credentials, outcome.Credential ?? item.Credential);
                     break;
-                case null:
-                    // An answer without a reason: stop the stored selector, as before spec 056.
+                case null or "not_pending":
+                    // An answer without a reason, or an item no longer Pending (a retried 503 after a failed Job creation
+                    // finds it Failed): stop the stored selector, as before spec 056.
                     AddIfSet(Templates, item.AgentSelector);
                     break;
             }
