@@ -13,10 +13,12 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// (<c>StartAsync</c>/<c>StopAsync</c>) and do NOT require a running database.
 ///
 /// <para>
-/// Note: tests that reach a probe inject a failing one and a zero startup delay,
-/// so no real connection is attempted: whether 127.0.0.2:5432 fails within the
-/// poll window depends on the runner. The overall test timeout guards against
-/// indefinite hangs.
+/// Note: tests that reach a probe inject a failing one (<c>FailingProbe</c>) and a zero
+/// startup delay, so no real connection is attempted. <c>BackgroundService.StartAsync</c>
+/// returns before the first probe runs because the loop is dispatched to the thread pool,
+/// so on a loaded runner that probe can start seconds later. These tests therefore wait for
+/// the probe to be invoked instead of polling against a short wall-clock deadline;
+/// <c>HangGuard</c> only bounds a genuine hang.
 /// </para>
 /// </summary>
 public sealed class DatabaseReadinessMonitorExecuteAsyncTests
@@ -25,6 +27,10 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
     // Npgsql 10 uses "Timeout" (not the deprecated "ConnectTimeout") for the TCP connect timeout.
     private const string AlwaysFailConnectionString =
         "Host=127.0.0.2;Port=5432;Database=db;Username=u;Password=p;Timeout=1";
+
+    // Bounds a genuine hang only. The tests wait for events and finish as soon as they fire, so this is
+    // not a timing expectation; it is generous because the monitor loop runs on the (possibly starved) thread pool.
+    private static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(30);
 
     // ── AC1: probe-failure path ───────────────────────────────────────────────
 
@@ -44,23 +50,22 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
         // failing within the poll window, which was not guaranteed on all CI environments
         // (e.g. when PostgreSQL happens to listen on 0.0.0.0:5432 on the runner, 127.0.0.2
         // is within the Linux loopback range and the probe would succeed).
+        var probe = new FailingProbe(signalOnCall: 2);
         var sut = new DatabaseReadinessMonitor(
             healthState,
             AlwaysFailConnectionString,
             logger,
             checkInterval: TimeSpan.FromMilliseconds(50),
             startupDelay: TimeSpan.Zero,
-            probeOverride: _ => Task.FromException(new Exception("Simulated DB probe failure")));
+            probeOverride: probe.FailAsync);
 
-        // Overall guard: if the state never flips something is very wrong.
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        // Hang guard: cancelling it stops the monitor and fails the wait below.
+        using var cts = new CancellationTokenSource(HangGuard);
         await sut.StartAsync(cts.Token);
 
-        // Poll until the monitor marks the state unhealthy.
-        // With startupDelay=Zero and an instantly-failing probe, this completes within milliseconds.
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        while (healthState.IsDatabaseHealthy && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(50, CancellationToken.None);
+        // The second probe only starts after the first failure has been fully handled (Warning logged,
+        // MarkUnhealthy called), so waiting for it needs no further polling.
+        await probe.Reached.WaitAsync(cts.Token);
 
         await sut.StopAsync(CancellationToken.None);
 
@@ -126,24 +131,22 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
             .WriteTo.Sink(sink)
             .CreateLogger();
 
+        var probe = new FailingProbe(signalOnCall: 2);
         var sut = new DatabaseReadinessMonitor(
             healthState,
             AlwaysFailConnectionString,
             logger,
             checkInterval: TimeSpan.FromMilliseconds(50),
             startupDelay: TimeSpan.Zero,
-            probeOverride: _ => Task.FromException(new Exception("Simulated DB probe failure")));
+            probeOverride: probe.FailAsync);
 
-        // Overall guard against indefinite hang.
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        // Hang guard: cancelling it stops the monitor and fails the wait below.
+        using var cts = new CancellationTokenSource(HangGuard);
         await sut.StartAsync(cts.Token);
 
-        // Wait until the first probe has failed and MarkUnhealthy has been called.
-        // At that point we know the loop body has run and we are inside (or about to enter)
-        // the inter-probe Task.Delay — cancelling now exercises the in-loop cancel paths.
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-        while (healthState.IsDatabaseHealthy && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(50, CancellationToken.None);
+        // Wait until the second probe starts: the first failure has been handled (MarkUnhealthy called) and
+        // the loop has gone around once, so cancelling now exercises the in-loop cancel paths.
+        await probe.Reached.WaitAsync(cts.Token);
 
         await sut.StopAsync(CancellationToken.None);
 
@@ -175,23 +178,22 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
             .WriteTo.Sink(sink)
             .CreateLogger();
 
+        var probe = new FailingProbe(signalOnCall: 2);
         var sut = new DatabaseReadinessMonitor(
             healthState,
             AlwaysFailConnectionString,
             logger,
             checkInterval: TimeSpan.FromMilliseconds(50),
             startupDelay: TimeSpan.Zero,
-            probeOverride: _ => Task.FromException(new Exception("Simulated DB probe failure")));
+            probeOverride: probe.FailAsync);
 
-        // Overall guard against indefinite hang.
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        // Hang guard: cancelling it stops the monitor and fails the wait below.
+        using var cts = new CancellationTokenSource(HangGuard);
         await sut.StartAsync(cts.Token);
 
-        // Wait until the "still unreachable" log appears, confirming the else branch ran.
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-        while (!sink.Events.Any(e => e.MessageTemplate.Text.Contains("Database still unreachable"))
-               && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(50, CancellationToken.None);
+        // The second probe only starts after the first failure has been handled. The state was already
+        // unhealthy, so that handling was the else branch that logs "still unreachable".
+        await probe.Reached.WaitAsync(cts.Token);
 
         await sut.StopAsync(CancellationToken.None);
 
@@ -205,6 +207,26 @@ public sealed class DatabaseReadinessMonitorExecuteAsyncTests
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Probe that always fails and completes <see cref="Reached"/> when it is invoked for the
+    /// <paramref name="signalOnCall"/>-th time. The monitor loop is sequential, so the N-th invocation
+    /// only happens after the failures of invocations 1..N-1 have been fully handled.
+    /// </summary>
+    private sealed class FailingProbe(int signalOnCall)
+    {
+        private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _calls;
+
+        public Task Reached => _reached.Task;
+
+        public Task FailAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _calls) == signalOnCall)
+                _reached.TrySetResult();
+            return Task.FromException(new Exception("Simulated DB probe failure"));
+        }
+    }
 
     /// <summary>
     /// Thread-safe Serilog sink that collects log events for assertion.
