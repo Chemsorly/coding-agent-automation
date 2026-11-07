@@ -6,7 +6,7 @@ using KiroCliLib.Core;
 
 namespace CodingAgent.Agent.ClaudeCode;
 
-/// <summary>Usage of one model as a Claude Code <c>result</c> event reports it, for that call alone.</summary>
+/// <summary>Usage of one model as a Claude Code <c>result</c> event reports it: the session's running total.</summary>
 internal sealed record ClaudeModelTotals
 {
     public long InputTokens { get; init; }
@@ -22,8 +22,9 @@ internal sealed record ClaudeModelTotals
 }
 
 /// <summary>
-/// The usage figures of a Claude Code <c>result</c> event: this call's alone, also on a resumed
-/// session (<c>claude -p --resume</c> does not carry earlier calls' totals over).
+/// The usage figures of a Claude Code <c>result</c> event: the session's running total. A resumed call
+/// (<c>claude -p --resume</c>) reports the earlier calls' usage too; <c>ClaudeCodeAgentProvider</c>
+/// subtracts the session's previous totals.
 /// </summary>
 internal sealed record ClaudeUsageTotals
 {
