@@ -1042,7 +1042,8 @@ public class QualityGateExecutorRetryTests
 
 /// <summary>
 /// Tests verifying that <see cref="PipelineRun.FailureCategory"/> is set to
-/// <see cref="FailureReason.QualityGateExhausted"/> on all quality gate exhaustion paths.
+/// <see cref="FailureReason.QualityGateExhausted"/> on all quality gate exhaustion paths, and to
+/// <see cref="FailureReason.InfrastructureFailure"/> when the fix agent's model provider failed (issue #4286).
 /// </summary>
 public class QualityGateExecutorFailureCategoryTests
 {
@@ -1189,6 +1190,207 @@ public class QualityGateExecutorFailureCategoryTests
 
         // Assert: FailureCategory set by FinalizeDraftPrAsync via RunPostRetryCleanupAndFinalizeAsync path
         _run.FailureCategory.Should().Be(FailureReason.QualityGateExhausted);
+    }
+
+    // ── Issue #4286: a provider failure is not the agent's failure ───────────
+
+    // Covers the spec 056 DD14 exit (FailOnProviderUnavailableAsync), not the EndedByProviderFailure flag: DD14 ends the
+    // run after the first retry loop with no draft PR. The flag for this category is covered by the final-loop theory
+    // and the post-PR CI test.
+    [Fact]
+    public async Task PermanentAuthFailure_SetsFailureCategoryToInfrastructureFailure()
+    {
+        SetupValidatorAlwaysFails();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["HTTP 401: unauthorized"],
+                ErrorCategory = AgentErrorCategory.PermanentAuthFailure
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 3)), CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never,
+            "spec 056 DD14 ends the run without a draft PR");
+    }
+
+    [Fact]
+    public async Task ProviderMisconfigured_SetsFailureCategoryToInfrastructureFailure()
+    {
+        SetupValidatorAlwaysFails();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["refused its configuration"],
+                ErrorCategory = AgentErrorCategory.ProviderMisconfigured
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 3)), CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()), Times.Once,
+            "the draft PR is still opened; only the category changes");
+    }
+
+    [Fact]
+    public async Task TransientCapReached_SetsFailureCategoryToInfrastructureFailure()
+    {
+        // MaxRetries is high so that only the consecutive transient cap ends the loop.
+        SetupValidatorAlwaysFails();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["HTTP 429: rate limited"],
+                ErrorCategory = AgentErrorCategory.ProviderRateLimit
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 100)), CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _run.RetryCount.Should().Be(0, "no real fix attempt ran, so the loop did not end by exhausting its retries");
+    }
+
+    // The agent call absorbs an exception into a null result, which the loop counts as a transient result.
+    [Fact]
+    public async Task AbsorbedExceptionsReachingTheTransientCap_SetFailureCategoryToInfrastructureFailure()
+    {
+        SetupValidatorAlwaysFails();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("provider error: connection refused"));
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 100)), CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // PermanentAuthFailure reaches FinalizeDraftPrAsync through the final quality gate loop: the spec 056 DD14 guard
+    // only follows the first loop, so a first-loop failure never emits this line.
+    [Fact]
+    public async Task ProviderFailure_EmitsProviderUnavailableOutputLine()
+    {
+        SetupValidatorPassesOnceThenFails();
+        SetupFixAgentResult(new AgentResult
+        {
+            ExitCode = 1,
+            OutputLines = ["HTTP 401: unauthorized"],
+            ErrorCategory = AgentErrorCategory.PermanentAuthFailure
+        });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 3)), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("Agent provider unavailable"))),
+            Times.Once);
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("Quality gates failed after"))),
+            Times.Never,
+            "a provider failure is not a quality gate exhaustion");
+    }
+
+    // Requirement 3: the final quality gate loop has no DD14 guard, so every permanent provider failure reaches the flag.
+    [Theory]
+    [InlineData(AgentErrorCategory.PermanentAuthFailure)]
+    [InlineData(AgentErrorCategory.ProviderMisconfigured)]
+    [InlineData(AgentErrorCategory.ProviderQuotaExhausted)]
+    public async Task FinalQualityGateLoop_PermanentProviderFailure_SetsFailureCategoryToInfrastructureFailure(
+        AgentErrorCategory category)
+    {
+        SetupValidatorPassesOnceThenFails();
+        SetupFixAgentResult(new AgentResult { ExitCode = 1, OutputLines = ["provider refused the call"], ErrorCategory = category });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 3)), CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure);
+        _run.RetryCount.Should().Be(0, "the provider failure is not a fix attempt");
+        _mockCallbacks.Verify(c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()), Times.Once,
+            "the draft PR is still opened; only the category and the UI line change");
+    }
+
+    // The flag is set only when the loop stops: transient results that the loop waited out must not mark the run.
+    [Fact]
+    public async Task TransientResultsBelowTheCap_ThenRealRetriesExhausted_KeepsQualityGateExhausted()
+    {
+        SetupValidatorAlwaysFails();
+
+        // AgentStallMonitor sends a rate-limited call again MaxProviderRetries times, so one loop iteration
+        // that sees a transient result takes MaxProviderRetries + 1 calls. Two such iterations stay below the cap.
+        const int transientIterations = 2;
+        const int rateLimitedCalls = (AgentStallMonitor.MaxProviderRetries + 1) * transientIterations;
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount <= rateLimitedCalls
+                    ? new AgentResult
+                    {
+                        ExitCode = 1,
+                        OutputLines = ["HTTP 429: rate limited"],
+                        ErrorCategory = AgentErrorCategory.ProviderRateLimit
+                    }
+                    : new AgentResult
+                    {
+                        ExitCode = 0,
+                        OutputLines = AgentFixOutputLines,
+                        Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
+                    };
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 2)), CancellationToken.None);
+
+        _run.RetryCount.Should().Be(2, "two real fix attempts used up the retries");
+        _run.FailureCategory.Should().Be(FailureReason.QualityGateExhausted);
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("Quality gates failed after"))),
+            Times.Once);
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("Agent provider unavailable"))),
+            Times.Never);
+    }
+
+    private static PipelineConfiguration CreateConfig(int maxRetries) => new()
+    {
+        AgentTimeout = TimeSpan.FromMinutes(10),
+        MaxRetries = maxRetries,
+        StallPollInterval = TimeSpan.FromMilliseconds(50),
+        StallWarningInterval = TimeSpan.FromHours(1),
+        TransientRetryDelay = TimeSpan.Zero  // eliminate the 30-second wait in unit tests
+    };
+
+    private void SetupValidatorAlwaysFails()
+    {
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(FailingReport);
+    }
+
+    // The first pass succeeds, so the run reaches the cleanup and the final quality gate loop; every later pass fails.
+    private void SetupValidatorPassesOnceThenFails()
+    {
+        var callCount = 0;
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(++callCount == 1 ? PassingReport : FailingReport));
+    }
+
+    // Only the fix prompt ("Quality gates failed (attempt n/m)") gets this result; the cleanup and the failure
+    // feedback calls keep the default success result.
+    private void SetupFixAgentResult(AgentResult result)
+    {
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Quality gates failed (attempt")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ReturnsAsync(result);
     }
 
     private QualityGateContext BuildContext(PipelineConfiguration config) => new()

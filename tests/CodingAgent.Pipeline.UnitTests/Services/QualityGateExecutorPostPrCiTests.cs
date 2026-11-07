@@ -1138,6 +1138,55 @@ public class QualityGateExecutorEdgeCaseTests
     }
 
     /// <summary>
+    /// Issue #4286: the post-PR CI retry loop (the third <c>RunRetryLoopAsync</c> call) has no spec 056 guard, so a
+    /// fix agent whose provider rejects the login ends in <c>FinalizeDraftPrAsync</c>. The provider, not the code,
+    /// failed: the run must be an infrastructure failure instead of <see cref="FailureReason.QualityGateExhausted"/>.
+    /// </summary>
+    [Fact]
+    public async Task WhenPostPrCiRetryAgentProviderFails_FailureCategoryIsInfrastructureFailure()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciFailure = new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] };
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+
+        // pre-PR CI passes, cleanup CI passes, post-PR CI fails: only then does the third retry loop run
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)
+            .ReturnsAsync(ciPassed)
+            .ReturnsAsync(ciFailure)
+            .ReturnsAsync(ciFailure);
+
+        // Only the retry prompt gets the failure; the cleanup call keeps the default success result
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.Is<AgentRequest>(r => r.Prompt.Contains("Quality gates failed")),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 1,
+                OutputLines = ["HTTP 401: unauthorized"],
+                ErrorCategory = AgentErrorCategory.PermanentAuthFailure
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 1), CancellationToken.None);
+
+        _run.FailureCategory.Should().Be(FailureReason.InfrastructureFailure,
+            "a provider failure in the post-PR CI retry loop is not the agent's failure");
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Once, "the draft PR is still opened; only the category and the UI line change");
+        _mockCallbacks.Verify(
+            c => c.EmitOutputLine(It.Is<string>(s => s.Contains("Agent provider unavailable"))),
+            Times.Once);
+    }
+
+    /// <summary>
     /// Regression test for issue #3111 (run 6d7b4aa1): post-PR CI failed on a flaky test, and
     /// the retry loop's CI round then passed. The retry loop had moved the run back to
     /// RunningQualityGates, so the run ended on a non-terminal step and was recorded as

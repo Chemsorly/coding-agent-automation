@@ -20,8 +20,14 @@ namespace CodingAgent.Pipeline.Models;
 /// Amount by which <c>run.RetryCount</c> should be incremented. Applied once in the shared
 /// dispatcher after the handler returns, centralizing all <c>RetryCount</c> mutations.
 /// </param>
+/// <param name="EndedByProviderFailure">
+/// When <see langword="true"/>, the loop stops because the fix agent's model provider failed (a permanent
+/// provider failure, or the consecutive-transient cap), not because the agent ran out of fix attempts.
+/// Only set together with <see cref="ShouldBreak"/>.
+/// </param>
 internal record RetryDecision(
     bool ShouldBreak,
     bool ShouldContinue,
     int ConsecutiveTransientRetries,
-    int RetryCountDelta);
+    int RetryCountDelta,
+    bool EndedByProviderFailure = false);
