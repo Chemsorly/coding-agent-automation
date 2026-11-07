@@ -293,4 +293,98 @@ public sealed class DispatchRouterTests
         (await ReadAsync(noRoute.Id)).HoldReason.Should().BeNull();
         (await ReadAsync(limit.Id)).HoldReason.Should().Be(HoldReasons.ConcurrencyLimit);
     }
+
+    // ── Req 3.5(a), review of spec 056 ───────────────────────────────────────────
+
+    private static AgentCredentialPause KiroPause(DateTimeOffset? until = null) => new(
+        AgentCredentials.Kiro, CredentialPauseReasons.QuotaExhausted, CredentialPauseSources.Auto, Now, until, "quota");
+
+    private async Task<IReadOnlyList<Guid>> DispatchWindowAsync(int size)
+    {
+        await using var db = _db.CreateDbContext();
+        return await db.WorkItems.AsNoTracking()
+            .Where(w => w.Status == WorkItemStatus.Pending)
+            .OrderByOperatorHoldsLast().ThenBy(w => w.CreatedAt)
+            .Select(w => w.Id).Take(size).ToListAsync();
+    }
+
+    // Scenario B: items that already carry the credential (an earlier limit hold) when it gets paused all move behind
+    // other work at once, so a Claude item behind 60 of them is in the first 50-item window.
+    [Fact]
+    public async Task APause_HoldsEveryQueuedItemOfTheCredential_AtOnce()
+    {
+        var kiroItems = new List<WorkItemEntity>();
+        for (var i = 0; i < 60; i++)
+        {
+            kiroItems.Add(await SeedAsync(e =>
+            {
+                e.Credential = AgentCredentials.Kiro;
+                e.HoldReason = HoldReasons.ConcurrencyLimit;
+                e.HoldText = "4 of 4 agents are running";
+                e.HeldAt = Now.AddMinutes(-5);
+                e.CreatedAt = Now.AddMinutes(-60 + i);
+            }));
+        }
+        var claude = await SeedAsync(e => { e.Credential = AgentCredentials.ClaudeSubscription; e.CreatedAt = Now; });
+        var noRoute = await SeedAsync(e =>
+        {
+            e.Credential = AgentCredentials.Kiro;
+            e.HoldReason = HoldReasons.NoRoute;
+            e.HoldText = "No agent route";
+            e.HeldAt = Now.AddMinutes(-5);
+        });
+
+        await Pauses().PauseAsync(KiroPause(), CancellationToken.None);
+
+        var held = await ReadAsync(kiroItems[0].Id);
+        held.HoldReason.Should().Be(HoldReasons.CredentialPaused);
+        held.HoldText.Should().StartWith("Kiro paused — quota used up");
+        held.HeldAt.Should().Be(Now);
+        (await ReadAsync(kiroItems[59].Id)).HoldReason.Should().Be(HoldReasons.CredentialPaused);
+        (await ReadAsync(claude.Id)).HoldReason.Should().BeNull("another credential is not held");
+        (await ReadAsync(noRoute.Id)).HoldReason.Should().Be(HoldReasons.NoRoute, "another operator hold stays");
+        (await DispatchWindowAsync(50)).Should().Contain(claude.Id);
+    }
+
+    [Fact]
+    public async Task APauseThatChangesNothing_WritesNoHold_AndAnExtensionKeepsHeldAt()
+    {
+        var item = await SeedAsync(e => e.Credential = AgentCredentials.Kiro);
+        var pauses = Pauses();
+        await pauses.PauseAsync(KiroPause(Now.AddHours(1)), CancellationToken.None);
+        var first = await ReadAsync(item.Id);
+
+        _time.Now = Now.AddMinutes(10);
+        await pauses.PauseAsync(KiroPause(Now.AddHours(5)), CancellationToken.None);
+
+        var extended = await ReadAsync(item.Id);
+        extended.HoldText.Should().NotBe(first.HoldText, "the text names the new end time");
+        extended.HeldAt.Should().Be(first.HeldAt, "the same reason keeps its start");
+    }
+
+    // Scenario A: a routing save while the credential stays paused keeps its items waiting at the back.
+    [Fact]
+    public async Task ClearOperatorHolds_KeepsTheHoldsOfACredentialThatIsStillPaused()
+    {
+        var kiro = await SeedAsync(e =>
+        {
+            e.Credential = AgentCredentials.Kiro;
+            e.HoldReason = HoldReasons.CredentialPaused;
+            e.HoldText = "Kiro paused";
+            e.HeldAt = Now;
+        });
+        var stale = await SeedAsync(e =>
+        {
+            e.Credential = AgentCredentials.Opencode;
+            e.HoldReason = HoldReasons.CredentialPaused;
+            e.HoldText = "OpenCode paused";
+            e.HeldAt = Now;
+        });
+
+        await using (var db = _db.CreateDbContext())
+            (await PendingHoldResets.ClearOperatorHoldsAsync(db, CancellationToken.None, [AgentCredentials.Kiro])).Should().Be(1);
+
+        (await ReadAsync(kiro.Id)).HoldReason.Should().Be(HoldReasons.CredentialPaused);
+        (await ReadAsync(stale.Id)).HoldReason.Should().BeNull("OpenCode is no longer paused");
+    }
 }

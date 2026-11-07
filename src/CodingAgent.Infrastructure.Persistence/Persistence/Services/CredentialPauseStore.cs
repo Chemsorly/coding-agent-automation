@@ -136,6 +136,7 @@ public sealed class CredentialPauseStore
         _log.Information(
             "Credential {Credential} paused: {PauseReason} ({PauseSource}) until {PausedUntil}; {PauseDetail}",
             stored.Credential, stored.Reason, stored.Source, stored.Until?.ToString("O") ?? "resumed", stored.Detail);
+        await HoldItemsAsync(db, stored, now, ct);
         return stored;
     }
 
@@ -185,6 +186,28 @@ public sealed class CredentialPauseStore
     /// </summary>
     private static Task<int> ClearHoldsAsync(PipelineDbContext db, string credential, CancellationToken ct) =>
         PendingHoldResets.ClearCredentialHoldsAsync(db, credential, ct);
+
+    /// <summary>
+    /// Spec 056 req 3.5(a): the queued items whose last route used the credential wait from now on, all at once. Best
+    /// effort: a failure leaves them to the dispatcher, which holds each item when it tries it.
+    /// </summary>
+    private async Task HoldItemsAsync(PipelineDbContext db, AgentCredentialPause stored, DateTimeOffset now, CancellationToken ct)
+    {
+        try
+        {
+            var held = await PendingHoldResets.HoldCredentialAsync(db, stored.Credential, HoldTexts.CredentialPaused(stored), now, ct);
+            if (held > 0)
+                _log.Information("Credential {Credential} paused: {HeldItems} queued work items wait for it", stored.Credential, held);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warning(ex, "Credential {Credential} paused, but its queued work items could not be held", stored.Credential);
+        }
+    }
+
+    /// <summary>The credentials paused now (their entries are not expired).</summary>
+    public async Task<IReadOnlyList<string>> PausedCredentialsAsync(CancellationToken ct) =>
+        (await LoadAllAsync(ct)).Select(p => p.Credential).ToList();
 
     private static AgentCredentialPause? Deserialize(string? json)
     {

@@ -83,8 +83,10 @@ dispatch tries again; the resolution does not fall through to the next level, an
 The Work page shows the reason in its Waiting column and counts the waiting items per reason. The issue, PR and epic
 drawers, the run page's re-dispatch, the operator triage and the consolidation trigger queue the work and say why it
 waits when it would wait now. A wait that only an operator ends (a paused credential, a missing route, profile or
-template) moves the item behind the other queued work, so it never keeps other work from starting; resuming the
-credential or saving the routing makes it eligible again at once.
+template) moves the item behind the other queued work, so it never keeps other work from starting. Pausing a credential
+moves all its queued work behind at once. Resuming the credential makes its work eligible again at once; saving the
+routing does so for the other waits, while work for a credential that is still paused stays behind until it is
+reached.
 
 When an agent claims the work, the API checks the pinned route again: a profile deleted since, or a job template that
 changed, refuses the claim with the reason, and the work item fails instead of running on something else.

@@ -117,14 +117,14 @@ internal static class UiSettingsEndpoints
     /// </summary>
     internal static async Task<IResult> SaveAgentRouting(
         [FromBody] AgentRouting? routing, AgentRoutingStore store, IAgentProfileStore profiles, JobTemplateStore templates,
-        IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+        IDbContextFactory<PipelineDbContext> dbFactory, CredentialPauseStore pauses, CancellationToken ct)
     {
         var errors = AgentRouteValidator.ValidateRouting(routing, await profiles.LoadAgentProfilesAsync(ct), templates.ToolsByKey());
         if (errors.Count > 0)
             return TypedResults.BadRequest(string.Join("\n", errors));
 
         await store.SaveAsync(routing!, ct);
-        await ClearOperatorHoldsAsync(dbFactory, ct);
+        await ClearOperatorHoldsAsync(dbFactory, pauses, ct);
         return TypedResults.Ok();
     }
 
@@ -251,7 +251,7 @@ internal static class UiSettingsEndpoints
     internal static async Task<IResult> SaveTemplate( // NOSONAR S107 — minimal API handler; the parameters are bound by the framework
         string projectId, [FromBody] PipelineJobTemplate template, IUserAccess access, IProjectStore store,
         IAgentProfileStore profiles, JobTemplateStore jobTemplates, IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
+        CredentialPauseStore pauses, CancellationToken ct)
     {
         access.DemandAdminister(projectId);
         if (!access.IsGlobalAdmin)
@@ -264,7 +264,7 @@ internal static class UiSettingsEndpoints
 
         var result = await ConfigEndpoints.SaveTemplate(projectId, template, store, profiles, jobTemplates, ct);
         if (result is IStatusCodeHttpResult { StatusCode: >= 200 and < 300 })
-            await ClearOperatorHoldsAsync(dbFactory, ct);
+            await ClearOperatorHoldsAsync(dbFactory, pauses, ct);
         return result;
     }
 
@@ -273,12 +273,15 @@ internal static class UiSettingsEndpoints
     /// at its next dispatch; held items lose their operator hold so they regain their place in the queue. Best effort: a
     /// failure leaves the holds, which the next dispatch attempt replaces.
     /// </summary>
-    private static async Task ClearOperatorHoldsAsync(IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct)
+    private static async Task ClearOperatorHoldsAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory, CredentialPauseStore pauses, CancellationToken ct)
     {
         try
         {
+            // Spec 056 req 3.5(a): a credential that is still paused keeps its items waiting at the back.
+            var paused = await pauses.PausedCredentialsAsync(ct);
             await using var db = await dbFactory.CreateDbContextAsync(ct);
-            var cleared = await PendingHoldResets.ClearOperatorHoldsAsync(db, ct);
+            var cleared = await PendingHoldResets.ClearOperatorHoldsAsync(db, ct, paused);
             if (cleared > 0)
                 Serilog.Log.Information("Routing saved: cleared the holds of {HeldItems} waiting work items", cleared);
         }
