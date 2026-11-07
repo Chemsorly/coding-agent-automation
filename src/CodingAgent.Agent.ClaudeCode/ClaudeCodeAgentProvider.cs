@@ -71,6 +71,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
 
     private readonly ConcurrentDictionary<IClaudeProcess, byte> _activeProcesses = new();
     private readonly ConcurrentDictionary<string, string> _sessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ClaudeUsageTotals> _sessionTotals = new(StringComparer.Ordinal);
     private volatile string? _lastKnownSessionId;
 
     public ClaudeCodeAgentProvider(
@@ -201,6 +202,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         }
 
         RememberSession(state.SessionId, workspacePath, resumeSessionId is null);
+        SubtractEarlierCalls(state);
         var details = BuildUsage(state, credential, out var usage, out var cost);
         var errorCategory = exitCode == ExitCodes.Success ? AgentErrorCategory.None : state.ClassifyFailure();
 
@@ -554,9 +556,122 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     }
 
     /// <summary>
-    /// Turns the result event's totals into this call's usage. They are this call's alone, also on a
-    /// resumed session: <c>claude -p --resume</c> does not carry earlier calls' totals over (checked
-    /// with a real account: a resumed call's <c>total_cost_usd</c> was its own cost).
+    /// The result event reports the session's running total, so a resumed call's totals include the
+    /// earlier calls'. Stores the running total for the session and, when this provider already ran
+    /// the session, replaces <see cref="ClaudeStreamState.Totals"/> with this call's own share. A
+    /// session this provider has not seen is reported as it is, as is one whose totals went backwards.
+    /// </summary>
+    private void SubtractEarlierCalls(ClaudeStreamState state)
+    {
+        if (state.Totals is not { } current || state.SessionId is not { } sessionId)
+            return;
+
+        var previous = ReplaceSessionTotals(sessionId, current);
+        if (previous is null)
+            return;
+
+        if (WentBackwards(current, previous))
+        {
+            _logger.Warning(
+                "Claude Code session {SessionId} reported smaller totals than its previous call; using them as they are",
+                sessionId);
+            return;
+        }
+
+        state.Totals = Subtract(current, previous);
+    }
+
+    /// <summary>
+    /// Stores <paramref name="current"/> as the session's latest running total and returns the one it
+    /// replaced, in one atomic step: calls that overlap on a session each replace a different total,
+    /// so no earlier share is subtracted twice.
+    /// </summary>
+    internal ClaudeUsageTotals? ReplaceSessionTotals(string sessionId, ClaudeUsageTotals current)
+    {
+        ClaudeUsageTotals? previous = null;
+        _sessionTotals.AddOrUpdate(sessionId, current, (_, stored) =>
+        {
+            previous = stored;
+            return current;
+        });
+        return previous;
+    }
+
+    /// <summary>
+    /// The usage of the call that moved a session's running total from <paramref name="previous"/> to
+    /// <paramref name="current"/>. The context window is not a counter, so it stays as it is, and a
+    /// cost missing on either side stays the current value.
+    /// </summary>
+    internal static ClaudeUsageTotals Subtract(ClaudeUsageTotals current, ClaudeUsageTotals previous) => current with
+    {
+        InputTokens = current.InputTokens - previous.InputTokens,
+        OutputTokens = current.OutputTokens - previous.OutputTokens,
+        ThinkingTokens = current.ThinkingTokens - previous.ThinkingTokens,
+        CacheReadTokens = current.CacheReadTokens - previous.CacheReadTokens,
+        CacheWriteTokens = current.CacheWriteTokens - previous.CacheWriteTokens,
+        WebSearchRequests = current.WebSearchRequests - previous.WebSearchRequests,
+        CostUsd = SubtractCost(current.CostUsd, previous.CostUsd),
+        Turns = SubtractTurns(current.Turns, previous.Turns),
+        ApiDurationMs = current.ApiDurationMs - previous.ApiDurationMs,
+        Models = current.Models.ToDictionary(
+            kvp => kvp.Key,
+            kvp => previous.Models.TryGetValue(kvp.Key, out var earlier) ? SubtractModel(kvp.Value, earlier) : kvp.Value,
+            StringComparer.Ordinal)
+    };
+
+    private static ClaudeModelTotals SubtractModel(ClaudeModelTotals current, ClaudeModelTotals previous) => current with
+    {
+        InputTokens = current.InputTokens - previous.InputTokens,
+        OutputTokens = current.OutputTokens - previous.OutputTokens,
+        ThinkingTokens = current.ThinkingTokens - previous.ThinkingTokens,
+        CacheReadTokens = current.CacheReadTokens - previous.CacheReadTokens,
+        CacheWriteTokens = current.CacheWriteTokens - previous.CacheWriteTokens,
+        WebSearchRequests = current.WebSearchRequests - previous.WebSearchRequests,
+        CostUsd = SubtractCost(current.CostUsd, previous.CostUsd)
+    };
+
+    private static decimal? SubtractCost(decimal? current, decimal? previous) =>
+        current is { } now && previous is { } before ? now - before : current;
+
+    // num_turns is not reliably a running total: a call can report fewer turns than an earlier one of
+    // its session (widow's run a5a27313: 6, 6, 32, 3, 1 turns). A smaller count is the call's own.
+    // TODO: the same evidence says num_turns is per call, so a count that is not smaller is understated
+    // here (6 after 6 gives 0, 32 after 6 gives 26). Requirement 2 of #4293 subtracts it; the issue owner decides.
+    private static int SubtractTurns(int current, int previous) =>
+        current >= previous ? current - previous : current;
+
+    /// <summary>
+    /// True when a figure of <paramref name="current"/> is smaller than the stored one, which a running
+    /// total never is. Compares the figures <see cref="Subtract"/> subtracts, except the turns (see
+    /// <see cref="SubtractTurns"/>); a comparison with a missing cost is false.
+    /// </summary>
+    // TODO: Requirement 3 of #4293 lists the turns among the figures that trigger the warning and the
+    // as-is fallback. They are left out because the issue's own evidence has num_turns going down (32, 3)
+    // on a session whose cost kept growing, and the fallback would report that call's whole running total.
+    internal static bool WentBackwards(ClaudeUsageTotals current, ClaudeUsageTotals previous) =>
+        current.InputTokens < previous.InputTokens
+        || current.OutputTokens < previous.OutputTokens
+        || current.ThinkingTokens < previous.ThinkingTokens
+        || current.CacheReadTokens < previous.CacheReadTokens
+        || current.CacheWriteTokens < previous.CacheWriteTokens
+        || current.WebSearchRequests < previous.WebSearchRequests
+        || current.CostUsd < previous.CostUsd
+        || current.ApiDurationMs < previous.ApiDurationMs
+        || current.Models.Any(kvp => previous.Models.TryGetValue(kvp.Key, out var earlier) && ModelWentBackwards(kvp.Value, earlier));
+
+    private static bool ModelWentBackwards(ClaudeModelTotals current, ClaudeModelTotals previous) =>
+        current.InputTokens < previous.InputTokens
+        || current.OutputTokens < previous.OutputTokens
+        || current.ThinkingTokens < previous.ThinkingTokens
+        || current.CacheReadTokens < previous.CacheReadTokens
+        || current.CacheWriteTokens < previous.CacheWriteTokens
+        || current.WebSearchRequests < previous.WebSearchRequests
+        || current.CostUsd < previous.CostUsd;
+
+    /// <summary>
+    /// Turns the result event's totals into this call's usage. They are this call's own: for a session
+    /// this provider already ran, the previous call's totals were subtracted first (the result event
+    /// reports the session's running total; widow, 2026-11-07).
     /// </summary>
     private static AgentUsageDetails? BuildUsage(
         ClaudeStreamState state, ClaudeCredential? credential, out TokenUsage? usage, out decimal? cost)

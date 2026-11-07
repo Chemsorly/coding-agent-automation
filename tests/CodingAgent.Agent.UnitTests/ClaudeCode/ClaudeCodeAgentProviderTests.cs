@@ -38,8 +38,9 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         string? authMode = ClaudeCodeAuthModes.Subscription,
         string? model = "claude-opus-5-5",
         AgentEffortLevel effort = AgentEffortLevel.High,
-        ClaudeExitTimings? timings = null) =>
-        new(new Mock<Serilog.ILogger>().Object,
+        ClaudeExitTimings? timings = null,
+        Serilog.ILogger? logger = null) =>
+        new(logger ?? new Mock<Serilog.ILogger>().Object,
             new ClaudeCodeSettings(model, "/opt/claude", effort, authMode, _mcpConfigPath),
             _launcher, name => _env.GetValueOrDefault(name), timings);
 
@@ -69,7 +70,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
     private static string Result(
         string sessionId, long input, long output, long thinking, decimal cost, int turns,
-        bool isError = false, int? apiErrorStatus = null, long cacheRead = 0, long cacheWrite = 0) =>
+        bool isError = false, int? apiErrorStatus = null, long cacheRead = 0, long cacheWrite = 0, long? apiDurationMs = null) =>
         JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["type"] = "result",
@@ -79,7 +80,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
             ["result"] = isError ? "boom" : "ok",
             ["total_cost_usd"] = cost,
             ["num_turns"] = turns,
-            ["duration_api_ms"] = turns * 1000,
+            ["duration_api_ms"] = apiDurationMs ?? turns * 1000,
             ["api_error_status"] = apiErrorStatus,
             ["modelUsage"] = new Dictionary<string, object>
             {
@@ -321,12 +322,297 @@ public class ClaudeCodeAgentProviderTests : IDisposable
 
         _launcher.Started[0].ArgumentList.Should().NotContain("--resume");
         _launcher.Started[1].ArgumentList.Should().ContainInOrder("--resume", "s1");
-        // A resumed call's result reports that call alone (checked against the real CLI), so it
-        // is taken as it is: nothing of the earlier call is subtracted.
-        second.Usage!.InputTokens.Should().Be(160);
+        // A resumed call's result reports the session's running total, so the earlier call's totals are subtracted.
+        second.Usage!.InputTokens.Should().Be(60);
+        second.Usage.OutputTokens.Should().Be(30);
+        second.Cost.Should().Be(0.15m);
+        second.UsageDetails!.Turns.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ResumedTwice_ReportsEachCallsOwnShare()
+    {
+        var provider = CreateProvider();
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 100, output: 50, thinking: 0, cost: 6.65m, turns: 6));
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 160, output: 80, thinking: 0, cost: 7.48m, turns: 12));
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 250, output: 120, thinking: 0, cost: 9.30m, turns: 44));
+
+        var first = await provider.ExecuteAsync(Request(), CancellationToken.None);
+        var second = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        var third = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+
+        first.Cost.Should().Be(6.65m);
+        second.Cost.Should().Be(0.83m);
+        third.Cost.Should().Be(1.82m);
+        first.Usage!.InputTokens.Should().Be(100);
+        second.Usage!.InputTokens.Should().Be(60);
+        third.Usage!.InputTokens.Should().Be(90);
+        first.UsageDetails!.Turns.Should().Be(6);
+        second.UsageDetails!.Turns.Should().Be(6);
+        third.UsageDetails!.Turns.Should().Be(32);
+        // The model's own figures are the call's share too, not the running total.
+        third.UsageDetails.ModelUsage["claude-opus-5-5"].InputTokens.Should().Be(90);
+        third.UsageDetails.ModelUsage["claude-opus-5-5"].CostUsd.Should().Be(1.82m);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_TotalsGoingBackwards_AreTakenAsTheyAre()
+    {
+        var logger = new Mock<Serilog.ILogger>();
+        var provider = CreateProvider(logger: logger.Object);
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 100, output: 50, thinking: 0, cost: 0.25m, turns: 5));
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 20, output: 10, thinking: 0, cost: 0.05m, turns: 1));
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 60, output: 30, thinking: 0, cost: 0.20m, turns: 3));
+
+        await provider.ExecuteAsync(Request(), CancellationToken.None);
+        var second = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        var third = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+
+        second.Cost.Should().Be(0.05m);
+        second.Usage!.InputTokens.Should().Be(20);
+        second.UsageDetails!.Turns.Should().Be(1);
+        // The smaller totals are the baseline now: the next call is its share on top of them.
+        third.Cost.Should().Be(0.15m);
+        third.Usage!.InputTokens.Should().Be(40);
+        third.UsageDetails!.Turns.Should().Be(2);
+        logger.Verify(l => l.Warning(
+            "Claude Code session {SessionId} reported smaller totals than its previous call; using them as they are",
+            "s1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DifferentSessions_AreNotSubtractedFromEachOther()
+    {
+        var provider = CreateProvider();
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 100, output: 50, thinking: 0, cost: 0.10m, turns: 2));
+        // Every figure of s2 is larger than s1's, so subtracting s1 from s2 would not look like a total going backwards.
+        _launcher.Enqueue(Init("s2"), Result("s2", input: 170, output: 80, thinking: 0, cost: 0.17m, turns: 4));
+
+        await provider.ExecuteAsync(Request(), CancellationToken.None);
+        var second = await provider.ExecuteAsync(Request(useResume: false), CancellationToken.None);
+
+        second.Usage!.InputTokens.Should().Be(170);
         second.Usage.OutputTokens.Should().Be(80);
-        second.Cost.Should().Be(0.25m);
-        second.UsageDetails!.Turns.Should().Be(5);
+        second.Cost.Should().Be(0.17m);
+        second.UsageDetails!.Turns.Should().Be(4);
+    }
+
+    [Fact]
+    public void ReplaceSessionTotals_ReturnsTheTotalsItReplaced_PerSession()
+    {
+        var provider = CreateProvider();
+        var first = new ClaudeUsageTotals { InputTokens = 1 };
+        var second = new ClaudeUsageTotals { InputTokens = 2 };
+
+        provider.ReplaceSessionTotals("s1", first).Should().BeNull();
+        provider.ReplaceSessionTotals("s2", new ClaudeUsageTotals { InputTokens = 9 }).Should().BeNull();
+        provider.ReplaceSessionTotals("s1", second).Should().BeSameAs(first);
+        provider.ReplaceSessionTotals("s1", new ClaudeUsageTotals { InputTokens = 3 }).Should().BeSameAs(second);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ResumedCallWithFewerTurnsThanBefore_StillSubtractsTheCost()
+    {
+        // The turn counts and running totals of widow's run a5a27313 (issue #4293). A call with fewer
+        // turns than an earlier one is no total going backwards, so its cost is still its share. Only
+        // the fourth call is asserted: how the turns of the calls before it are reported is open
+        // (see SubtractTurns).
+        var logger = new Mock<Serilog.ILogger>();
+        var provider = CreateProvider(logger: logger.Object);
+        _launcher.Enqueue(Init("s1"), Result("s1", 100, 50, 0, cost: 6.65m, turns: 6, apiDurationMs: 1_679_000));
+        _launcher.Enqueue(Init("s1"), Result("s1", 160, 80, 0, cost: 7.48m, turns: 6, apiDurationMs: 1_810_000));
+        _launcher.Enqueue(Init("s1"), Result("s1", 250, 120, 0, cost: 9.30m, turns: 32, apiDurationMs: 2_113_000));
+        _launcher.Enqueue(Init("s1"), Result("s1", 300, 140, 0, cost: 10.09m, turns: 3, apiDurationMs: 2_141_000));
+
+        await provider.ExecuteAsync(Request(), CancellationToken.None);
+        await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        var fourth = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+
+        fourth.Cost.Should().Be(0.79m);
+        fourth.Usage!.InputTokens.Should().Be(50);
+        fourth.UsageDetails!.Turns.Should().Be(3);
+        fourth.UsageDetails.ApiDurationSeconds.Should().Be(28);
+        logger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void Subtract_SubtractsEveryFieldAndEachModel_KeepsTheContextWindow()
+    {
+        var previous = new ClaudeUsageTotals
+        {
+            InputTokens = 100,
+            OutputTokens = 50,
+            ThinkingTokens = 10,
+            CacheReadTokens = 1_000,
+            CacheWriteTokens = 200,
+            WebSearchRequests = 1,
+            CostUsd = 0.40m,
+            Turns = 4,
+            ApiDurationMs = 5_000,
+            ContextWindowTokens = 200_000,
+            Models = new Dictionary<string, ClaudeModelTotals>
+            {
+                ["opus"] = new()
+                {
+                    InputTokens = 100, OutputTokens = 50, ThinkingTokens = 10, CacheReadTokens = 1_000,
+                    CacheWriteTokens = 200, WebSearchRequests = 1, CostUsd = 0.40m
+                }
+            }
+        };
+        var current = new ClaudeUsageTotals
+        {
+            InputTokens = 160,
+            OutputTokens = 90,
+            ThinkingTokens = 25,
+            CacheReadTokens = 1_800,
+            CacheWriteTokens = 260,
+            WebSearchRequests = 3,
+            CostUsd = 0.95m,
+            Turns = 9,
+            ApiDurationMs = 12_500,
+            ContextWindowTokens = 1_000_000,
+            Models = new Dictionary<string, ClaudeModelTotals>
+            {
+                ["opus"] = new()
+                {
+                    InputTokens = 130, OutputTokens = 70, ThinkingTokens = 20, CacheReadTokens = 1_500,
+                    CacheWriteTokens = 230, WebSearchRequests = 2, CostUsd = 0.80m
+                },
+                ["haiku"] = new()
+                {
+                    InputTokens = 30, OutputTokens = 20, ThinkingTokens = 5, CacheReadTokens = 300,
+                    CacheWriteTokens = 30, WebSearchRequests = 1, CostUsd = 0.15m
+                }
+            }
+        };
+
+        var result = ClaudeCodeAgentProvider.Subtract(current, previous);
+
+        result.InputTokens.Should().Be(60);
+        result.OutputTokens.Should().Be(40);
+        result.ThinkingTokens.Should().Be(15);
+        result.CacheReadTokens.Should().Be(800);
+        result.CacheWriteTokens.Should().Be(60);
+        result.WebSearchRequests.Should().Be(2);
+        result.CostUsd.Should().Be(0.55m);
+        result.Turns.Should().Be(5);
+        result.ApiDurationMs.Should().Be(7_500);
+        // The context window is a property of the model, not a counter: it is taken as it is.
+        result.ContextWindowTokens.Should().Be(1_000_000);
+        result.Models.Should().HaveCount(2);
+        result.Models["opus"].Should().Be(new ClaudeModelTotals
+        {
+            InputTokens = 30, OutputTokens = 20, ThinkingTokens = 10, CacheReadTokens = 500,
+            CacheWriteTokens = 30, WebSearchRequests = 1, CostUsd = 0.40m
+        });
+        // A model the earlier totals do not have is taken as it is.
+        result.Models["haiku"].Should().Be(current.Models["haiku"]);
+    }
+
+    [Fact]
+    public void Subtract_FewerTurnsThanTheStoredOnes_TakesTheCurrentTurns()
+    {
+        var previous = new ClaudeUsageTotals { Turns = 32 };
+
+        ClaudeCodeAgentProvider.Subtract(new ClaudeUsageTotals { Turns = 3 }, previous).Turns.Should().Be(3);
+        ClaudeCodeAgentProvider.Subtract(new ClaudeUsageTotals { Turns = 33 }, previous).Turns.Should().Be(1);
+    }
+
+    [Fact]
+    public void Subtract_CostMissingOnEitherSide_KeepsTheCurrentCost()
+    {
+        var known = new ClaudeUsageTotals { CostUsd = 0.40m };
+        var unknown = new ClaudeUsageTotals { CostUsd = null };
+
+        ClaudeCodeAgentProvider.Subtract(known, unknown).CostUsd.Should().Be(0.40m);
+        ClaudeCodeAgentProvider.Subtract(unknown, known).CostUsd.Should().BeNull();
+        ClaudeCodeAgentProvider.Subtract(unknown, unknown).CostUsd.Should().BeNull();
+    }
+
+    private static ClaudeUsageTotals RunningTotal() => new()
+    {
+        InputTokens = 10, OutputTokens = 10, ThinkingTokens = 10, CacheReadTokens = 10, CacheWriteTokens = 10,
+        WebSearchRequests = 10, CostUsd = 1m, Turns = 10, ApiDurationMs = 10, ContextWindowTokens = 10,
+        Models = new Dictionary<string, ClaudeModelTotals>
+        {
+            ["opus"] = new()
+            {
+                InputTokens = 10, OutputTokens = 10, ThinkingTokens = 10, CacheReadTokens = 10,
+                CacheWriteTokens = 10, WebSearchRequests = 10, CostUsd = 1m
+            }
+        }
+    };
+
+    private static ClaudeUsageTotals WithOpus(ClaudeUsageTotals totals, Func<ClaudeModelTotals, ClaudeModelTotals> change) =>
+        totals with { Models = new Dictionary<string, ClaudeModelTotals> { ["opus"] = change(totals.Models["opus"]) } };
+
+    private static readonly (string Figure, Func<ClaudeUsageTotals, ClaudeUsageTotals> MakeSmaller)[] SmallerFigures =
+    [
+        ("InputTokens", t => t with { InputTokens = 9 }),
+        ("OutputTokens", t => t with { OutputTokens = 9 }),
+        ("ThinkingTokens", t => t with { ThinkingTokens = 9 }),
+        ("CacheReadTokens", t => t with { CacheReadTokens = 9 }),
+        ("CacheWriteTokens", t => t with { CacheWriteTokens = 9 }),
+        ("WebSearchRequests", t => t with { WebSearchRequests = 9 }),
+        ("CostUsd", t => t with { CostUsd = 0.5m }),
+        ("ApiDurationMs", t => t with { ApiDurationMs = 9 }),
+        ("Model.InputTokens", t => WithOpus(t, m => m with { InputTokens = 9 })),
+        ("Model.OutputTokens", t => WithOpus(t, m => m with { OutputTokens = 9 })),
+        ("Model.ThinkingTokens", t => WithOpus(t, m => m with { ThinkingTokens = 9 })),
+        ("Model.CacheReadTokens", t => WithOpus(t, m => m with { CacheReadTokens = 9 })),
+        ("Model.CacheWriteTokens", t => WithOpus(t, m => m with { CacheWriteTokens = 9 })),
+        ("Model.WebSearchRequests", t => WithOpus(t, m => m with { WebSearchRequests = 9 })),
+        ("Model.CostUsd", t => WithOpus(t, m => m with { CostUsd = 0.5m }))
+    ];
+
+    [Fact]
+    public void WentBackwards_AnyFigureSmallerThanTheStoredOne_IsTrue()
+    {
+        var previous = RunningTotal();
+
+        foreach (var (figure, makeSmaller) in SmallerFigures)
+            ClaudeCodeAgentProvider.WentBackwards(makeSmaller(previous), previous).Should().BeTrue(figure);
+    }
+
+    [Fact]
+    public void WentBackwards_EqualOrLargerFigures_IsFalse()
+    {
+        var previous = RunningTotal();
+        var larger = previous with
+        {
+            InputTokens = 11, OutputTokens = 11, ThinkingTokens = 11, CacheReadTokens = 11, CacheWriteTokens = 11,
+            WebSearchRequests = 11, CostUsd = 1.5m, Turns = 11, ApiDurationMs = 11,
+            Models = new Dictionary<string, ClaudeModelTotals>
+            {
+                ["opus"] = previous.Models["opus"] with { InputTokens = 11, CostUsd = 1.5m },
+                ["haiku"] = new() { InputTokens = 1 }
+            }
+        };
+
+        ClaudeCodeAgentProvider.WentBackwards(previous, previous).Should().BeFalse();
+        ClaudeCodeAgentProvider.WentBackwards(larger, previous).Should().BeFalse();
+    }
+
+    [Fact]
+    public void WentBackwards_FewerTurns_IsNotATotalGoingBackwards()
+    {
+        var previous = RunningTotal();
+
+        ClaudeCodeAgentProvider.WentBackwards(previous with { Turns = 3 }, previous).Should().BeFalse();
+    }
+
+    [Fact]
+    public void WentBackwards_IgnoresTheContextWindow_AndACostMissingOnEitherSide()
+    {
+        var previous = RunningTotal();
+
+        // A smaller context window is no counter going backwards, and a missing cost is not comparable.
+        ClaudeCodeAgentProvider.WentBackwards(previous with { ContextWindowTokens = 1 }, previous).Should().BeFalse();
+        ClaudeCodeAgentProvider.WentBackwards(previous with { CostUsd = null }, previous).Should().BeFalse();
+        ClaudeCodeAgentProvider.WentBackwards(previous, previous with { CostUsd = null }).Should().BeFalse();
+        ClaudeCodeAgentProvider.WentBackwards(
+            WithOpus(previous, m => m with { CostUsd = null }), previous).Should().BeFalse();
     }
 
     [Fact]
