@@ -183,7 +183,7 @@ public sealed class CredentialPauseStore
     /// Spec 056 DD7: a resume clears the <c>credential_paused</c> holds of <paramref name="credential"/>'s Pending items,
     /// so they regain their place in the queue.
     /// </summary>
-    private static Task ClearHoldsAsync(PipelineDbContext db, string credential, CancellationToken ct) =>
+    private static Task<int> ClearHoldsAsync(PipelineDbContext db, string credential, CancellationToken ct) =>
         PendingHoldResets.ClearCredentialHoldsAsync(db, credential, ct);
 
     private static AgentCredentialPause? Deserialize(string? json)

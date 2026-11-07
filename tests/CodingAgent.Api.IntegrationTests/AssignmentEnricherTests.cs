@@ -222,7 +222,7 @@ public sealed class AssignmentEnricherTests
 
             return new AssignmentEnricher(
                 Infra, profileStore.Object, Preparer.Object, projectStore.Object,
-                new ConsolidationTemplateResolver(projectStore.Object), new AgentRoutingStore(db), JobTemplates, Logger,
+                new ConsolidationTemplateResolver(projectStore.Object), JobTemplates, Logger,
                 new ConsolidationRunContextSources(RunHistory));
         }
     }
@@ -558,7 +558,6 @@ public sealed class AssignmentEnricherTests
         var enricher = new AssignmentEnricher(
             infra, profileStore.Object, MakeNoOpConsolidationPreparer().Object, projectStore.Object,
             new ConsolidationTemplateResolver(projectStore.Object),
-            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
             AgentRoutingTestData.JobTemplates(), Serilog.Log.Logger);
         var project = MakeProject() with { EpicIssueProviderId = "issue-epics", TemplateIds = ["t-api"] };
 
@@ -1136,7 +1135,6 @@ public sealed class AssignmentEnricherOceCancellationTests
         return new AssignmentEnricher(
             new ThrowingDispatchInfrastructure(toThrow), profileStoreMock.Object, new Mock<IConsolidationJobPreparationService>().Object,
             noopProjectStore.Object, new ConsolidationTemplateResolver(noopProjectStore.Object),
-            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
             AgentRoutingTestData.JobTemplates(), mockLogger.Object);
     }
 

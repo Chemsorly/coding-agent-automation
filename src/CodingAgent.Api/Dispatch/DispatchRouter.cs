@@ -54,7 +54,7 @@ public sealed record DispatchRouteOutcome(
 /// <c>no_tool</c>, <c>no_template</c>, <c>credential_paused</c>. A resolved route is pinned on the item (selector,
 /// credential, payload route and profile), also when the credential is paused, so the Scheduler's loop can skip by it.
 /// </summary>
-public sealed class DispatchRouter(
+public sealed class DispatchRouter( // NOSONAR S107 — a DI singleton; each dependency is one store or clock the routing reads
     IDbContextFactory<PipelineDbContext> dbFactory,
     IAgentProfileStore profiles,
     AgentRoutingStore routing,

@@ -103,13 +103,8 @@ public sealed partial class WorkItemStatusTransitionService
         // ── Spec 056 DD11: a provider failure from the agent that runs the item ───────────────────
         // Handled first and never falls through: the item is ended and queued again, exactly once. A provider failure
         // posted with the operator key is ignored (agentCaller null): the request is handled as a plain Failed.
-        if (request.Status == WorkItemStatus.Failed && agentCaller is not null && _providerFailures is not null
-            && ReadProviderFailure(request.Result) is { } providerFailure)
-        {
-            return await _providerFailures.HandleAsync(id, agentCaller, providerFailure, ct)
-                ? StatusTransitionOutcome.Transitioned
-                : StatusTransitionOutcome.AlreadyAtTarget;
-        }
+        if (await TryHandleProviderFailureAsync(id, request, agentCaller, ct) is { } providerOutcome)
+            return providerOutcome;
 
         // TODO: [WARNING] id is not validated for Guid.Empty. Passing Guid.Empty flows through to
         // TryRecoverFromInfrastructureFailureAsync and then TransitionDetailedAsync, which will issue
@@ -184,6 +179,21 @@ public sealed partial class WorkItemStatusTransitionService
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────────────────
+
+    /// <summary>The handler's outcome for an agent's Failed status carrying a provider failure; null otherwise.</summary>
+    private async Task<StatusTransitionOutcome?> TryHandleProviderFailureAsync(
+        Guid id, WorkItemStatusRequest request, string? agentCaller, CancellationToken ct)
+    {
+        if (request.Status != WorkItemStatus.Failed || agentCaller is null || _providerFailures is null
+            || ReadProviderFailure(request.Result) is not { } providerFailure)
+        {
+            return null;
+        }
+
+        return await _providerFailures.HandleAsync(id, agentCaller, providerFailure, ct)
+            ? StatusTransitionOutcome.Transitioned
+            : StatusTransitionOutcome.AlreadyAtTarget;
+    }
 
     /// <summary>The provider failure of a completion payload; null when absent or the payload cannot be read.</summary>
     private static AgentProviderFailure? ReadProviderFailure(string? resultJson)

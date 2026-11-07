@@ -4,6 +4,7 @@ using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -74,7 +75,7 @@ internal static class UiCredentialEndpoints
         return TypedResults.NoContent();
     }
 
-    private static IResult UnknownCredential(string credential) =>
+    private static NotFound<string> UnknownCredential(string credential) =>
         TypedResults.NotFound($"Unknown agent credential '{CodingAgent.Infrastructure.Common.LogSanitizer.SanitizeForLog(credential)}'.");
 
     private static string UserName(IUserAccess access) => access.Username ?? access.Subject ?? "unknown";

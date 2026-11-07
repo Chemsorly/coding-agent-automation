@@ -78,32 +78,7 @@ internal sealed class ProviderFailureHandler(
         // creation is retried, and the pause and the run's end only log their failures.
 
         // 2. Pause the credential of the route the item ran on.
-        AgentCredentialPause? intended = null;
-        if (before.Credential is { } credential)
-        {
-            intended = new AgentCredentialPause(
-                credential,
-                failure.Category == AgentProviderFailure.AuthFailed ? CredentialPauseReasons.AuthFailed : CredentialPauseReasons.QuotaExhausted,
-                CredentialPauseSources.Auto,
-                now,
-                failure.ResetsAt,
-                detail,
-                WorkItemId: workItemId,
-                RunId: workItemId.ToString());
-            try
-            {
-                await pauses.PauseAsync(intended, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.Error(ex, "Pausing credential {Credential} for work item {WorkItemId} failed; the work is still queued again",
-                    credential, workItemId);
-            }
-        }
-        else
-        {
-            _log.Warning("Work item {WorkItemId} carries no credential; the provider failure pauses nothing", workItemId);
-        }
+        var intended = await PauseCredentialAsync(before, failure, detail, now, ct);
 
         // 3. The same work, queued again; held until the credential is available.
         WorkItemPayload.TryDeserialize(before.Payload, out var request);
@@ -114,20 +89,7 @@ internal sealed class ProviderFailureHandler(
             _log.Error("Work item {WorkItemId}'s request cannot be read; it was ended but not queued again", workItemId);
 
         // 4. End the run: history row, queue label back, agent state, Job.
-        try
-        {
-            await lifecycle.RequeueRunAsync(
-                new RunId(workItemId.ToString()), text,
-                new RequeueTarget(
-                    request?.RunType ?? before.TaskType.ToDefaultRunTypeOrNull() ?? PipelineRunType.Implementation,
-                    before.IssueIdentifier, before.IssueProviderConfigId, request?.RepoProviderConfigId,
-                    before.AssignedAgentId ?? before.K8sJobName),
-                ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.Error(ex, "Ending the run of work item {WorkItemId} after its requeue failed", workItemId);
-        }
+        await EndRunAsync(before, request, text, ct);
 
         // 5. The outcome of the ended attempt.
         var (duration, runTypeTag, _, projectName, providerTag, modelTag) =
@@ -140,6 +102,58 @@ internal sealed class ProviderFailureHandler(
             "Requeued work item {WorkItemId} ({IssueIdentifier}) as {NewWorkItemId}: {Credential} {ProviderFailure} — {PauseDetail}",
             workItemId, LogSanitizer.SanitizeForLog(before.IssueIdentifier), newId, before.Credential, failure.Category, detail);
         return true;
+    }
+
+    /// <summary>Pauses the item's credential; returns the pause it meant to store (null without a credential). Logs a failure.</summary>
+    private async Task<AgentCredentialPause?> PauseCredentialAsync(
+        Infrastructure.Persistence.Entities.WorkItemEntity before, AgentProviderFailure failure, string detail,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        if (before.Credential is not { } credential)
+        {
+            _log.Warning("Work item {WorkItemId} carries no credential; the provider failure pauses nothing", before.Id);
+            return null;
+        }
+
+        var intended = new AgentCredentialPause(
+            credential,
+            failure.Category == AgentProviderFailure.AuthFailed ? CredentialPauseReasons.AuthFailed : CredentialPauseReasons.QuotaExhausted,
+            CredentialPauseSources.Auto,
+            now,
+            failure.ResetsAt,
+            detail,
+            WorkItemId: before.Id,
+            RunId: before.Id.ToString());
+        try
+        {
+            await pauses.PauseAsync(intended, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Error(ex, "Pausing credential {Credential} for work item {WorkItemId} failed; the work is still queued again",
+                credential, before.Id);
+        }
+        return intended;
+    }
+
+    /// <summary>Ends the run (history row, queue label back, agent state, Job); logs a failure.</summary>
+    private async Task EndRunAsync(
+        Infrastructure.Persistence.Entities.WorkItemEntity before, JobDistributionRequest? request, string text, CancellationToken ct)
+    {
+        try
+        {
+            await lifecycle.RequeueRunAsync(
+                new RunId(before.Id.ToString()), text,
+                new RequeueTarget(
+                    request?.RunType ?? before.TaskType.ToDefaultRunTypeOrNull() ?? PipelineRunType.Implementation,
+                    before.IssueIdentifier, before.IssueProviderConfigId, request?.RepoProviderConfigId,
+                    before.AssignedAgentId ?? before.K8sJobName),
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Error(ex, "Ending the run of work item {WorkItemId} after its requeue failed", before.Id);
+        }
     }
 
     /// <summary>

@@ -254,6 +254,7 @@ internal static class ClaudeStreamJsonParser
 {
     private const int MaxSummaryLength = 200;
     private const string ProviderTag = "claude";
+    private const string ContentProperty = "content";
     private const long MaxUnixSeconds = 253_402_300_799;          // 9999-12-31T23:59:59Z
     private const long MaxUnixMilliseconds = 253_402_300_799_999;
 
@@ -346,7 +347,7 @@ internal static class ClaudeStreamJsonParser
         if (!isSubagent)
             TrackContextSize(message, state);
 
-        if (!message.TryGetProperty("content", out var content)
+        if (!message.TryGetProperty(ContentProperty, out var content)
             || content.ValueKind != JsonValueKind.Array)
             return [];
 
@@ -638,7 +639,7 @@ internal static class ClaudeStreamJsonParser
     private static IReadOnlyList<string> ProcessUser(JsonElement root, ClaudeStreamState state)
     {
         if (!root.TryGetProperty("message", out var message)
-            || !message.TryGetProperty("content", out var content)
+            || !message.TryGetProperty(ContentProperty, out var content)
             || content.ValueKind != JsonValueKind.Array)
             return [];
 
@@ -650,7 +651,7 @@ internal static class ClaudeStreamJsonParser
             if (toolUseId is null || !state.CountedToolUseIds.TryGetValue(toolUseId, out var key)) continue;
 
             string errorText;
-            if (block.TryGetProperty("content", out var c))
+            if (block.TryGetProperty(ContentProperty, out var c))
             {
                 if (c.ValueKind == JsonValueKind.String)
                     errorText = c.GetString() ?? string.Empty;
@@ -718,7 +719,7 @@ internal static class ClaudeStreamJsonParser
     private static string? MessageText(JsonElement root)
     {
         if (!root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
-            || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+            || !message.TryGetProperty(ContentProperty, out var content) || content.ValueKind != JsonValueKind.Array)
             return null;
         var text = string.Join(" ", content.EnumerateArray()
             .Where(b => GetString(b, "type") == "text")

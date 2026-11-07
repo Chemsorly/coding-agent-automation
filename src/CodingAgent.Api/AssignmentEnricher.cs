@@ -46,13 +46,11 @@ public class AssignmentEnricher
     private readonly IConsolidationJobPreparationService _consolidationPreparer;
     private readonly IProjectStore _projectStore;
     private readonly ConsolidationTemplateResolver _consolidationTemplateResolver;
-    private readonly AgentRoutingStore _routing;
     private readonly JobTemplateStore _jobTemplates;
     private readonly IPipelineRunHistoryService? _runHistory;
     private readonly ITriageStore? _triageStore;
     private readonly ILogger _logger;
 
-    /// <param name="routing">The global routing table, for work items queued before spec 053 (req 4.6).</param>
     /// <param name="jobTemplates">The Helm job templates: the tool of the routed profile's template.</param>
     /// <param name="consolidationContext">
     /// Where consolidation assignments read their run context from (see <see cref="ConsolidationRunContextSources"/>).
@@ -68,7 +66,6 @@ public class AssignmentEnricher
         IConsolidationJobPreparationService consolidationPreparer,
         IProjectStore projectStore,
         ConsolidationTemplateResolver consolidationTemplateResolver,
-        AgentRoutingStore routing,
         JobTemplateStore jobTemplates,
         ILogger logger,
         ConsolidationRunContextSources? consolidationContext = null,
@@ -79,7 +76,6 @@ public class AssignmentEnricher
         ArgumentNullException.ThrowIfNull(consolidationPreparer);
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(consolidationTemplateResolver);
-        ArgumentNullException.ThrowIfNull(routing);
         ArgumentNullException.ThrowIfNull(jobTemplates);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -88,7 +84,6 @@ public class AssignmentEnricher
         _consolidationPreparer = consolidationPreparer;
         _projectStore = projectStore;
         _consolidationTemplateResolver = consolidationTemplateResolver;
-        _routing = routing;
         _jobTemplates = jobTemplates;
         _runHistory = consolidationContext?.RunHistory;
         _triageStore = triageStore;
@@ -122,7 +117,6 @@ public class AssignmentEnricher
         // or enforcing storeOverride is non-null when called from a null-_projectStore instance.
         _projectStore = null!;
         _consolidationTemplateResolver = null!;
-        _routing = null!;
         _jobTemplates = null!;
         _logger = logger ?? Serilog.Log.Logger;
     }

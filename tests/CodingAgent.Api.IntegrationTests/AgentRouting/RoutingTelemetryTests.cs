@@ -315,7 +315,7 @@ public sealed class RoutingTelemetryTests
         var projects = Templates();
         return new AssignmentEnricher(
             new StubInfrastructure(throwFromCore), Profiles([.. profiles]), Mock.Of<IConsolidationJobPreparationService>(), projects,
-            new ConsolidationTemplateResolver(projects), new AgentRoutingStore(_db), AgentRoutingTestData.JobTemplates(), logger);
+            new ConsolidationTemplateResolver(projects), AgentRoutingTestData.JobTemplates(), logger);
     }
 
     private sealed class StubInfrastructure(bool throwFromCore) : DispatchInfrastructure()

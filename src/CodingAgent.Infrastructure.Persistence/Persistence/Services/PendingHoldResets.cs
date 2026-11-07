@@ -18,7 +18,7 @@ public static class PendingHoldResets
     public static Task<int> ClearOperatorHoldsAsync(PipelineDbContext db, CancellationToken ct)
     {
         var reasons = HoldReasons.OperatorHolds.ToList();
-        return ClearAsync(db, q => q.Where(w => w.HoldReason != null && reasons.Contains(w.HoldReason!)), ct);
+        return ClearAsync(db, q => q.Where(w => w.HoldReason != null && reasons.Contains(w.HoldReason)), ct);
     }
 
     private static async Task<int> ClearAsync(
@@ -63,6 +63,6 @@ public static class WorkItemHoldOrdering
     {
         ArgumentNullException.ThrowIfNull(source);
         var operatorHolds = HoldReasons.OperatorHolds.ToList();
-        return source.OrderBy(w => w.HoldReason != null && operatorHolds.Contains(w.HoldReason!));
+        return source.OrderBy(w => w.HoldReason != null && operatorHolds.Contains(w.HoldReason));
     }
 }

@@ -38,7 +38,7 @@ internal static class ResolvedRoutes
         AgentRouting routing,
         IReadOnlyList<AgentProfile> profiles,
         IReadOnlyDictionary<string, string> toolsByKey,
-        IReadOnlyDictionary<string, AgentCredentialPause> paused)
+        Dictionary<string, AgentCredentialPause> paused)
     {
         var result = AgentRouteResolver.Resolve(taskType, template, routing, profiles, toolsByKey);
         if (result.Snapshot is not { } route || result.Profile is not { } profile)

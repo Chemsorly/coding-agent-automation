@@ -97,9 +97,8 @@ public static class HoldTexts
     {
         ArgumentNullException.ThrowIfNull(pause);
         var name = AgentCredentials.DisplayName(pause.Credential);
-        var why = pause.Source == CredentialPauseSources.Manual
-            ? $"paused by {(string.IsNullOrWhiteSpace(pause.PausedBy) ? "an operator" : pause.PausedBy)}"
-            : CredentialPauseReasons.Text(pause.Reason);
+        var by = string.IsNullOrWhiteSpace(pause.PausedBy) ? "an operator" : pause.PausedBy;
+        var why = pause.Source == CredentialPauseSources.Manual ? $"paused by {by}" : CredentialPauseReasons.Text(pause.Reason);
         var until = pause.Until is { } end ? $" (until {Time(end)})" : "";
         return $"{name} paused — {why}, since {Time(pause.Since)}{until}";
     }

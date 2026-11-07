@@ -135,7 +135,6 @@ public static class ApiDispatchServiceExtensions
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
-            sp.GetRequiredService<AgentRoutingStore>(),
             sp.GetRequiredService<JobTemplateStore>(),
             Log.Logger,
             new ConsolidationRunContextSources(

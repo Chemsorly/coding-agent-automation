@@ -248,7 +248,7 @@ internal static class UiSettingsEndpoints
     /// Behaviour of a template already in that project (<see cref="ProjectAdminEdits"/>); a new template, or another
     /// project's (saving it here would move it here), is 404.
     /// </summary>
-    internal static async Task<IResult> SaveTemplate(
+    internal static async Task<IResult> SaveTemplate( // NOSONAR S107 — minimal API handler; the parameters are bound by the framework
         string projectId, [FromBody] PipelineJobTemplate template, IUserAccess access, IProjectStore store,
         IAgentProfileStore profiles, JobTemplateStore jobTemplates, IDbContextFactory<PipelineDbContext> dbFactory,
         CancellationToken ct)

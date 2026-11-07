@@ -68,7 +68,6 @@ public sealed class AssignmentEnricherTriageTests
         return new AssignmentEnricher(
             _infra, profiles.Object, Mock.Of<IConsolidationJobPreparationService>(), projects.Object,
             new ConsolidationTemplateResolver(projects.Object),
-            new AgentRoutingStore(new AgentRoutingTestSupport.InMemoryFactory(Guid.NewGuid().ToString())),
             AgentRoutingTestData.JobTemplates(), Serilog.Log.Logger, triageStore: store);
     }
 

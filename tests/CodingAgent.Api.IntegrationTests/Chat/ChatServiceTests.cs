@@ -253,7 +253,7 @@ public sealed class ChatServiceTests
 
     private const string KiroPausedText = "Kiro paused — quota used up, since 2026-11-02 05:00 UTC (until 2026-12-01 00:00 UTC)";
 
-    private Task PauseKiroAsync() => _pauses.PauseAsync(new AgentCredentialPause(
+    private Task<AgentCredentialPause?> PauseKiroAsync() => _pauses.PauseAsync(new AgentCredentialPause(
         AgentCredentials.Kiro, CredentialPauseReasons.QuotaExhausted, CredentialPauseSources.Auto,
         new DateTimeOffset(2026, 11, 2, 5, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero),
         "monthly usage limit reached"), CancellationToken.None);

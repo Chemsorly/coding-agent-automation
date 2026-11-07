@@ -199,6 +199,25 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             run, AgentLabels.Error, _logger, "AgentJobLifecycleService.PermanentlyFailRejectedRunAsync", ct);
     }
 
+    /// <summary>
+    /// Spec 056 DD11: hands a reported provider failure to the handler and releases the agent; true when it did (the
+    /// caller then does nothing more).
+    /// </summary>
+    private async Task<bool> TryHandleProviderFailureAsync(
+        JobId jobId, AgentEntry? agent, PipelineRun? run, JobCompletionPayload payload, CancellationToken ct)
+    {
+        if (payload.ProviderFailure is not { } providerFailure || _providerFailures is null
+            || (agent?.AgentId.Value ?? run?.AgentId) is not { Length: > 0 } reporter
+            || !Guid.TryParse(jobId.Value, out var workItemId))
+        {
+            return false;
+        }
+
+        await _providerFailures.HandleAsync(workItemId, reporter, providerFailure, ct);
+        _idleTransitioner.TransitionToIdle(agent, run, jobId.Value, "HandleJobCompletedAsync");
+        return true;
+    }
+
     /// <inheritdoc />
     public async Task HandleJobCompletedAsync(JobId jobId, AgentEntry? agent, JobCompletionPayload payload, CancellationToken ct)
     {
@@ -209,14 +228,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         // Spec 056 DD11: a provider failure is handled first and never falls through — the handler ends the run,
         // pauses the credential and queues the work again (or does nothing when another path already did).
-        if (payload.ProviderFailure is { } providerFailure && _providerFailures is not null
-            && (agent?.AgentId.Value ?? run?.AgentId) is { Length: > 0 } reporter
-            && Guid.TryParse(jobId.Value, out var workItemId))
-        {
-            await _providerFailures.HandleAsync(workItemId, reporter, providerFailure, ct);
-            _idleTransitioner.TransitionToIdle(agent, run, jobId.Value, "HandleJobCompletedAsync");
+        if (await TryHandleProviderFailureAsync(jobId, agent, run, payload, ct))
             return;
-        }
 
         // runWasAlive: true if the run existed in memory and was processed normally (or if the run
         // was not found at all — orphan path has its own handling). false only when
