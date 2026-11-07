@@ -41,6 +41,9 @@ namespace CodingAgent.Scheduler.Services;
 /// </summary>
 public sealed class WorkItemDispatchLoop : BackgroundService
 {
+    /// <summary>How many Pending items one cycle fetches (and how many dispatch calls may wait for a rate-limit token).</summary>
+    internal const int FetchSize = 50;
+
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
@@ -66,7 +69,9 @@ public sealed class WorkItemDispatchLoop : BackgroundService
         {
             TokenLimit = rateLimitPerSecond,
             QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-            QueueLimit = 0,
+            // Spec 056 DD9: a call waits for its token instead of aborting the cycle, so many quick hold answers do not
+            // end a cycle early; the rate stays the same.
+            QueueLimit = FetchSize,
             ReplenishmentPeriod = TimeSpan.FromSeconds(1),
             TokensPerPeriod = rateLimitPerSecond,
             AutoReplenishment = true
@@ -110,7 +115,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
         IReadOnlyList<CodingAgent.Pipeline.Models.PendingWorkItemDto> pending;
         try
         {
-            pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct);
+            pending = await _workItemClient.GetPendingAsync(maxResults: FetchSize, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -130,25 +135,28 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             return;
         }
 
-        // Per-cycle set of selectors that have hit a permanent 409.
-        // Conservative: any 409 for a selector blocks all remaining items with that selector
-        // for this cycle. Resets on the next tick.
-        var stoppedSelectors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Spec 056 DD9: the job templates and credentials stopped for this cycle. A hold stops only the work that resolves
+        // to the same template (concurrency_limit, pvc_unavailable) or credential (credential_paused); routing holds stop
+        // nothing. Resets on the next tick.
+        var stopped = new CycleStops();
 
         foreach (var item in pending)
         {
             if (ct.IsCancellationRequested)
                 break;
 
-            if (!_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stoppedSelectors).IsEligible)
+            // The stored selector and credential are the item's last resolution: an item never resolved (empty) is always
+            // tried; a stale one costs this item one skipped cycle, never a wrong dispatch (the API resolves again).
+            if (!_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stopped.Templates).IsEligible
+                || (item.Credential is { Length: > 0 } credential && stopped.Credentials.Contains(credential)))
             {
                 _logger.Debug(
-                    "WorkItemDispatchLoop: skipping {WorkItemId} — selector {AgentSelector} is stopped for this cycle",
-                    item.Id, item.AgentSelector);
+                    "WorkItemDispatchLoop: skipping {WorkItemId} — job template {AgentSelector} or credential {Credential} is stopped for this cycle",
+                    item.Id, item.AgentSelector, item.Credential);
                 continue;
             }
 
-            if (!await DispatchItemAsync(item, stoppedSelectors, ct))
+            if (!await DispatchItemAsync(item, stopped, ct))
                 break;
         }
 
@@ -162,7 +170,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
     /// Dispatches a single pending item. Returns <c>false</c> when the current cycle must be aborted.
     /// </summary>
     private async Task<bool> DispatchItemAsync(
-        CodingAgent.Pipeline.Models.PendingWorkItemDto item, HashSet<string> stoppedSelectors, CancellationToken ct)
+        CodingAgent.Pipeline.Models.PendingWorkItemDto item, CycleStops stopped, CancellationToken ct)
     {
         // Acquire a rate-limit token before each dispatch call.
         using var lease = await _rateLimiter.AcquireAsync(permitCount: 1, ct);
@@ -174,7 +182,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             return false;
         }
 
-        DispatchPendingResult result;
+        DispatchPendingOutcome outcome;
         // Emit a Dispatch.Attempt span for each item dispatched. The span wraps the
         // dispatch call so the `result` tag is set before the span closes. Per-item only
         // (idle ticks return early at the pending.Count == 0 guard in PollAndDispatchAsync — no span emitted).
@@ -183,7 +191,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
         dispatchActivity?.SetTag("agent_selector", item.AgentSelector);
         try
         {
-            result = await _workItemClient.DispatchPendingAsync(item.Id, ct);
+            outcome = await _workItemClient.DispatchPendingAsync(item.Id, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -200,22 +208,22 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             return false;
         }
 
-        dispatchActivity?.SetTag("result", result.ToString());
+        dispatchActivity?.SetTag("result", outcome.Result.ToString());
+        if (outcome.Reason is not null)
+            dispatchActivity?.SetTag("reason", outcome.Reason);
 
-        switch (result)
+        switch (outcome.Result)
         {
             case DispatchPendingResult.Dispatched:
                 _logger.Debug("WorkItemDispatchLoop: dispatched {WorkItemId}", item.Id);
                 break;
 
             case DispatchPendingResult.PermanentRejection:
-                // 409 — item not Pending, concurrency limit, or no template.
-                // Stop dispatching all items with this selector for the current cycle.
-                stoppedSelectors.Add(item.AgentSelector);
+                // The item is held (or no longer Pending). Spec 056 DD9: stop what the hold names.
+                stopped.Apply(outcome, item);
                 _logger.Debug(
-                    "WorkItemDispatchLoop: permanent rejection for {WorkItemId} (selector {AgentSelector}) — "
-                    + "selector blocked for this cycle",
-                    item.Id, item.AgentSelector);
+                    "WorkItemDispatchLoop: {WorkItemId} held ({Reason}; job template {TemplateKey}, credential {Credential})",
+                    item.Id, outcome.Reason, outcome.TemplateKey ?? item.AgentSelector, outcome.Credential ?? item.Credential);
                 break;
 
             case DispatchPendingResult.Transient:
@@ -234,6 +242,40 @@ public sealed class WorkItemDispatchLoop : BackgroundService
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Spec 056 DD9: what one cycle stopped. <c>concurrency_limit</c> and <c>pvc_unavailable</c> stop the answer's job
+    /// template (an earlier API names none: then the item's stored selector); <c>credential_paused</c> stops the answer's
+    /// credential (or the stored one); every other hold stops nothing. An empty key is never stopped.
+    /// </summary>
+    internal sealed class CycleStops
+    {
+        public HashSet<string> Templates { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> Credentials { get; } = new(StringComparer.Ordinal);
+
+        public void Apply(DispatchPendingOutcome outcome, CodingAgent.Pipeline.Models.PendingWorkItemDto item)
+        {
+            switch (outcome.Reason)
+            {
+                case "concurrency_limit" or "pvc_unavailable":
+                    AddIfSet(Templates, outcome.TemplateKey ?? item.AgentSelector);
+                    break;
+                case "credential_paused":
+                    AddIfSet(Credentials, outcome.Credential ?? item.Credential);
+                    break;
+                case null:
+                    // An answer without a reason: stop the stored selector, as before spec 056.
+                    AddIfSet(Templates, item.AgentSelector);
+                    break;
+            }
+        }
+
+        private static void AddIfSet(HashSet<string> set, string? key)
+        {
+            if (!string.IsNullOrEmpty(key))
+                set.Add(key);
+        }
     }
 
     public override void Dispose()
