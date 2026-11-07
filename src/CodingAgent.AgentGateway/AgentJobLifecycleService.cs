@@ -276,17 +276,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // BrainUpdatesPushed and BrainSkillsResult are set by JobCompletionMapper.Apply
             // inside strategy.ExecuteAsync above. Use payload.* for the push-result tag to avoid
             // the race where ReplaceRun mutates the local run before we read it (#3897).
-            if (run.BrainProviderConfigId is not null)
-            {
-                var updates = payload.BrainUpdatesPushed == true ? "pushed"
-                    : payload.BrainPushFailed == true ? "failed"
-                    : "none";
-                PipelineTelemetry.RunBrainUpdates.Add(1,
-                    new KeyValuePair<string, object?>("result", updates));
-                PipelineTelemetry.RunBrainSkills.Add(1,
-                    new KeyValuePair<string, object?>("result", run.BrainSkillsResult ?? BrainSkillsResults.Unknown),
-                    PipelineTelemetry.RunTypeTag(run.RunType));
-            }
+            RecordBrainTelemetry(run, payload);
 
             // skipLabelSwap=true when another path (HTTP Failed POST) terminated the run first and the
             // work item kept that path's status. That path set the label (e.g. agent:needs-refinement,
@@ -295,6 +285,26 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // returns true and the label follows it. The outbox enqueue and feedback comment still run.
             await PostCompletionBookkeepingAsync(jobId, run, payload, skipLabelSwap: !runWasAlive, ct);
         }
+    }
+
+    /// <summary>Brain telemetry of a run with a brain provider (spec 054, req 14).</summary>
+    private static void RecordBrainTelemetry(PipelineRun run, JobCompletionPayload payload)
+    {
+        if (run.BrainProviderConfigId is null)
+            return;
+
+        string updates;
+        if (payload.BrainUpdatesPushed == true)
+            updates = "pushed";
+        else if (payload.BrainPushFailed == true)
+            updates = "failed";
+        else
+            updates = "none";
+        PipelineTelemetry.RunBrainUpdates.Add(1,
+            new KeyValuePair<string, object?>("result", updates));
+        PipelineTelemetry.RunBrainSkills.Add(1,
+            new KeyValuePair<string, object?>("result", run.BrainSkillsResult ?? BrainSkillsResults.Unknown),
+            PipelineTelemetry.RunTypeTag(run.RunType));
     }
 
     private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload, bool skipLabelSwap, CancellationToken ct)

@@ -310,7 +310,7 @@ public sealed class RoutingTelemetryTests
     }
 
     /// <summary>A real enricher over the test routing table, with the dispatch preparation stubbed.</summary>
-    private AssignmentEnricher Enricher(IReadOnlyList<AgentProfile> profiles, Serilog.ILogger logger, bool throwFromCore = false)
+    private static AssignmentEnricher Enricher(IReadOnlyList<AgentProfile> profiles, Serilog.ILogger logger, bool throwFromCore = false)
     {
         var projects = Templates();
         return new AssignmentEnricher(

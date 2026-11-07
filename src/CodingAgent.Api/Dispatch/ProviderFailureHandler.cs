@@ -165,7 +165,7 @@ internal sealed class ProviderFailureHandler(
         AgentCredentialPause? intended, DateTimeOffset now, CancellationToken ct)
     {
         const int attempts = 3;
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1; attempt <= attempts; attempt++)
         {
             try
             {
@@ -199,5 +199,6 @@ internal sealed class ProviderFailureHandler(
                 return Guid.Empty;
             }
         }
+        return Guid.Empty; // not reached: the last attempt returns from its catch
     }
 }
