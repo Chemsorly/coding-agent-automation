@@ -1584,6 +1584,220 @@ public class PullRequestFinalizationServiceTests
             "draft run cancelled during post-PR sequence must set FinalLabel to Error");
     }
 
+    // ── RunFullPrCreationAsync — draft PR dropped-identifiers section (issue #4259) ──
+    //
+    // For a draft PR GeneratePrDescriptionAsync is skipped, so RunFullPrCreationAsync appends the
+    // "Dropped changes not re-applied" section itself (PullRequestFinalizationService, isDraft block).
+
+    private const string DroppedSectionHeading = "## ⚠️ Dropped changes not re-applied";
+    private const string DraftFailureReason = "Quality gates failed after max retries; draft PR created.";
+
+    private static PipelineRun CreateDraftRun()
+    {
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        return run;
+    }
+
+    private static Dictionary<string, IReadOnlyList<string>> DroppedIdentifiers() => new()
+    {
+        ["src/Foo.cs"] = ["DroppedMethod", "OtherMethod"]
+    };
+
+    /// <summary>
+    /// Full mock chain the real <see cref="PullRequestOrchestrator"/> needs to reach the draft block. A missing
+    /// stub makes the orchestrator return null, and RunFullPrCreationAsync then takes the "no changes" early
+    /// return without ever evaluating the draft block.
+    /// </summary>
+    private static Mock<IRepositoryProvider> CreateDraftPrRepoProvider(string prUrl, Action<PullRequestInfo>? onPrCreated = null)
+    {
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .Callback<PullRequestInfo, CancellationToken>((info, _) => onPrCreated?.Invoke(info))
+            .ReturnsAsync(prUrl);
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+        return repoProvider;
+    }
+
+    private Task RunDraftFullPrCreationAsync(PipelineRun run, IRepositoryProvider repoProvider) =>
+        _sut.RunFullPrCreationAsync(
+            new PrCreationRequest
+            {
+                Run = run,
+                IsDraft = true,
+                PrOrchestrator = new PullRequestOrchestrator(_logger.Object),
+                RepoProvider = repoProvider,
+                AgentProvider = Mock.Of<IAgentProvider>(),
+                BrainProvider = null,
+                BrainSync = null,
+                Config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) },
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = new FeedbackService(_logger.Object),
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = _ => Task.CompletedTask
+            },
+            CancellationToken.None);
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftWithNotReappliedIdentifiers_UpdatesPrBodyWithDroppedSection()
+    {
+        // New-PR path: the orchestrator creates the draft PR (number 99, taken from the URL) and makes no
+        // UpdatePullRequestAsync call of its own, so the single update below is the draft block's.
+        var run = CreateDraftRun();
+        run.NotReappliedIdentifiersByFile = DroppedIdentifiers();
+
+        string? createdBody = null;
+        var repoProvider = CreateDraftPrRepoProvider("https://github.com/org/repo/pull/99", info => createdBody = info.Body);
+        string? updatedBody = null;
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => updatedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await RunDraftFullPrCreationAsync(run, repoProvider.Object);
+
+        // The draft branch ran (not the "no changes" early return) ...
+        run.FailureReason.Should().Be(DraftFailureReason);
+        createdBody.Should().NotBeNullOrEmpty();
+        var generatedBody = createdBody!;
+
+        // ... and the section is appended to the generated body, not substituted for it.
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(99,
+            It.Is<string>(b => b.StartsWith(generatedBody, StringComparison.Ordinal)
+                             && b.Contains(DroppedSectionHeading)
+                             && b.Contains("- `src/Foo.cs`: `DroppedMethod`, `OtherMethod`")),
+            null,
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        run.PullRequestBody.Should().Be(updatedBody);
+        run.PullRequestBody.Should().Contain(DroppedSectionHeading);
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FinalLabel.Should().Be(AgentLabels.Error);
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftWithExistingPrAndNotReappliedIdentifiers_UpdatesPrBodyWithDroppedSection()
+    {
+        // Draft-first flow: the PR already exists, so the orchestrator itself updates its body with
+        // markReady=false (keep draft). The draft block's own update passes markReady=null, which is what
+        // tells the two calls apart.
+        var run = CreateDraftRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/42";
+        run.NotReappliedIdentifiersByFile = DroppedIdentifiers();
+
+        var repoProvider = CreateDraftPrRepoProvider("https://github.com/org/repo/pull/should-not-be-used");
+        string? orchestratorBody = null;
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)false, It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => orchestratorBody = body)
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await RunDraftFullPrCreationAsync(run, repoProvider.Object);
+
+        run.FailureReason.Should().Be(DraftFailureReason);
+        orchestratorBody.Should().NotBeNullOrEmpty();
+        var generatedBody = orchestratorBody!;
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)false, It.IsAny<CancellationToken>()), Times.Once);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
+            It.Is<string>(b => b.StartsWith(generatedBody, StringComparison.Ordinal)
+                             && b.Contains(DroppedSectionHeading)
+                             && b.Contains("`DroppedMethod`")),
+            (bool?)null,
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        repoProvider.Verify(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()), Times.Never);
+        run.PullRequestBody.Should().Contain(DroppedSectionHeading);
+        generatedBody.Should().NotContain(DroppedSectionHeading, "the orchestrator's own update must not carry the section");
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftWithoutNotReappliedIdentifiers_DoesNotUpdateBody()
+    {
+        // NotReappliedIdentifiersByFile is empty by default: no section, so no extra body update.
+        var run = CreateDraftRun();
+        var repoProvider = CreateDraftPrRepoProvider("https://github.com/org/repo/pull/99");
+
+        await RunDraftFullPrCreationAsync(run, repoProvider.Object);
+
+        run.FailureReason.Should().Be(DraftFailureReason);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        run.PullRequestBody.Should().NotBeNullOrEmpty();
+        run.PullRequestBody.Should().NotContain(DroppedSectionHeading);
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftWhenUpdatePrThrows_SwallowsExceptionAndStillFailsRun()
+    {
+        // A non-OCE failure while appending the section is non-fatal: logged, the body is left as generated,
+        // and the run still ends in the draft terminal state.
+        var run = CreateDraftRun();
+        run.NotReappliedIdentifiersByFile = DroppedIdentifiers();
+
+        var repoProvider = CreateDraftPrRepoProvider("https://github.com/org/repo/pull/99");
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated transient failure"));
+
+        var act = () => RunDraftFullPrCreationAsync(run, repoProvider.Object);
+
+        await act.Should().NotThrowAsync();
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(99, It.IsAny<string>(), null, It.IsAny<CancellationToken>()), Times.Once);
+        run.PullRequestBody.Should().NotContain(DroppedSectionHeading, "the failed update must not be recorded on the run");
+        _logger.Verify(l => l.Warning(
+            It.IsAny<Exception>(),
+            It.Is<string>(s => s.Contains("failed to append not-re-applied section to draft PR body")),
+            It.IsAny<string>()),
+            Times.Once);
+        run.FailureReason.Should().Be(DraftFailureReason);
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FinalLabel.Should().Be(AgentLabels.Error);
+        run.CompletedAtOffset.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftWithNonNumericPrNumber_SkipsUpdateAndStillFailsRun()
+    {
+        // Characterization of current behavior (see the TODO on the int.TryParse in the draft block): a
+        // non-numeric PullRequestNumber silently skips the update, so the section is lost without a diagnostic.
+        // The orchestrator's own int.Parse fails first, which is non-fatal there. If the draft block is later
+        // changed to report this case, update this test deliberately.
+        var run = CreateDraftRun();
+        run.PullRequestNumber = "not-a-number";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/42";
+        run.NotReappliedIdentifiersByFile = DroppedIdentifiers();
+
+        var repoProvider = CreateDraftPrRepoProvider("https://github.com/org/repo/pull/should-not-be-used");
+
+        await RunDraftFullPrCreationAsync(run, repoProvider.Object);
+
+        run.FailureReason.Should().Be(DraftFailureReason);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        run.PullRequestBody.Should().NotContain(DroppedSectionHeading);
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FinalLabel.Should().Be(AgentLabels.Error);
+    }
+
     // ── Mark-ready after description (new behaviour post #2735) ──
 
     [Fact]
@@ -2523,18 +2737,6 @@ public class PullRequestFinalizationServiceTests
             Times.Once);
     }
 
-    // ── Helper: TempDirectory ────────────────────────────────────────────────
-
-    // TODO: The draft PR path added in PullRequestFinalizationService.RunFullPrCreationAsync
-    // (inside the exhaustedRetries+isDraft block) calls AppendDroppedIdentifiersSection and then
-    // UpdatePullRequestAsync when NotReappliedIdentifiersByFile is non-empty. This path has no tests:
-    // - Happy path: "draft PR body includes dropped-identifier section when NotReappliedIdentifiersByFile
-    //   is non-empty" is not covered.
-    // - Silent-failure path: when PullRequestNumber is non-empty but not a valid integer, int.TryParse
-    //   silently skips UpdatePullRequestAsync and the section is lost with no diagnostic trace
-    //   (documented in a TODO in the production code). This failure mode is also not tested.
-    // Add tests for both paths to complete AC #1 coverage for draft PRs.
-
     // ── New guard tests (issue #4083) ──────────────────────────────────────────
 
     [Fact]
@@ -3084,5 +3286,92 @@ public class PullRequestFinalizationServiceTests
         captured.Should().HaveCount(1);
         captured[0].Text.Should().NotContain("forged-xyz-99", "first write must not read existing file from disk (BrainInboxFile was null)");
         captured[0].Text.Should().Contain("evidence-tag-ghi", "first write must include the provided candidate");
+    }
+
+    // ── WriteBrainInboxAsync — exception path (issue #4259) ──
+    //
+    // The tests above use the real BrainSyncService, which absorbs its own failures, so they never reach the
+    // catch in WriteBrainInboxAsync. These use a mocked IBrainSyncService that throws instead.
+
+    private static Mock<IBrainSyncService> CreateThrowingBrainSync(Exception exception)
+    {
+        var brainSync = new Mock<IBrainSyncService>();
+        brainSync.Setup(b => b.WriteInboxAsync(
+                It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .ThrowsAsync(exception);
+        return brainSync;
+    }
+
+    private static void VerifyInboxWriteAttempted(Mock<IBrainSyncService> brainSync) =>
+        brainSync.Verify(b => b.WriteInboxAsync(
+                It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<int>()),
+            Times.Once);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WriteBrainInboxAsync_WhenWriteInboxThrows_SetsBrainPushFailedAndDoesNotPropagate(bool isDraft)
+    {
+        var run = CreateRun();
+        run.BrainUpdatesPushed = true; // a previous push state the failure must reset
+        var brainSync = CreateThrowingBrainSync(new InvalidOperationException("brain push exploded"));
+
+        var act = () => _sut.WriteBrainInboxAsync(
+            run, brainSync.Object, Mock.Of<IRepositoryProvider>(), new PipelineConfiguration(), isDraft,
+            candidatesText: null, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        VerifyInboxWriteAttempted(brainSync); // the throw path was actually reached
+        run.BrainPushFailed.Should().BeTrue("a failed brain write must be visible on the run");
+        run.BrainUpdatesPushed.Should().BeFalse();
+        _logger.Verify(l => l.Warning(
+            It.IsAny<Exception>(),
+            It.Is<string>(s => s.Contains("WriteBrainInboxAsync failed")),
+            It.IsAny<string>(),
+            It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task WriteBrainInboxAsync_WhenWriteInboxCancelled_PropagatesAndLeavesFlagsUnchanged()
+    {
+        // Pipeline-level cancellation is not a brain failure: it must propagate and must not mark the push failed.
+        var run = CreateRun();
+        run.BrainUpdatesPushed = true;
+        var brainSync = CreateThrowingBrainSync(new OperationCanceledException("pipeline cancelled"));
+
+        var act = () => _sut.WriteBrainInboxAsync(
+            run, brainSync.Object, Mock.Of<IRepositoryProvider>(), new PipelineConfiguration(), isDraft: false,
+            candidatesText: null, new Dictionary<string, string>(), _ => { }, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        VerifyInboxWriteAttempted(brainSync);
+        run.BrainPushFailed.Should().BeNull();
+        run.BrainUpdatesPushed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_WhenBrainInboxWriteThrows_MarksBrainPushFailedAndStillCollectsFeedback()
+    {
+        // Brain sync is an enrichment step (decisions.md, "Partial failure contract"): its failure must not
+        // abort the post-PR sequence, so the feedback step after it still runs.
+        var run = CreateRun();
+        var brainSync = CreateThrowingBrainSync(new InvalidOperationException("brain push exploded"));
+        var transitions = new List<PipelineStep>();
+        var request = CreatePostPrRequest(run, new Mock<IRepositoryProvider>().Object, _ => { }) with
+        {
+            BrainSync = brainSync.Object,
+            TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+        };
+
+        var act = () => _sut.RunPostPrSequenceAsync(request, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        transitions.Should().Contain(PipelineStep.SyncingBrainRepoPostRun);
+        VerifyInboxWriteAttempted(brainSync);
+        run.BrainPushFailed.Should().BeTrue();
+        run.Feedback.Should().NotBeNull("feedback collection runs after the brain sync, whatever its outcome");
     }
 }
