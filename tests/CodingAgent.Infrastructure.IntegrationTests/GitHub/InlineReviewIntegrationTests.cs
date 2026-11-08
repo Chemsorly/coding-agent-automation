@@ -589,6 +589,7 @@ public class InlineReviewIntegrationTests : IAsyncDisposable
         body,
         state,
         user = new { login, id = login.GetHashCode() },
+        author_association = "MEMBER",
         html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
         submitted_at = "2026-01-15T10:00:00Z"
     };

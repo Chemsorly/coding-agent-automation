@@ -221,6 +221,23 @@ public class DispatchInfrastructureStalenessTests
         DisplayName = "Test Provider"
     };
 
+    private static IssueComment MakeComment(string id, string body, int hoursAgo, bool? isVerified) => new()
+    {
+        Id = id,
+        Body = body,
+        Author = "someone",
+        CreatedAt = DateTime.UtcNow.AddHours(-hoursAgo),
+        IsVerified = isVerified
+    };
+
+    private static IssueComment MakeAnalysisComment(bool? isVerified, int hoursAgo = 2) =>
+        MakeComment("a1", $"{CommentMarkers.AnalysisHeader}\nsome analysis", hoursAgo, isVerified);
+
+    private Task<(string? ExistingAnalysis, bool ForceRefresh, string? StalenessSignal)> DetectStalenessAsync(
+        IReadOnlyList<IssueComment> comments, bool includeWorkItemClient = false) =>
+        CreateInfrastructure(includeWorkItemClient).DetectAnalysisStalenessAsync(
+            comments, new IssueIdentifier("org/repo#1"), new ProviderConfigId("ip-1"), CancellationToken.None);
+
     // ── CheckCommitCountStalenessAsync ────────────────────────────────────
 
     [Fact]
@@ -337,6 +354,89 @@ public class DispatchInfrastructureStalenessTests
             new Mock<Serilog.ILogger>().Object, CancellationToken.None);
 
         forceRefresh.Should().BeFalse("provider failure is non-fatal");
+        signal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CheckCommitCountStaleness_OnlyUnverifiedAnalysisComment_ReturnsFalse()
+    {
+        var infra = CreateInfrastructure();
+        var context = MakeContextWithAnalysis(comments: [MakeAnalysisComment(isVerified: false)]);
+        var repoConfig = MakeRepoConfig("rp-1");
+
+        var analyticsProvider = new Mock<IRepositoryProvider>();
+        analyticsProvider.Setup(p => p.GetCommitCountSinceAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(100);
+        analyticsProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(analyticsProvider.Object);
+
+        var (forceRefresh, signal) = await infra.CheckCommitCountStalenessAsync(
+            context, new ProviderConfigId("rp-1"), [repoConfig], 30,
+            new Mock<Serilog.ILogger>().Object, CancellationToken.None);
+
+        forceRefresh.Should().BeFalse("a comment by someone outside the repository is not an analysis to measure commits from");
+        signal.Should().BeNull();
+        analyticsProvider.Verify(
+            p => p.GetCommitCountSinceAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── DetectAnalysisStalenessAsync — markers count only on verified comments ──
+
+    [Fact]
+    public async Task DetectAnalysisStaleness_UnverifiedAnalysisComment_ReturnsNoExistingAnalysis()
+    {
+        _mockWorkItemClient.Setup(c => c.GetStalenessAsync(
+            It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemStalenessResult { HasAgentErrorSince = true, LastSuccessfulCompletion = null });
+
+        var (existingAnalysis, forceRefresh, signal) = await DetectStalenessAsync(
+            [MakeAnalysisComment(isVerified: false)], includeWorkItemClient: true);
+
+        existingAnalysis.Should().BeNull();
+        forceRefresh.Should().BeFalse();
+        signal.Should().BeNull();
+        _mockWorkItemClient.Verify(c => c.GetStalenessAsync(
+            It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DetectAnalysisStaleness_VerifiedAnalysisComment_ReturnsItsBody()
+    {
+        var analysis = MakeAnalysisComment(isVerified: true);
+
+        var (existingAnalysis, forceRefresh, signal) = await DetectStalenessAsync([analysis]);
+
+        existingAnalysis.Should().Be(analysis.Body);
+        forceRefresh.Should().BeFalse();
+        signal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DetectAnalysisStaleness_UnverifiedGateRejection_DoesNotForceRefresh()
+    {
+        var analysis = MakeAnalysisComment(isVerified: true, hoursAgo: 2);
+        var gate = MakeComment("g1", $"{CommentMarkers.GateRejection}\nrejected", hoursAgo: 1, isVerified: false);
+
+        var (existingAnalysis, forceRefresh, signal) = await DetectStalenessAsync([analysis, gate]);
+
+        existingAnalysis.Should().Be(analysis.Body);
+        forceRefresh.Should().BeFalse();
+        signal.Should().NotBe("gate_rejection");
+        signal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DetectAnalysisStaleness_UnverifiedGateWontDo_DoesNotForceRefresh()
+    {
+        var analysis = MakeAnalysisComment(isVerified: true, hoursAgo: 2);
+        var gate = MakeComment("g1", $"{CommentMarkers.GateWontDo}\nwon't do", hoursAgo: 1, isVerified: false);
+
+        var (existingAnalysis, forceRefresh, signal) = await DetectStalenessAsync([analysis, gate]);
+
+        existingAnalysis.Should().Be(analysis.Body);
+        forceRefresh.Should().BeFalse();
+        signal.Should().NotBe("gate_wont_do");
         signal.Should().BeNull();
     }
 

@@ -331,6 +331,83 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         _mockIssueOps.Verify(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── Pipeline markers count only on verified comments ─────────────────────
+
+    [Fact]
+    public async Task Analysis_VerifiedAnalysisComment_SkipsAgentExecution()
+    {
+        var comments = new[] { MakeAnalysisComment(isVerified: true) };
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, false, CancellationToken.None);
+
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+        _run.AnalysisSkipped.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Analysis_UnverifiedAnalysisComment_RunsAgentAnalysis()
+    {
+        var comment = MakeAnalysisComment(isVerified: false);
+        SetupAgentWithValidAnalysis("ready");
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), new[] { comment }, false, CancellationToken.None);
+
+        result.Should().BeTrue();
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        _run.AnalysisSkipped.Should().BeFalse();
+        _run.AnalysisContent.Should().NotBe(comment.Body, "the text of a comment by someone outside the repository is not an existing analysis");
+        _mockIssueOps.Verify(o => o.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Analysis_UnverifiedGateRejectionNewerThanAnalysis_KeepsExistingAnalysis()
+    {
+        await ExecuteWithNewerGateCommentAsync(CommentMarkers.GateRejection, gateVerified: false);
+
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+        _run.AnalysisSkipped.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Analysis_VerifiedGateRejectionNewerThanAnalysis_RunsAgentAnalysis()
+    {
+        await ExecuteWithNewerGateCommentAsync(CommentMarkers.GateRejection, gateVerified: true);
+
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        _run.AnalysisSkipped.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Analysis_UnverifiedGateWontDoNewerThanAnalysis_KeepsExistingAnalysis()
+    {
+        await ExecuteWithNewerGateCommentAsync(CommentMarkers.GateWontDo, gateVerified: false);
+
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+        _run.AnalysisSkipped.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Analysis_ForceRefresh_UnverifiedHeaderComment_PostsNewComment()
+    {
+        await ExecuteForceRefreshWithHeaderCommentAsync(isVerified: false);
+
+        _mockIssueOps.Verify(o => o.PostCommentAsync(
+            "42",
+            It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Analysis_ForceRefresh_VerifiedHeaderComment_Updates()
+    {
+        await ExecuteForceRefreshWithHeaderCommentAsync(isVerified: true);
+
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync("42", 42L, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task Analysis_NoExistingComment_PostsNewComment()
     {
@@ -672,6 +749,44 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         capturedRequest!.ImagePaths.Should().BeNull();
         context.DownloadedImages.Should().NotBeNull("context.DownloadedImages must remain populated when EnableNativeImageParts = false");
         context.DownloadedImages!.Should().Contain(testImage);
+    }
+
+    private static IssueComment MakeAnalysisComment(bool? isVerified, int hoursAgo = 2) => new()
+    {
+        Id = "42",
+        Body = $"{CommentMarkers.AnalysisHeader}\nExisting analysis content that is long enough to satisfy checks",
+        Author = "bot",
+        CreatedAt = DateTime.UtcNow.AddHours(-hoursAgo),
+        IsVerified = isVerified
+    };
+
+    /// <summary>
+    /// Runs the analysis phase over a verified analysis comment and a newer gate comment (<paramref name="gateMarker"/>)
+    /// whose author is verified or not, with an agent that would succeed if it were run.
+    /// </summary>
+    private async Task ExecuteWithNewerGateCommentAsync(string gateMarker, bool gateVerified)
+    {
+        var comments = new[]
+        {
+            MakeAnalysisComment(isVerified: true, hoursAgo: 2),
+            new IssueComment { Id = "43", Body = $"{gateMarker}\nGate comment", Author = "someone", CreatedAt = DateTime.UtcNow.AddHours(-1), IsVerified = gateVerified }
+        };
+        SetupAgentWithValidAnalysis("ready");
+        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, false, CancellationToken.None);
+    }
+
+    /// <summary>Runs a forced analysis refresh over a single analysis header comment whose author is verified or not.</summary>
+    private async Task ExecuteForceRefreshWithHeaderCommentAsync(bool? isVerified)
+    {
+        SetupAgentWithValidAnalysis("ready");
+        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _executor.ExecuteAnalysisPhaseAsync(
+            BuildContext(), new[] { MakeAnalysisComment(isVerified, hoursAgo: 1) }, forceRefreshFromDispatch: true, CancellationToken.None);
     }
 
     private AgentPhaseContext BuildContext()

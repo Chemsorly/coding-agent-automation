@@ -130,6 +130,8 @@ A comment's author is **verified** when the author is on the repository. On GitH
 
 If that lookup fails, reading the comments fails. A provider outage does not make a maintainer's comment count as outside text. A token that cannot push gets no answer from that call; then the association alone decides.
 
+Pipeline markers, such as the analysis header, the gate markers, the decomposition plan and triage markers, the issue feedback marker and the PR review marker, count only on text by a verified author. Comments from an API that predates this check count as before.
+
 ## Issue Dependencies
 
 An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) are not recognized and do not block dispatch.

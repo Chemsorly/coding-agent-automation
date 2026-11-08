@@ -108,11 +108,14 @@ public partial class GitHubRepositoryProvider
         // Filter reviews that contain the marker in their body AND are in a dismissible state.
         // GitHub's dismiss API only works on reviews with state CHANGES_REQUESTED or APPROVED.
         // Reviews with state COMMENTED return 422 "Can not dismiss a commented pull request review".
-        var matchingReviews = allReviews
-            .Where(r => r.Body?.Contains(marker, StringComparison.Ordinal) == true
-                        && (r.State.Value == Octokit.PullRequestReviewState.ChangesRequested
-                            || r.State.Value == Octokit.PullRequestReviewState.Approved))
-            .ToList();
+        var matchingReviews = new List<Octokit.PullRequestReview>();
+        foreach (var r in allReviews.Where(r => r.Body?.Contains(marker, StringComparison.Ordinal) == true
+                     && (r.State.Value == Octokit.PullRequestReviewState.ChangesRequested
+                         || r.State.Value == Octokit.PullRequestReviewState.Approved)))
+        {
+            if (await IsVerifiedAuthorAsync(r.AuthorAssociation.StringValue, r.User?.Type == AccountType.Bot, r.User?.Login, ct))
+                matchingReviews.Add(r);
+        }
 
         if (matchingReviews.Count == 0)
         {
@@ -181,8 +184,13 @@ public partial class GitHubRepositoryProvider
                 new ApiOptions { PageSize = PipelineConstants.DefaultPageSize, PageCount = PipelineConstants.MaxPrCommentPages }),
             "FindExistingReviewComment", ct);
 
-        var match = comments.FirstOrDefault(c => c.Body?.Contains(marker, StringComparison.Ordinal) == true);
-        return match?.Id;
+        foreach (var c in comments.Where(c => c.Body?.Contains(marker, StringComparison.Ordinal) == true))
+        {
+            if (await IsVerifiedAuthorAsync(c.AuthorAssociation.StringValue, c.User?.Type == AccountType.Bot, c.User?.Login, ct))
+                return c.Id;
+        }
+
+        return null;
     }
 
     /// <inheritdoc />

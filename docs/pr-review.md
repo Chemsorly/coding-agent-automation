@@ -12,6 +12,8 @@ The pipeline performs automated code review on pull requests using the same mult
 
 Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
 
+Before posting, the pipeline dismisses or collapses its earlier reviews, which it finds by the `<!-- agent:pr-review -->` marker. Only reviews and comments by verified authors match (see [Verified authors](github-issue-workflows.md#verified-authors)).
+
 ## Workflow
 
 ```
