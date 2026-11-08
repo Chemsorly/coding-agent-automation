@@ -169,7 +169,10 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
         builder.Services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<System.Net.Http.IHttpClientFactory>(),
-            Serilog.Log.Logger));
+            Serilog.Log.Logger,
+            sp.GetRequiredService<IBrainUpdateService>(),
+            sp.GetRequiredService<IPipelineReporterFactory>(),
+            providerFactoryOverride: fakeProviders));
 
         // ── Work-item mode services ──
         builder.Services.AddK8sModeServices(config, Serilog.Log.Logger);

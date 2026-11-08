@@ -36,19 +36,33 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     private readonly IPipelineReporterFactory _reporterFactory;
     private readonly ProviderFailureRecorder? _failureRecorder;
 
+    /// <param name="orchestrator">The Kiro CLI orchestrator the real agent providers run on.</param>
+    /// <param name="httpClientFactory">The HTTP client factory the real providers use.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="brainUpdateService">The brain update service; a real one is created when null.</param>
+    /// <param name="reporterFactory">The step and output reporter factory; a real one is created when null.</param>
+    /// <param name="failureRecorder">Records the provider failure a failed run reports.</param>
+    /// <param name="providerFactoryOverride">
+    /// Test seam, like <see cref="LocalPipelineExecutorDependencies.ProviderFactoryOverride"/>. When non-null, it
+    /// replaces the internal <see cref="AgentProviderFactory"/> and the GitHub or GitLab issue provider construction
+    /// during provider resolution, so a test can substitute fake repository, agent and issue providers without a
+    /// Kiro CLI, git remote or cloud credentials. Production leaves it null.
+    /// </param>
     public LocalConsolidationExecutor(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineReporterFactory? reporterFactory = null,
-        ProviderFailureRecorder? failureRecorder = null)
+        ProviderFailureRecorder? failureRecorder = null,
+        IProviderFactory? providerFactoryOverride = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger, failureRecorder);
+        _resolver = new ConsolidationProviderResolver(
+            orchestrator, httpClientFactory, logger, failureRecorder, providerFactoryOverride);
         _failureRecorder = failureRecorder;
         _logger = logger;
         _brainUpdateService = brainUpdateService ?? new CodingAgent.Infrastructure.Git.BrainUpdateService(logger);
