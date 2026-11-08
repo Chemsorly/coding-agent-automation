@@ -26,6 +26,10 @@ namespace CodingAgent.Web.E2ETests.Tests.SystemTier;
 [Trait("Category", "System")]
 public sealed class WorkItemUniqueIndexSystemTests(SystemContainers containers) : SystemE2ETestBase(containers)
 {
+    // The Postgres profile store only accepts GUID ids. A fixed id keeps the save an upsert
+    // across tests, which share one database.
+    private const string ProfileId = "5e7a1c00-0000-4000-8000-000000000001";
+
     [RequiresDockerFact]
     public async Task WhenManyCreatesRaceAcrossReplicas_ShouldLeaveExactlyOneLiveItem()
     {
@@ -36,11 +40,11 @@ public sealed class WorkItemUniqueIndexSystemTests(SystemContainers containers) 
 
         // Seed the routing once; both replicas share the same Postgres so both pick it up
         await a.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
-            AgentRoutingTestData.Profile("system-profile", jobTemplate: "e2e"),
+            AgentRoutingTestData.Profile(ProfileId, jobTemplate: "e2e"),
             CancellationToken.None);
         await AgentRoutingTestData.SeedRoutingAsync(
             a.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            AgentRoutingTestData.Routing("system-profile"));
+            AgentRoutingTestData.Routing(ProfileId));
 
         // Create master-key HTTP clients pointing at each replica's real Kestrel port.
         // HttpClient is thread-safe for concurrent calls.
@@ -115,11 +119,11 @@ public sealed class WorkItemUniqueIndexSystemTests(SystemContainers containers) 
 
         // Seed the routing (upsert — idempotent if a prior test already ran)
         await a.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
-            AgentRoutingTestData.Profile("system-profile", jobTemplate: "e2e"),
+            AgentRoutingTestData.Profile(ProfileId, jobTemplate: "e2e"),
             CancellationToken.None);
         await AgentRoutingTestData.SeedRoutingAsync(
             a.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            AgentRoutingTestData.Routing("system-profile"));
+            AgentRoutingTestData.Routing(ProfileId));
 
         using var client = new HttpClient
         {

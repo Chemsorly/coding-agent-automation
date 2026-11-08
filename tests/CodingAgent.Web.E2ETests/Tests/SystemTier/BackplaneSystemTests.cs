@@ -30,6 +30,9 @@ namespace CodingAgent.Web.E2ETests.Tests.SystemTier;
 [Trait("Category", "System")]
 public sealed class BackplaneSystemTests(SystemContainers containers) : SystemE2ETestBase(containers)
 {
+    // The Postgres profile store only accepts GUID ids.
+    private const string ChatProfileId = "5e7a1c00-0000-4000-8000-000000000002";
+
     /// <summary>
     /// Connects a UI-side <see cref="HubConnection"/> to <paramref name="api"/>'s
     /// <c>/hubs/ui</c> endpoint using an admin user token and the JSON protocol.
@@ -169,14 +172,14 @@ public sealed class BackplaneSystemTests(SystemContainers containers) : SystemE2
         var b = await StartApiAsync();
 
         // Seed agent profile and routing into b's real Postgres stores so b's chat dispatcher
-        // can resolve the "system-chat" profile. The "e2e" job template uses providerType
+        // can resolve the chat profile. The "e2e" job template uses providerType
         // "opencode" — no PVC is claimed, which is required in the System tier.
         await b.Services.GetRequiredService<IAgentProfileStore>().SaveAgentProfileAsync(
-            AgentRoutingTestData.Profile("system-chat", jobTemplate: "e2e"),
+            AgentRoutingTestData.Profile(ChatProfileId, jobTemplate: "e2e"),
             CancellationToken.None);
         await AgentRoutingTestData.SeedRoutingAsync(
             b.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            AgentRoutingTestData.Routing("system-chat"));
+            AgentRoutingTestData.Routing(ChatProfileId));
 
         // Subscribe to ChatJobCreated *before* posting to avoid a race: FakeKubernetesJobClient
         // fires the event synchronously inside CreateJobAsync.
@@ -187,7 +190,7 @@ public sealed class BackplaneSystemTests(SystemContainers containers) : SystemE2
         // The endpoint blocks until an agent with the matching caa/chat-session-id connects;
         // awaiting before the agent connects would deadlock.
         using var uiClient = CreateUiClient(b);
-        var startTask = uiClient.PostAsJsonAsync("/api/ui/chat", new UiChatStartRequest("system-chat", null));
+        var startTask = uiClient.PostAsJsonAsync("/api/ui/chat", new UiChatStartRequest(ChatProfileId, null));
 
         // Wait for the K8s job to appear so we can read the dispatch ID from its label.
         var chatJob = await chatJobTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));

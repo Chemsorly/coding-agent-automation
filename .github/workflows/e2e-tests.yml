@@ -163,3 +163,44 @@ jobs:
             echo "::error::E2E shards did not all pass (result: ${{ needs.e2e-shard.result }})"
             exit 1
           fi
+
+  # System tier (#4125): real Postgres and Redis through Testcontainers, so this runs directly on
+  # the runner (no container: wrapper) where Docker is available, like ci.yml's migration-integrity.
+  # E2E_REQUIRE_DOCKER makes a missing Docker fail instead of skip, and the count check fails a run
+  # that discovers no tests. Not in the e2e gate's needs: the owner decides later whether this check
+  # becomes required.
+  e2e-system:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore tests/CodingAgent.Web.E2ETests/CodingAgent.Web.E2ETests.csproj
+
+      # Same build flags as the shards; see the e2e-shard Build step for why.
+      - name: Build
+        run: dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true -p:UseSharedCompilation=true -p:RunAnalyzers=false
+
+      - name: Check System tests exist
+        run: |
+          dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=System" --ListFullyQualifiedTests --ListTestsTargetPath:"$RUNNER_TEMP/system-listed.txt"
+          COUNT=$(awk 'NF' "$RUNNER_TEMP/system-listed.txt" | wc -l)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::No System tests discovered"
+            exit 1
+          fi
+          echo "System tests: ${COUNT}"
+
+      - name: Run System tests
+        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=System" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:"TestResults/system"
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          E2E_REQUIRE_DOCKER: 'true'
