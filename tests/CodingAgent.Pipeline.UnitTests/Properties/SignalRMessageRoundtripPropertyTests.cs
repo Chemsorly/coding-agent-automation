@@ -265,12 +265,15 @@ public class SignalRMessageRoundtripPropertyTests
             IssueDetail = new IssueDetail
             {
                 IsAuthorVerified = true,
-                Title = "Test", Identifier = "1",
-                Description = "desc", Labels = []
+                Title = "Test",
+                Identifier = "1",
+                Description = "desc",
+                Labels = []
             },
             ParsedIssue = new ParsedIssue
             {
-                AcceptanceCriteria = [], RequirementsSection = ""
+                AcceptanceCriteria = [],
+                RequirementsSection = ""
             },
             IssueComments = [],
             RepoProviderConfigId = "rp-1",

@@ -326,7 +326,7 @@ public class IssueContextBuilderTests
         // BuildIssueContextAsync should detect the mismatch and set ForceRefreshAnalysis=true,
         // StalenessSignal="body_changed".
         const string originalDescription = "Original description before edit";
-        const string changedDescription  = "Changed description after the user edited the issue";
+        const string changedDescription = "Changed description after the user edited the issue";
 
         var originalHash = AnalysisBodyHash.Compute(originalDescription);
         var analysisBody = $"{CommentMarkers.AnalysisHeader}\n## Prior analysis content\n" +
@@ -425,7 +425,7 @@ public class IssueContextBuilderTests
         // When both a newer gate-rejection comment AND a changed body are present,
         // gate_rejection must win (higher-priority signal). body_changed must NOT override it.
         const string originalDescription = "Original description";
-        const string changedDescription  = "Changed description";
+        const string changedDescription = "Changed description";
 
         var originalHash = AnalysisBodyHash.Compute(originalDescription);
         var analysisBody = $"{CommentMarkers.AnalysisHeader}\n## Analysis\n" +

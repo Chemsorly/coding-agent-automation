@@ -62,8 +62,14 @@ public sealed class RoutingTelemetryTests
         using var db = _db.CreateDbContext();
         db.WorkItems.Add(new WorkItemEntity
         {
-            Id = id, TaskType = taskType, IssueIdentifier = $"telemetry-{id:N}", IssueProviderConfigId = "ip-1",
-            Status = WorkItemStatus.Pending, AgentSelector = "", TimeoutSeconds = 3600, CreatedAt = DateTimeOffset.UtcNow,
+            Id = id,
+            TaskType = taskType,
+            IssueIdentifier = $"telemetry-{id:N}",
+            IssueProviderConfigId = "ip-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
             Payload = JsonSerializer.Serialize(Request(taskType), PipelineJsonOptions.Default),
         });
         db.SaveChanges();
@@ -272,9 +278,15 @@ public sealed class RoutingTelemetryTests
         {
             db.WorkItems.Add(new WorkItemEntity
             {
-                Id = id, TaskType = WorkItemTaskType.Implementation, IssueIdentifier = $"outcome-{id:N}", IssueProviderConfigId = "ip-1",
-                Status = WorkItemStatus.Running, AgentSelector = "claude,dotnet", TimeoutSeconds = 3600,
-                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5), DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                Id = id,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"outcome-{id:N}",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Running,
+                AgentSelector = "claude,dotnet",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
                 Payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
             });
             db.SaveChanges();

@@ -48,8 +48,11 @@ public class PipelineRunHighWaterMarkTests
     {
         var run = new PipelineRun
         {
-            RunId = "r1", IssueIdentifier = "1", IssueTitle = "Test",
-            IssueProviderConfigId = "ip", RepoProviderConfigId = "rp",
+            RunId = "r1",
+            IssueIdentifier = "1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow
         };
 
@@ -179,19 +182,21 @@ public class PipelineRunHighWaterMarkTests
                 var configs = _mockConfigStore.Object.LoadProviderConfigsAsync(kind, ct).GetAwaiter().GetResult();
                 return Task.FromResult(configs.FirstOrDefault(c => c.Id == id));
             });
-            _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<QualityGateConfiguration>
-                {
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<QualityGateConfiguration>
+            {
                     new() { Id = "default", DisplayName = "Default", CompilationCommand = "dotnet", CompilationArguments = ["build"], TestCommand = "dotnet", TestArguments = ["test"], Enabled = true }
-                });
-            _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new List<ReviewerConfiguration>());
+            });
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>());
 
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 IsAuthorVerified = true,
-                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "Test description",
                 Labels = Array.Empty<string>()
             });
         _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

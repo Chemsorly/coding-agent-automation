@@ -119,7 +119,8 @@ public class ProviderFailureRecorderTests
         await decorator.ExecuteAsync(
             new AgentRequest
             {
-                Prompt = "p", WorkspacePath = "/ws",
+                Prompt = "p",
+                WorkspacePath = "/ws",
                 EnvironmentVariables = new Dictionary<string, string> { ["PROJECT_TOKEN"] = canary },
             },
             CancellationToken.None);
@@ -187,7 +188,9 @@ public class ProviderFailureRecorderTests
 
         var provider = factory.CreateAgentProvider(new ProviderConfig
         {
-            DisplayName = "claude", Kind = ProviderKind.Agent, ProviderType = ProviderTypes.ClaudeCode,
+            DisplayName = "claude",
+            Kind = ProviderKind.Agent,
+            ProviderType = ProviderTypes.ClaudeCode,
             Settings = new Dictionary<string, string>(),
         });
 

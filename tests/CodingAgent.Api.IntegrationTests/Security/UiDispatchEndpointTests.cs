@@ -56,8 +56,14 @@ public sealed class UiDispatchEndpointTests
     private readonly Mock<IRepositoryProvider> _repository = new();
     private readonly JobDistributionRequest _prepared = new()
     {
-        IssueIdentifier = "7", IssueProviderConfigId = IssueProviderT, RepoProviderConfigId = RepoProviderT, InitiatedBy = "manual",
-        TaskType = WorkItemTaskType.Implementation, AgentSelector = "dotnet", TimeoutSeconds = 3600, ProviderConfigs = []
+        IssueIdentifier = "7",
+        IssueProviderConfigId = IssueProviderT,
+        RepoProviderConfigId = RepoProviderT,
+        InitiatedBy = "manual",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "dotnet",
+        TimeoutSeconds = 3600,
+        ProviderConfigs = []
     };
 
     private sealed class FixedToken(string token) : IUiAccessTokenSource
@@ -94,21 +100,34 @@ public sealed class UiDispatchEndpointTests
         await projects.SaveProjectAsync(new PipelineProject { Id = ProjectU, Name = "Uniform" }, CancellationToken.None);
         await projects.SaveTemplateAsync(ProjectT, new PipelineJobTemplate
         {
-            Id = TemplateT, Name = "tango-api", IssueProviderId = IssueProviderT, RepoProviderId = RepoProviderT, Enabled = true,
+            Id = TemplateT,
+            Name = "tango-api",
+            IssueProviderId = IssueProviderT,
+            RepoProviderId = RepoProviderT,
+            Enabled = true,
         }, CancellationToken.None);
         await projects.SaveTemplateAsync(ProjectU, new PipelineJobTemplate
         {
-            Id = TemplateOfU, Name = "uniform-api", IssueProviderId = IssueProviderT, RepoProviderId = RepoProviderT,
+            Id = TemplateOfU,
+            Name = "uniform-api",
+            IssueProviderId = IssueProviderT,
+            RepoProviderId = RepoProviderT,
         }, CancellationToken.None);
         using var scope = _factory.Services.CreateScope();
         var configs = scope.ServiceProvider.GetRequiredService<IProviderConfigStore>();
         await configs.SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = IssueProviderT, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Tango issues",
+            Id = IssueProviderT,
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Tango issues",
         }, CancellationToken.None);
         await configs.SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = RepoProviderT, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Tango repo",
+            Id = RepoProviderT,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Tango repo",
         }, CancellationToken.None);
     }
 
@@ -157,7 +176,15 @@ public sealed class UiDispatchEndpointTests
         await SeedTemplatesAsync();
         _repository.Setup(r => r.GetOpenPullRequestAsync(12, It.IsAny<CancellationToken>())).ReturnsAsync(new PullRequestSummary
         {
-            Number = 12, Identifier = "12", Title = "PR 12", Description = "", Labels = [], BranchName = "feat/x", TargetBranch = "main", Url = "http://x", IsDraft = false
+            Number = 12,
+            Identifier = "12",
+            Title = "PR 12",
+            Description = "",
+            Labels = [],
+            BranchName = "feat/x",
+            TargetBranch = "main",
+            Url = "http://x",
+            IsDraft = false
         });
 
         var message = await Dispatch(TestUserTokens.Global(AccessRole.Operator)).DispatchPullRequestAsync(TemplateT, 12);

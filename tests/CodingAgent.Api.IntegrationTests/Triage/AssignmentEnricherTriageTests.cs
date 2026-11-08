@@ -107,12 +107,14 @@ public sealed class AssignmentEnricherTriageTests
         var triage = OperatorTriage(
             new TriageAttempt
             {
-                WorkItemId = "run-1", StartedAt = DateTimeOffset.UtcNow,
+                WorkItemId = "run-1",
+                StartedAt = DateTimeOffset.UtcNow,
                 Result = new TriageResult { Verdict = TriageVerdict.Inconclusive, Summary = "No order id in logs" },
             },
             new TriageAttempt
             {
-                WorkItemId = "run-2", StartedAt = DateTimeOffset.UtcNow,
+                WorkItemId = "run-2",
+                StartedAt = DateTimeOffset.UtcNow,
                 Feedback = new TriageFeedback { Text = "The worker logs ref=", Author = "ben", CreatedAt = DateTimeOffset.UtcNow },
             });
         _store.Setup(s => s.GetAsync(triage.Id, It.IsAny<CancellationToken>())).ReturnsAsync(triage);
@@ -180,9 +182,11 @@ public sealed class AssignmentEnricherTriageTests
         // Two projects can poll one tracker: the other project's triage history is not this run's to read
         var foreign = OperatorTriage(new TriageAttempt
         {
-            WorkItemId = "run-1", StartedAt = DateTimeOffset.UtcNow,
+            WorkItemId = "run-1",
+            StartedAt = DateTimeOffset.UtcNow,
             Result = new TriageResult { Verdict = TriageVerdict.CauseFound, Summary = "The other project's secret summary" },
-        }) with { ProjectId = Guid.NewGuid().ToString(), Source = TriageSource.Issue, IssueProviderConfigId = "t-api", IssueIdentifier = "431" };
+        }) with
+        { ProjectId = Guid.NewGuid().ToString(), Source = TriageSource.Issue, IssueProviderConfigId = "t-api", IssueIdentifier = "431" };
         _store.Setup(s => s.GetByIssueAsync("t-api", "431", It.IsAny<CancellationToken>())).ReturnsAsync(foreign);
         _store.Setup(s => s.ListRecentAsync(Project.Id, It.IsAny<DateTimeOffset>(), It.IsAny<int>(), null, It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
@@ -230,9 +234,11 @@ public sealed class AssignmentEnricherTriageTests
     {
         var other = OperatorTriage(new TriageAttempt
         {
-            WorkItemId = "x", StartedAt = DateTimeOffset.UtcNow,
+            WorkItemId = "x",
+            StartedAt = DateTimeOffset.UtcNow,
             Result = new TriageResult { Verdict = TriageVerdict.CauseFound, Summary = "SECRET internal detail" },
-        }) with { Title = "Login slow" };
+        }) with
+        { Title = "Login slow" };
 
         var tracker = TriageContextRenderer.RenderContext(null, "run-1", [other], reportToTracker: true);
         var app = TriageContextRenderer.RenderContext(null, "run-1", [other], reportToTracker: false);
@@ -250,8 +256,14 @@ public sealed class AssignmentEnricherTriageTests
         {
             Request = new TriageRequest
             {
-                Title = "t", WhatHappened = "502 on pay", Expected = "200", Where = "POST /pay", Version = "2.14.0",
-                Links = "trace 4bf9", AlreadyTried = "restart", From = DateTimeOffset.Parse("2026-10-10T13:45:00Z"),
+                Title = "t",
+                WhatHappened = "502 on pay",
+                Expected = "200",
+                Where = "POST /pay",
+                Version = "2.14.0",
+                Links = "trace 4bf9",
+                AlreadyTried = "restart",
+                From = DateTimeOffset.Parse("2026-10-10T13:45:00Z"),
             },
         };
 

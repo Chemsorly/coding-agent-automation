@@ -19,12 +19,20 @@ public sealed class ClaudeMissingCredentialResolverTests
 {
     private static readonly ProviderConfig RepoConfig = new()
     {
-        Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo", Settings = new Dictionary<string, string>(),
+        Id = "repo-1",
+        Kind = ProviderKind.Repository,
+        ProviderType = "GitHub",
+        DisplayName = "Repo",
+        Settings = new Dictionary<string, string>(),
     };
 
     private static readonly ProviderConfig AgentConfig = new()
     {
-        Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "Claude", DisplayName = "Claude", Settings = new Dictionary<string, string>(),
+        Id = "agent-1",
+        Kind = ProviderKind.Agent,
+        ProviderType = "Claude",
+        DisplayName = "Claude",
+        Settings = new Dictionary<string, string>(),
     };
 
     private static JobAssignmentMessage Job() => new()

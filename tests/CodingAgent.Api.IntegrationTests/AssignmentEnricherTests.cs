@@ -246,8 +246,13 @@ public sealed class AssignmentEnricherTests
         IReadOnlyList<string>? stackLabels = null, IReadOnlyDictionary<WorkItemTaskType, AgentRoute>? rows = null) =>
         new()
         {
-            Id = "t-repo", Name = "repo", IssueProviderId = "issue-prov-1", RepoProviderId = "repo-prov-1", Enabled = true,
-            RequiredLabels = stackLabels, AgentRoutes = rows,
+            Id = "t-repo",
+            Name = "repo",
+            IssueProviderId = "issue-prov-1",
+            RepoProviderId = "repo-prov-1",
+            Enabled = true,
+            RequiredLabels = stackLabels,
+            AgentRoutes = rows,
         };
 
     // ── Success path ─────────────────────────────────────────────────────────────────
@@ -1062,7 +1067,8 @@ public sealed class AssignmentEnricherTests
         var identity = MakeConsolidationIdentity(
             runType: ConsolidationRunType.RefactoringDetection,
             templateId: "tmpl-preserve",
-            autoDispatch: true) with { IssueDetail = null };
+            autoDispatch: true) with
+        { IssueDetail = null };
 
         var result = Enriched(await ConsolidationSetup().Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
 
