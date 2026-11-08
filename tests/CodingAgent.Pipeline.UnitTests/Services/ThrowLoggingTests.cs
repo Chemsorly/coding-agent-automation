@@ -285,7 +285,7 @@ public class ThrowLoggingTests : IDisposable
     {
         var logger = new Mock<Serilog.ILogger>();
         var context = CreateMinimalStepContext(logger.Object);
-        context.Issue = new IssueDetail { Identifier = "1", Title = "t", Description = "d", Labels = Array.Empty<string>() };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "1", Title = "t", Description = "d", Labels = Array.Empty<string>() };
         context.ParsedIssue = null;
 
         var ex = Assert.Throws<InvalidOperationException>(() => context.BuildAgentPhaseContext());
@@ -393,7 +393,7 @@ public class ThrowLoggingTests : IDisposable
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "99", Title = "Logging Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "99", Title = "Logging Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1" } }
         };
     }

@@ -37,6 +37,7 @@ public sealed class DependencyBlockingTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "60",
             Title = "Blocked issue",
             Description = "Blocked by #100",
@@ -92,6 +93,7 @@ public sealed class DependencyBlockingTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "61",
             Title = "Resolved dependency issue",
             Description = "Blocked by #100",
@@ -141,6 +143,7 @@ public sealed class DependencyBlockingTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "62",
             Title = "Partially blocked issue",
             Description = "Depends on #100\nBlocked by #200",

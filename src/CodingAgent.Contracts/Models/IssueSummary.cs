@@ -20,4 +20,7 @@ public sealed class IssueSummary : IHasCreatedAt
 
     /// <summary>Web URL of the issue on the provider (GitHub HtmlUrl / GitLab WebUrl), or null if unknown.</summary>
     public string? Url { get; init; }
+
+    /// <summary>Whether the author is on the repository, by the same rule as <see cref="IssueComment.IsVerified"/>. Absent on the wire it reads false.</summary>
+    public bool IsAuthorVerified { get; init; }
 }

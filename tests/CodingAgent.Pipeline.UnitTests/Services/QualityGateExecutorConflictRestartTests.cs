@@ -703,6 +703,7 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "2464",
             Title = "ConflictRestart retry loop test",
             Description = "Test issue description",

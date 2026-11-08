@@ -38,6 +38,7 @@ public class SignalRMessageRoundtripPropertyTests
         from desc in Gen.Elements("User cannot log in", "API lacks pagination", "Service is too large")
         select new IssueDetail
         {
+            IsAuthorVerified = true,
             Title = title,
             Identifier = id,
             Description = desc,
@@ -263,6 +264,7 @@ public class SignalRMessageRoundtripPropertyTests
             IssueIdentifier = "1",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Title = "Test", Identifier = "1",
                 Description = "desc", Labels = []
             },

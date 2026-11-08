@@ -345,7 +345,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-1",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test Issue", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test Issue", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "non-existent-repo-config",
             AgentProviderConfigId = "agent-config-1",
@@ -391,7 +391,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-2",
             IssueIdentifier = "owner/repo#2",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#2", Title = "Test Issue", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#2", Title = "Test Issue", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-config-1",
             AgentProviderConfigId = "non-existent-agent-config",
@@ -439,7 +439,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "smoke-test-job",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             // Intentionally empty — no provider configs in the payload (smoke test scenario)
             RepoProviderConfigId = "",
@@ -515,7 +515,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = jobId,
             IssueIdentifier = "owner/repo#42",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "",
             AgentProviderConfigId = "",
@@ -593,7 +593,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = Guid.NewGuid().ToString(),
             IssueIdentifier = "owner/repo#42",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "",
             AgentProviderConfigId = "",
@@ -656,7 +656,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = jobId,
             IssueIdentifier = "owner/repo#42",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "",
             AgentProviderConfigId = "",
@@ -956,7 +956,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-validation",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1016,7 +1016,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-cancel",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1097,7 +1097,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-blacklist",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1174,7 +1174,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-brain",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1232,7 +1232,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-brain-missing",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1304,7 +1304,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-pipeline",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1361,7 +1361,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-pipeline-missing",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1418,7 +1418,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job-empty-brain",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -1571,7 +1571,7 @@ public class LocalPipelineExecutorTests : IDisposable
         {
             JobId = "test-job",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",

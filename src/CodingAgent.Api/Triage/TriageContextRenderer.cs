@@ -56,6 +56,7 @@ public static class TriageContextRenderer
             Title = triage.Title,
             Description = sb.ToString(),
             Labels = [],
+            IsAuthorVerified = true,
         };
     }
 

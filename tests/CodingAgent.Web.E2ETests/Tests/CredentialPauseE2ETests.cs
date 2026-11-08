@@ -29,6 +29,7 @@ public sealed class CredentialPauseE2ETests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = IssueId,
             Title = "Quota runs out mid-run",
             Description = "## Requirements\nDo the thing\n\n## Acceptance Criteria\n- [ ] Done",

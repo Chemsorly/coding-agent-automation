@@ -27,6 +27,7 @@ public sealed class CompleteLikeProductionTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = issueTitle,
             Description = "## Requirements\nTest HTTP completion path.\n\n## Acceptance Criteria\n- [ ] Done",

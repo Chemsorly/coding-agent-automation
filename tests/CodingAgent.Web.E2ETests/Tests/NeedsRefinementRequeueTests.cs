@@ -72,6 +72,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Re-queue after rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
@@ -121,6 +122,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "No rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
@@ -165,6 +167,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Old rejection test",
             Description = "## Requirements\nFix the thing.\n\n## Acceptance Criteria\n- [ ] Done",
@@ -219,6 +222,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         // Issue carries the *current* (changed) description
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Body changed test",
             Description = changedDescription,
@@ -288,6 +292,7 @@ public sealed class NeedsRefinementRequeueTests : HeadlessE2ETestBase
         // even if the agent:needs-refinement skip logic in DispatchScheduler were completely removed.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Needs refinement skip test",
             Description = "## Requirements\nVague requirements.\n\n## Acceptance Criteria\n- [ ] TBD",

@@ -588,7 +588,7 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
         {
             JobId = "test-job",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",

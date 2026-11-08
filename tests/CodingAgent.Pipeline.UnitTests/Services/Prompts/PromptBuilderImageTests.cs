@@ -12,6 +12,7 @@ public class PromptBuilderImageTests
     private static IssueDetail CreateIssue(string id = "42", string title = "Bug with UI",
         string description = "See screenshot:\n\n![error](https://github.com/user-attachments/assets/abc123.png)\n\nPlease fix.") => new()
     {
+        IsAuthorVerified = true,
         Identifier = id,
         Title = title,
         Description = description,

@@ -632,6 +632,7 @@ public class QualityGateExecutorPostPrCiTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "2106",
             Title = "Post-PR CI wait test",
             Description = "Test description",
@@ -763,6 +764,7 @@ public class QualityGateExecutorPostPrCiTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "2106",
             Title = "Post-PR CI wait test",
             Description = "Test description",
@@ -1506,6 +1508,7 @@ public class QualityGateExecutorEdgeCaseTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "edge#1",
             Title = "Edge case",
             Description = "Test description",
@@ -1695,6 +1698,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "2220",
             Title = "PostPrCiDuration telemetry test",
             Description = "Test description",

@@ -61,6 +61,7 @@ public class IssueContextBuilderTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Issue Title",
                 Description = issueDescription,
@@ -257,6 +258,7 @@ public class IssueContextBuilderTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Issue",
                 Description = "No images here.",
@@ -505,6 +507,7 @@ public class IssueContextBuilderImageExtractionFailureTests
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "org/repo#42",
                 Title = "Test Issue",
                 Description = issueDescription,

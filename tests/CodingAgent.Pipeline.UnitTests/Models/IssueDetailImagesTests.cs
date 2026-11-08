@@ -14,6 +14,7 @@ public class IssueDetailImagesTests
     {
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Description = "desc",
             Identifier = "org/repo#1",
             Labels = ["bug"],
@@ -40,6 +41,7 @@ public class IssueDetailImagesTests
 
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Description = "desc",
             Identifier = "org/repo#2",
             Labels = [],
@@ -56,6 +58,7 @@ public class IssueDetailImagesTests
     {
         var original = new IssueDetail
         {
+            IsAuthorVerified = true,
             Description = "Test description",
             Identifier = "org/repo#5",
             Labels = ["enhancement"],
@@ -95,6 +98,7 @@ public class IssueDetailImagesTests
     {
         var original = new IssueDetail
         {
+            IsAuthorVerified = true,
             Description = "desc",
             Identifier = "org/repo#3",
             Labels = [],
@@ -118,6 +122,7 @@ public class IssueDetailImagesTests
         // about Images won't break when they construct IssueDetail instances.
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Description = "description",
             Identifier = "org/repo#7",
             Labels = ["bug"],

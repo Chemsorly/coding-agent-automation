@@ -69,7 +69,7 @@ public class AgentPhaseExecutorFollowUpTests : IDisposable
         IssueOps = _mockIssueOps.Object,
         Callbacks = _mockCallbacks.Object,
         OrchestratorCts = null,
-        Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Desc", Labels = ["bug"] },
+        Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Desc", Labels = ["bug"] },
         ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = ["AC1"] }
     };
 

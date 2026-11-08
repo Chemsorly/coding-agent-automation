@@ -31,6 +31,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = title,
             Description = "## Requirements\nLifecycle test\n\n## Acceptance Criteria\n- [ ] Done",

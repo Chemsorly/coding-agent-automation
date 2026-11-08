@@ -332,7 +332,7 @@ public sealed class RoutingTelemetryTests
             if (throwFromCore)
                 throw new TimeoutException("DB timeout");
             var context = new IssueContextResult(
-                new IssueDetail { Identifier = "1", Title = "t", Description = "d", Labels = [] },
+                new IssueDetail { IsAuthorVerified = true, Identifier = "1", Title = "t", Description = "d", Labels = [] },
                 new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" }, [], null, false, null, 0);
             return Task.FromResult<(IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>, IssueContextResult,
                 IReadOnlyList<ProviderConfig>, PipelineConfiguration, bool, string?, int)?>(

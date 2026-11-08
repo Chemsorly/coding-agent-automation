@@ -405,6 +405,7 @@ public sealed class TriageService
                 Title = record.Title,
                 Description = "",
                 Labels = [],
+                IsAuthorVerified = true,
             },
         };
 

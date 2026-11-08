@@ -15,6 +15,7 @@ public class PromptBuilderTests
     private static IssueDetail CreateIssue(string id = "42", string title = "Add feature X",
         string description = "Implement feature X as described.") => new()
         {
+            IsAuthorVerified = true,
             Identifier = id,
             Title = title,
             Description = description,

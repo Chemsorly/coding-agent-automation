@@ -38,7 +38,7 @@ public class ProviderFailureRecorderTests
     {
         JobId = "job-1",
         IssueIdentifier = "owner/repo#42",
-        IssueDetail = new IssueDetail { Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
+        IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#42", Title = "Test", Description = "", Labels = [] },
         ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" },
         IssueComments = [],
         RepoProviderConfigId = "repo-1",

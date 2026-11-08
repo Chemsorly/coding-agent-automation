@@ -287,6 +287,7 @@ public class HubMessageSerializationTests
             IssueIdentifier = "org/repo#42",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "org/repo#42",
                 Title = "Implement widget factory",
                 Description = "Full description with **markdown** and `code`",

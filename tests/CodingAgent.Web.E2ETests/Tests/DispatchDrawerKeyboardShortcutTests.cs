@@ -94,9 +94,9 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await SeedDefaultTemplateAsync();
         Fixture.IssueProvider.Issues.AddRange(new[]
         {
-            new IssueDetail { Identifier = "10", Title = "Issue 10", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "11", Title = "Issue 11", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "12", Title = "Issue 12", Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "10", Title = "Issue 10", Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "11", Title = "Issue 11", Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "12", Title = "Issue 12", Description = "Test", Labels = new[] { "enhancement" } },
         });
 
         await using var fakeAgent = new FakeAgentClient("kbd-agent-1", "e2e");
@@ -169,9 +169,9 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await SeedDefaultTemplateAsync();
         Fixture.IssueProvider.Issues.AddRange(new[]
         {
-            new IssueDetail { Identifier = "20", Title = "Issue 20", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "21", Title = "Issue 21", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "22", Title = "Issue 22", Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "20", Title = "Issue 20", Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "21", Title = "Issue 21", Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "22", Title = "Issue 22", Description = "Test", Labels = new[] { "enhancement" } },
         });
 
         await using var fakeAgent = new FakeAgentClient("kbd-agent-2", "e2e");
@@ -237,8 +237,8 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await SeedDefaultTemplateAsync();
         Fixture.IssueProvider.Issues.AddRange(new[]
         {
-            new IssueDetail { Identifier = "30", Title = "Blocked issue", Description = "Blocked by #100", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "31", Title = "Normal issue",  Description = "Test", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "30", Title = "Blocked issue", Description = "Blocked by #100", Labels = new[] { "enhancement" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "31", Title = "Normal issue",  Description = "Test", Labels = new[] { "enhancement" } },
         });
         // Do NOT add #100 to ClosedIssueIdentifiers → it stays open → #30 is blocked
 
@@ -293,6 +293,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await SeedDefaultTemplateAsync();
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "40",
             Title = "Escape test issue",
             Description = "Test",
@@ -360,6 +361,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await SeedDefaultTemplateAsync();
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "50",
             Title = "Overlay test issue",
             Description = "Test",
@@ -527,6 +529,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "300",
             Title = "Epic keyboard test",
             Description = "## Goal\nTest keyboard dispatch",

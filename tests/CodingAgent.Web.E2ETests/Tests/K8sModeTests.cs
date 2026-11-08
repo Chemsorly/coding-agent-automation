@@ -208,6 +208,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Seed the issue so AssignmentEnricher can fetch context during GetAssignment
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "k8s-fetch-assign-900",
             Title = "K8s fetch assignment test issue",
             Description = "## Requirements\nTest\n\n## Acceptance Criteria\n- [ ] Done",
@@ -967,6 +968,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Arrange: seed issue and profile, then connect agent BEFORE dispatching
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "reg-pending-100",
             Title = "Pending Queue Regression",
             Description = "Regression test for pending-queue restore",
@@ -1024,8 +1026,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Arrange: seed issues and profile
         Fixture.IssueProvider.Issues.AddRange(new[]
         {
-            new IssueDetail { Identifier = "prio-100", Title = "Priority Test 1", Description = "test", Labels = new[] { "agent:next" } },
-            new IssueDetail { Identifier = "prio-101", Title = "Priority Test 2", Description = "test", Labels = new[] { "agent:next" } }
+            new IssueDetail { IsAuthorVerified = true, Identifier = "prio-100", Title = "Priority Test 1", Description = "test", Labels = new[] { "agent:next" } },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "prio-101", Title = "Priority Test 2", Description = "test", Labels = new[] { "agent:next" } }
         });
         await Fixture.SeedRoutedProfileAsync(new AgentProfile
         {
@@ -1103,6 +1105,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         // Seed the issue so AssignmentEnricher can fetch context during GetAssignment
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "k8s-lifecycle-e2e-9999",
             Title = "K8s lifecycle test issue",
             Description = "## Requirements\nLifecycle test\n\n## Acceptance Criteria\n- [ ] Done",

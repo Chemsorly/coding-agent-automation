@@ -80,7 +80,7 @@ public class ManualDispatchServiceTests
 
     private static void HasIssue(Mock<IIssueProvider> tracker, string id, string title = "Issue", params string[] labels) =>
         tracker.Setup(t => t.GetIssueAsync(It.Is<IssueIdentifier>(i => i.Value == id), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = id, Title = title, Description = $"Body of {id}", Labels = labels });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = id, Title = title, Description = $"Body of {id}", Labels = labels });
 
     private void ProviderGone(string id, ProviderKind kind) =>
         _configs.Setup(c => c.GetProviderConfigByIdAsync(id, kind, It.IsAny<CancellationToken>())).ReturnsAsync((ProviderConfig?)null);

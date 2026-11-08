@@ -62,7 +62,7 @@ public sealed class JobAssignmentMessageFactoryTests
             AgentProviderConfigId = "agent-config-1",
             BrainProviderConfigId = "brain-1",
             PipelineProviderConfigId = "pipeline-1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#11", Title = "Test", Description = "Desc", Labels = ["bug"] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#11", Title = "Test", Description = "Desc", Labels = ["bug"] },
             RunType = PipelineRunType.Review,
             ProjectId = new Guid("22220000-0000-0000-0000-000000000001"),
             ProjectName = "My Project"
@@ -93,6 +93,14 @@ public sealed class JobAssignmentMessageFactoryTests
         msg.IssueDetail.Should().NotBeNull();
         msg.IssueDetail.Title.Should().BeEmpty();
         msg.IssueDetail.Labels.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_NullIssueDetail_FallbackIsVerified()
+    {
+        var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), MinimalRequest());
+
+        msg.IssueDetail.IsAuthorVerified.Should().BeTrue("the fallback has an empty title and body, so no outside text");
     }
 
     [Fact]
@@ -181,6 +189,7 @@ public sealed class JobAssignmentMessageFactoryTests
         {
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = new IssueIdentifier("GH-42"),
                 Title = "Fix bug",
                 Description = "desc",

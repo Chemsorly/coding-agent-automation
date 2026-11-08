@@ -412,6 +412,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             TimeoutSeconds = 3600,
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Title = "Restart Recovery",
                 Description = "Test description",
                 Identifier = "owner/repo#6",

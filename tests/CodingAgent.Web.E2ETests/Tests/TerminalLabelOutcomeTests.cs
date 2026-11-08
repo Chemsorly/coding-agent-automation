@@ -84,6 +84,7 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = issueTitle,
             Description = "## Requirements\nVerify terminal label.\n\n## Acceptance Criteria\n- [ ] Done",
@@ -576,6 +577,7 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = prIdentifier,
             Title = prTitle,
             Description = $"PR review E2E test — {prTitle}",

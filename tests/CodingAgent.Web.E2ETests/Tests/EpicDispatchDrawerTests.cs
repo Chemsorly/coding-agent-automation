@@ -31,6 +31,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         // Arrange: seed an agent:epic issue and a decomposition-enabled template
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "501",
             Title = "Epic: Build search feature",
             Description = "## Goal\nBuild full-text search",
@@ -119,6 +120,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         // Arrange: seed an agent:epic-approved issue and a decomposition-enabled template
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "502",
             Title = "Epic: Build notification service",
             Description = "## Goal\nBuild notifications",
@@ -199,6 +201,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         // Arrange: seed one regular issue and one epic issue; only epic should appear
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "601",
             Title = "Regular issue — not an epic",
             Description = "Just a regular implementation issue",
@@ -206,6 +209,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "602",
             Title = "Epic: Build auth system",
             Description = "## Goal\nBuild auth",
@@ -244,6 +248,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         // Arrange: two agent:epic issues, MaxConcurrentDecompositions=1
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "701",
             Title = "Epic: Feature A",
             Description = "## Goal\nFeature A",
@@ -251,6 +256,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "702",
             Title = "Epic: Feature B",
             Description = "## Goal\nFeature B",
@@ -389,6 +395,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         // one agent:next issue, same cycle should dispatch the agent:next regardless
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "801",
             Title = "Epic: Feature C",
             Description = "## Goal\nFeature C",
@@ -396,6 +403,7 @@ public sealed class EpicDispatchDrawerTests : E2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "802",
             Title = "Regular implementation issue",
             Description = "## Requirements\nImplement something",

@@ -94,6 +94,7 @@ public sealed class FetchIssueStepTests
         IReadOnlyList<string>? labels = null) =>
         new()
         {
+            IsAuthorVerified = true,
             Identifier = identifier,
             Title = title,
             Description = description,
@@ -344,6 +345,7 @@ public sealed class FetchIssueStepTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Fix startup crash",
             Description = "App crashes on first launch due to missing config.",
@@ -397,6 +399,41 @@ public sealed class FetchIssueStepTests
         context.Issue.Should().NotBeNull();
         context.Issue!.Images.Should().NotBeEmpty(
             because: "the step must extract images from the issue body and populate Images on the reconstructed IssueDetail");
+    }
+
+    // ── The author-verified flag survives the rebuild ─────────────────────────
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExecuteAsync_KeepsIsAuthorVerified(bool isAuthorVerified)
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "42",
+            Title = "Fix the layout",
+            Description = "![Screenshot](https://example.com/screenshot.png)\n\nFix the layout.",
+            Labels = new[] { "bug" },
+            Url = "https://example.com/issues/42",
+            CreatedAt = new DateTime(2026, 5, 1, 8, 0, 0, DateTimeKind.Utc),
+            IsAuthorVerified = isAuthorVerified
+        };
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issue);
+        _issueProvider
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+
+        var context = BuildContext();
+
+        await CreateStep().ExecuteAsync(context, CancellationToken.None);
+
+        context.Issue.Should().NotBeNull();
+        context.Issue!.IsAuthorVerified.Should().Be(isAuthorVerified, "the rebuild that adds the images keeps the flag");
+        context.Issue.Images.Should().NotBeEmpty("the rebuild ran with the image found in the body");
+        context.Issue.Url.Should().Be(issue.Url);
+        context.Issue.CreatedAt.Should().Be(issue.CreatedAt);
     }
 
     // ── Cancellation propagates ───────────────────────────────────────────────

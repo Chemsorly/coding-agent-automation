@@ -49,6 +49,7 @@ public sealed class LostHubCompletionLabelTests : HeadlessE2ETestBase
         // Add the issue with agent:in-progress (as it would be after dispatch).
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Lost hub completion test issue {issueId}",
             Description = string.Empty,

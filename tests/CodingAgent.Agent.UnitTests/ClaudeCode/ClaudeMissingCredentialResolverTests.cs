@@ -31,7 +31,7 @@ public sealed class ClaudeMissingCredentialResolverTests
     {
         JobId = "job-claude-missing-token",
         IssueIdentifier = "owner/repo#1",
-        IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "T", Description = "", Labels = [] },
+        IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "T", Description = "", Labels = [] },
         ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
         RepoProviderConfigId = RepoConfig.Id,
         AgentProviderConfigId = AgentConfig.Id,

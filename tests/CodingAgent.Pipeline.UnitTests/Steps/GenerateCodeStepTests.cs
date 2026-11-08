@@ -71,6 +71,7 @@ public class GenerateCodeStepTests
     private static IssueDetail MakeIssue() =>
         new()
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Fix the bug",
             Description = "Something is broken",

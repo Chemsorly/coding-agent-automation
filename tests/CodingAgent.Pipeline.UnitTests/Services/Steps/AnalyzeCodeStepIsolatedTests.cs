@@ -60,7 +60,7 @@ public class AnalyzeCodeStepIsolatedTests
             .ReturnsAsync(true);
 
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
 
         var result = await new AnalyzeCodeStep().ExecuteAsync(context, CancellationToken.None);
@@ -77,7 +77,7 @@ public class AnalyzeCodeStepIsolatedTests
             .ReturnsAsync(false);
 
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
 
         var result = await new AnalyzeCodeStep().ExecuteAsync(context, CancellationToken.None);
@@ -99,7 +99,7 @@ public class AnalyzeCodeStepIsolatedTests
             .ReturnsAsync(true);
 
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.IssueComments = comments;
 
@@ -120,7 +120,7 @@ public class AnalyzeCodeStepIsolatedTests
             .ReturnsAsync(true);
 
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.IssueComments = null;
 

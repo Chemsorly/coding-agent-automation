@@ -190,6 +190,7 @@ public class PipelineRunHighWaterMarkTests
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
                 Labels = Array.Empty<string>()
             });

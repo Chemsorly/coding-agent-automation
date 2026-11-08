@@ -55,7 +55,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-agent-creation-fail",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -124,7 +124,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-pipeline-creation-fail",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -190,7 +190,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-project-epic",
             IssueIdentifier = "7",
-            IssueDetail = new IssueDetail { Identifier = "7", Title = "Epic", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "7", Title = "Epic", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RunType = PipelineRunType.DecompositionAnalysis,
             RepoProviderConfigId = "repo-api",
@@ -258,7 +258,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-project-review",
             IssueIdentifier = "12",
-            IssueDetail = new IssueDetail { Identifier = "12", Title = "Add the order endpoint", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "12", Title = "Add the order endpoint", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RunType = runType,
             RepoProviderConfigId = "repo-api",
@@ -326,7 +326,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-no-brain",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -380,7 +380,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-brain-missing",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -447,7 +447,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-brain-validate-fail",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",

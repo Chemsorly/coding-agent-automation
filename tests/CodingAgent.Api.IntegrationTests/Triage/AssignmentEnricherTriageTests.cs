@@ -42,7 +42,7 @@ public sealed class AssignmentEnricherTriageTests
             int RefreshCount)?> PrepareDispatchCoreAsync(DispatchCoreRequest request, CancellationToken ct)
         {
             Captured = request;
-            var subject = request.PullRequest ?? new IssueDetail { Identifier = "431", Title = "From tracker", Description = "d", Labels = [] };
+            var subject = request.PullRequest ?? new IssueDetail { IsAuthorVerified = true, Identifier = "431", Title = "From tracker", Description = "d", Labels = [] };
             var context = new IssueContextResult(subject, new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" }, [], null, false, null, 0);
             return Task.FromResult<(IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>, IssueContextResult,
                 IReadOnlyList<ProviderConfig>, PipelineConfiguration, bool, string?, int)?>(

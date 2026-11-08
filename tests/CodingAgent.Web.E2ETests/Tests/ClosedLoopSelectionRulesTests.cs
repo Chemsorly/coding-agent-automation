@@ -81,6 +81,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Arrange
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Clean issue",
             Description = "Should be dispatched",
@@ -88,6 +89,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "2",
             Title = "Error issue",
             Description = "Should be skipped",
@@ -95,6 +97,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "3",
             Title = "Needs refinement issue",
             Description = "Should be skipped",
@@ -156,6 +159,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var now = DateTime.UtcNow;
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "30",
             Title = "Newest issue",
             Description = "Created most recently",
@@ -164,6 +168,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "20",
             Title = "Middle issue",
             Description = "Created in the middle",
@@ -172,6 +177,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "10",
             Title = "Oldest issue",
             Description = "Created longest ago",
@@ -236,6 +242,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // budget slot without producing a second work item that agents can receive.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "PR for review",
             Description = "PR body",
@@ -243,6 +250,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "200",
             Title = "Epic — phase 2",
             Description = "Epic approved for decomposition",
@@ -250,6 +258,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "300",
             Title = "Regular issue",
             Description = "Should wait until budget allows",
@@ -366,6 +375,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Do NOT include agent:next — see Budget2 test for the rationale.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "43",
             Title = "PR for review",
             Description = "PR body",
@@ -373,6 +383,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "201",
             Title = "Epic — phase 2",
             Description = "Epic approved for decomposition",
@@ -380,6 +391,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "301",
             Title = "Regular issue",
             Description = "Should be dispatched with budget=3",
@@ -475,6 +487,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "501",
             Title = "Issue that should be dispatched",
             Description = "Implementation stays on",
@@ -521,6 +534,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "51",
             Title = "Issue that should not be dispatched",
             Description = "Implementation is disabled",
@@ -544,6 +558,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // comments at TypePriority_Budget2 about the MinIssueSlots floor pass conflict.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "511",
             Title = "PR for review",
             Description = "PR body",
@@ -591,6 +606,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "52",
             Title = "Epic that should not be dispatched",
             Description = "Decomposition is disabled",
@@ -642,6 +658,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "60",
             Title = "Issue for disabled template",
             Description = "Template is disabled",
@@ -694,6 +711,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Older CreatedAt so FIFO always selects it ahead of "61".
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "62",
             Title = "Issue for enabled default project",
             Description = "Default project is enabled — WILL be dispatched",
@@ -710,6 +728,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // FIFO-second issue within budget=2.
         Fixture.FakeProviders.SecondaryIssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "61",
             Title = "Issue for disabled project",
             Description = "Project is disabled — must NOT be dispatched",
@@ -876,6 +895,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // selected first — but the real discriminator is which template is polled first.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "100",
             Title = "Issue from A-Project",
             Description = "From alphabetically first project; reachable only via issue-e2e",
@@ -886,6 +906,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Issue "200" — only accessible via Z-Project's template (secondary provider "issue-e2e-2")
         Fixture.FakeProviders.SecondaryIssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "200",
             Title = "Issue from Z-Project",
             Description = "From alphabetically last project; reachable only via issue-e2e-2",
@@ -937,6 +958,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Arrange: seed issue 60 blocked by #100 (open)
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "60",
             Title = "Blocked issue",
             Description = "Blocked by #100",  // same body format as DependencyBlockingTests

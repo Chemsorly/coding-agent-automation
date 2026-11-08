@@ -412,6 +412,7 @@ public class CiPollingCoordinatorTests
             },
             Issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "2889",
                 Title = "InfraRetryCount isolation",
                 Description = "test",

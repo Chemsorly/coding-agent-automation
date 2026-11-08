@@ -114,7 +114,7 @@ public sealed class UiDispatchEndpointTests
 
     private void HasIssue(string id, params string[] labels) =>
         _issues.Setup(t => t.GetIssueAsync(It.Is<IssueIdentifier>(i => i.Value == id), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = id, Title = $"Issue {id}", Description = "", Labels = labels });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = id, Title = $"Issue {id}", Description = "", Labels = labels });
 
     [IdorCase("POST /api/ui/templates/{templateId}/issues/{issueIdentifier}/dispatch")]
     [IdorCase("POST /api/ui/templates/{templateId}/pull-requests/{number:int}/dispatch")]

@@ -166,7 +166,7 @@ public class ParameterObjectTests
         {
             JobId = "j-1",
             IssueIdentifier = "x",
-            IssueDetail = new IssueDetail { Identifier = "x", Title = "", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "x", Title = "", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" },
             IssueComments = [],
             RepoProviderConfigId = "rp",
@@ -206,7 +206,7 @@ public class ParameterObjectTests
         {
             JobId = "j-2",
             IssueIdentifier = "x",
-            IssueDetail = new IssueDetail { Identifier = "x", Title = "", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "x", Title = "", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" },
             IssueComments = [],
             RepoProviderConfigId = "rp",

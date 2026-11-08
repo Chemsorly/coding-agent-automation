@@ -24,6 +24,7 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8101",
             Title = "Relay test 8101",
             Description = "Test issue for relay reservation check",
@@ -47,6 +48,7 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8102",
             Title = "Relay test 8102",
             Description = "Test issue for relay delivery",
@@ -79,6 +81,7 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8103",
             Title = "Relay test 8103",
             Description = "Test issue for relay retry",
@@ -117,6 +120,7 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8104",
             Title = "Relay test 8104",
             Description = "Test issue for relay exhaustion",
@@ -151,6 +155,7 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8105",
             Title = "Relay test 8105",
             Description = "Test issue for fast path regression",
@@ -229,6 +234,7 @@ public sealed class FeedbackRelayE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8106",
             Title = "Relay test 8106",
             Description = "Test issue for relay boundary",

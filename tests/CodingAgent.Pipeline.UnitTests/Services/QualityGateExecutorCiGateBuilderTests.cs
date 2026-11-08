@@ -502,6 +502,7 @@ public class QualityGateExecutorCiGateBuilderTests
             },
             Issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "2625",
                 Title = "CI gate builder test",
                 Description = "Test description",

@@ -45,6 +45,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase
         // Arrange: seed two issues
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "First issue for agent 1",
             Description = "## Requirements\nFirst task\n\n## Acceptance Criteria\n- [ ] Done",
@@ -52,6 +53,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "43",
             Title = "Second issue for agent 2",
             Description = "## Requirements\nSecond task\n\n## Acceptance Criteria\n- [ ] Done",

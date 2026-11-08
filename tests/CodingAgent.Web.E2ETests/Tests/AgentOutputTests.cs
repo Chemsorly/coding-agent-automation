@@ -75,6 +75,7 @@ public sealed partial class AgentOutputTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueIdentifier,
             Title = $"Output test issue {issueIdentifier}",
             Description = "E2E output coverage",

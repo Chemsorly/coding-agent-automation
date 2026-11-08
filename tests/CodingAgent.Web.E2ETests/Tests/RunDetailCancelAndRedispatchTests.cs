@@ -61,6 +61,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Issue {issueId} run page test",
             Description = "Test",
@@ -428,6 +429,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // Seed an issue for linked PR context
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Linked issue {issueId}",
             Description = "Test",

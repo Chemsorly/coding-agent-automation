@@ -302,6 +302,7 @@ public sealed class SettingsProviderCrudTests : E2ETestBase
         // Seed an issue
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "setup-100",
             Title = "Setup steps test issue",
             Description = "Test",

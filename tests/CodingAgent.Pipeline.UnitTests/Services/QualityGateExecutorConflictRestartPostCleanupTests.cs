@@ -265,6 +265,7 @@ public class QualityGateExecutorConflictRestartPostCleanupTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "3234",
             Title = "ConflictRestart post-cleanup guard test",
             Description = "Test issue description",

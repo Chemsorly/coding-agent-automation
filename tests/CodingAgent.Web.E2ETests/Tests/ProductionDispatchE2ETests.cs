@@ -68,6 +68,7 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         const string issueId = "7001";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Production dispatch J1",
             Description = "## Requirements\nTest production dispatch.\n\n## Acceptance Criteria\n- [ ] Done",
@@ -332,6 +333,7 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         const string issueId = "7002";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Profile refused J7",
             Description = "## Requirements\nTest profile refusal.\n\n## Acceptance Criteria\n- [ ] Done",
@@ -397,6 +399,7 @@ public sealed class ProductionDispatchE2ETests : HeadlessE2ETestBase
         const string issueId = "7003";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Profile refused J8",
             Description = "## Requirements\nTest worker refusal.\n\n## Acceptance Criteria\n- [ ] Done",
