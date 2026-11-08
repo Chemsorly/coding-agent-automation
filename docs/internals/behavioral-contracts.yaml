@@ -36,3 +36,10 @@
     - metric: "token_vending.scope_refused"
       increment: 1
   last_verified: "2026-10-31"
+
+- component: "IssueComment.HasVerifiedMarker"
+  scenario: "A comment or review by an author outside the repository carries a pipeline marker"
+  assertion: >
+    The marker does not count: no existing analysis, no gate signal, no plan, no comment or review
+    update or dismissal. A comment with IsVerified null (older API) counts as before.
+  last_verified: "2026-10-31"

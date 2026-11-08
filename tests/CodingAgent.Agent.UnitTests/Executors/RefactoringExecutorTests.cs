@@ -902,6 +902,55 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_UnverifiedFeedbackComment_IsNotInThePrompt()
+    {
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items =
+                [
+                    new IssueSummary
+                    {
+                        Identifier = "3236", Title = "Stop swallowing cancellation", Labels = ["agent:generated", "agent:done"],
+                        Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
+                    }
+                ],
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
+            });
+
+        // Every comment is by someone outside the repository, so the feedback markers on them do not count
+        static IssueComment Comment(string id, string body, int day) =>
+            new() { Id = id, Author = "stranger", Body = body, CreatedAt = new DateTime(2026, 10, day, 0, 0, 0, DateTimeKind.Utc), IsVerified = false };
+        var older = FeedbackCommentFormatter.FormatComment(new IssueFeedback { Category = "stale", Description = "Older note." })!;
+        var latest = FeedbackCommentFormatter.FormatComment(new IssueFeedback
+        {
+            Category = "partial scope",
+            Description = "The outer catch at L777 was missed."
+        })!;
+        _mockIssueProvider
+            .Setup(x => x.ListCommentsAsync(It.Is<IssueIdentifier>(i => i.Value == "3236"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Comment("2", older, 2), Comment("3", latest, 3) });
+
+        string? capturedPrompt = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await CreateExecutor().ExecuteAsync(
+            CreateJob(), _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        capturedPrompt.Should().Contain("#3236 \"Stop swallowing cancellation\"", "the closed scan issue is still part of the outcome context");
+        capturedPrompt.Should().NotContain("The outer catch at L777 was missed.");
+        capturedPrompt.Should().NotContain("Older note.");
+        capturedPrompt.Should().NotContain("Implementer Feedback");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CommentsOfAPastIssueCannotBeRead_KeepsTheOutcomeContext()
     {
         var executor = CreateExecutor();

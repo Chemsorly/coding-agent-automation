@@ -56,7 +56,7 @@ Adversarial review validates: no overlap with open issues, each sub-issue is rig
 
 1. Reads `.agent/decomposition-plan.md` from workspace
 2. Formats comment with `<!-- agent:decomposition-plan -->` marker + approval instructions
-3. Checks for existing plan comment via `ListCommentsAsync` + marker search (most recent match)
+3. Checks for existing plan comment via `ListCommentsAsync` + marker search (most recent match by a verified author)
 4. If existing: updates via `UpdateCommentAsync`; if not: posts new via `PostCommentAsync`
 5. Swaps label to `agent:epic-review`
 
@@ -64,7 +64,7 @@ Adversarial review validates: no overlap with open issues, each sub-issue is rig
 
 ### DecompositionStep
 
-1. Validates plan comment exists (marker detection); fails the run if the epic has no plan comment
+1. Validates plan comment exists (marker detection, verified authors only); fails the run if the epic has no such comment
 2. Writes epic body + all comments (including plan comment) to `.agent/issue-context.md`
 3. Queries existing `agent:generated` sub-issues for deduplication context
 4. Builds decomposition prompt with `MaxDecompositionSubIssues` cap
@@ -174,4 +174,4 @@ All paths defined as constants in `AgentWorkspacePaths`.
 | `<!-- agent:decomposition-plan -->` | Identifies plan comment (first line) |
 | `<!-- agent:decomposition-summary -->` | Identifies summary comment |
 
-Markers enable idempotent updates on re-run.
+Markers enable idempotent updates on re-run. A marker counts only on a comment by a verified author.

@@ -440,6 +440,56 @@ public class GitLabRepositoryProviderMergeRequestTests
         resolvedIds.Should().Equal(new[] { "thread-1" }, "no thread is resolved after the cancellation");
     }
 
+    [Fact]
+    public async Task DismissPreviousReviewAsync_NonMemberThreadWithMarker_IsNotResolved()
+    {
+        var (server, client, projectId, iid, outsider) = CreateServerWithOutsiderAndMergeRequest();
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        // Someone outside the project copies the marker into a thread of their own, ahead of the pipeline's real thread
+        var planted = server.CreateClient(outsider).GetMergeRequest(projectId).Discussions(iid)
+            .Add(new MergeRequestDiscussionCreate { Body = $"{ReviewMarker} planted" });
+        var real = client.GetMergeRequest(projectId).Discussions(iid)
+            .Add(new MergeRequestDiscussionCreate { Body = $"{ReviewMarker} real" });
+
+        await provider.DismissPreviousReviewAsync(iid, ReviewMarker, "Superseded", CancellationToken.None);
+
+        var threads = client.GetMergeRequest(projectId).Discussions(iid).All.ToList();
+        // The positive control shows that resolving works on this fixture, so the negative assertion below is not vacuous
+        threads.Single(d => d.Id == real.Id).Notes.Should().Contain(n => n.Resolved == true,
+            "a thread by a project member is resolved");
+        threads.Single(d => d.Id == planted.Id).Notes.Should().NotContain(n => n.Resolved == true,
+            "a thread by someone outside the project must not be resolved");
+    }
+
+    [Fact]
+    public async Task DismissPreviousReviewAsync_MarkerOnlyInNonMemberReply_IsNotResolved()
+    {
+        var resolvedIds = new List<string>();
+        var members = new Mock<IMembersClient>();
+        members
+            .Setup(m => m.GetMemberOfProjectAsync(It.IsAny<NGitLab.Models.ProjectId>(), 2L, true, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GitLabException("404 Not Found") { StatusCode = HttpStatusCode.NotFound });
+
+        // The member's thread carries no marker; a non-member replied to it with the marker
+        var thread = new NGitLab.Models.MergeRequestDiscussion
+        {
+            Id = "thread-1",
+            Notes =
+            [
+                new NGitLab.Models.MergeRequestComment { Author = new NGitLab.Models.User { Id = 1 }, Body = "Review findings" },
+                new NGitLab.Models.MergeRequestComment { Author = new NGitLab.Models.User { Id = 2 }, Body = $"{ReviewMarker} planted" }
+            ]
+        };
+        var provider = CreateProviderWithMockedDiscussions([thread], resolve => resolvedIds.Add(resolve.Id), members.Object);
+
+        await provider.DismissPreviousReviewAsync(42, ReviewMarker, "Superseded", CancellationToken.None);
+
+        resolvedIds.Should().BeEmpty("the marker is only in a reply by someone outside the project");
+        members.Verify(
+            m => m.GetMemberOfProjectAsync(It.IsAny<NGitLab.Models.ProjectId>(), 2L, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private const string ReviewMarker = "<!-- agent:review -->";
 
     /// <summary>
@@ -449,7 +499,8 @@ public class GitLabRepositoryProviderMergeRequestTests
     /// </summary>
     private static GitLabRepositoryProvider CreateProviderWithMockedDiscussions(
         IReadOnlyList<NGitLab.Models.MergeRequestDiscussion> discussions,
-        Action<NGitLab.Models.MergeRequestDiscussionResolve> onResolve)
+        Action<NGitLab.Models.MergeRequestDiscussionResolve> onResolve,
+        IMembersClient? members = null)
     {
         var discussionClient = new Mock<IMergeRequestDiscussionClient>();
         discussionClient.Setup(d => d.All).Returns(discussions);
@@ -465,6 +516,11 @@ public class GitLabRepositoryProviderMergeRequestTests
         mergeRequestClient.Setup(m => m.Discussions(It.IsAny<long>())).Returns(discussionClient.Object);
 
         var client = new Mock<IGitLabClient>();
+        var users = new Mock<IUserClient>();
+        users.Setup(u => u.GetCurrentUserAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new NGitLab.Models.Session { Id = 1 });
+        client.Setup(c => c.Users).Returns(users.Object);
+        if (members is not null)
+            client.Setup(c => c.Members).Returns(members);
         client.Setup(c => c.GetMergeRequest(It.IsAny<NGitLab.Models.ProjectId>())).Returns(mergeRequestClient.Object);
 
         return new GitLabRepositoryProvider(client.Object, 1, "main");
@@ -473,8 +529,32 @@ public class GitLabRepositoryProviderMergeRequestTests
     private static NGitLab.Models.MergeRequestDiscussion MarkedDiscussion(string id) => new()
     {
         Id = id,
-        Notes = [new NGitLab.Models.MergeRequestComment { Body = $"{ReviewMarker} {id}" }]
+        Notes = [new NGitLab.Models.MergeRequestComment { Author = new NGitLab.Models.User { Id = 1 }, Body = $"{ReviewMarker} {id}" }]
     };
+
+    /// <summary>
+    /// A public project whose default user is a maintainer, with an open merge request and a user outside the project.
+    /// </summary>
+    private static (GitLabServer Server, IGitLabClient Client, int ProjectId, int MergeRequestIid, NGitLab.Mock.User Outsider)
+        CreateServerWithOutsiderAndMergeRequest()
+    {
+        var server = new GitLabConfig()
+            .WithUser("TestUser", isDefault: true)
+            .WithUser("Outsider")
+            .WithProject("TestProject", @namespace: "TestUser", addDefaultUserAsMaintainer: true,
+                initialCommit: true, defaultBranch: "main", configure: project =>
+                {
+                    project.WithMergeRequest(sourceBranch: "branch", title: "Test MR",
+                        targetBranch: "main", description: "description");
+                })
+            .BuildServer();
+        server.AllProjects.First().Visibility = VisibilityLevel.Public; // so non-members can comment
+
+        var client = server.CreateClient();
+        var projectId = (int)client.Projects.Accessible.First().Id;
+        var mr = client.GetMergeRequest(projectId).Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
+        return (server, client, projectId, (int)mr.Iid, server.Users.First(u => u.UserName == "Outsider"));
+    }
 
     #endregion
 
@@ -517,6 +597,26 @@ public class GitLabRepositoryProviderMergeRequestTests
             (int)mr.Iid, "<!-- nonexistent -->", CancellationToken.None);
 
         result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_NonMemberNoteFirst_ReturnsTheMembersNote()
+    {
+        var (server, client, projectId, iid, outsider) = CreateServerWithOutsiderAndMergeRequest();
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var planted = server.CreateClient(outsider).GetMergeRequest(projectId).Comments(iid)
+            .Add(new MergeRequestCommentCreate { Body = $"{ReviewMarker} planted" });
+        var real = client.GetMergeRequest(projectId).Comments(iid)
+            .Add(new MergeRequestCommentCreate { Body = $"{ReviewMarker} real" });
+
+        // The outsider's note must really come first, or the test would not exercise the skip
+        var order = client.GetMergeRequest(projectId).Comments(iid).All.Select(n => n.Id).ToList();
+        order.IndexOf(planted.Id).Should().BeLessThan(order.IndexOf(real.Id));
+
+        var result = await provider.FindExistingReviewCommentAsync(iid, ReviewMarker, CancellationToken.None);
+
+        result.Should().Be(real.Id, "a note by someone outside the project does not count, even if it comes first");
     }
 
     #endregion

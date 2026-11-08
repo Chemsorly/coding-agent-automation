@@ -282,7 +282,7 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         // Search from most recent to oldest
         for (var i = comments.Count - 1; i >= 0; i--)
         {
-            if (comments[i].Body.Contains(CommentMarkers.DecompositionPlan, StringComparison.Ordinal))
+            if (comments[i].HasVerifiedMarker(CommentMarkers.DecompositionPlan))
                 return comments[i];
         }
 

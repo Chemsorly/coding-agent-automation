@@ -23,6 +23,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
     private const string Repo = "test-repo";
     private const string Token = "fake-token-12345";
     private const string BaseBranch = "main";
+    private const string PrReviewMarker = "<!-- agent:pr-review -->";
 
     private GitHubRepositoryProvider CreateProvider() =>
         new(new GitHubConnectionInfo(Server.Url!, Owner, Repo), Token, BaseBranch);
@@ -548,6 +549,100 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         dismissEntries.Should().NotContain(e => e.RequestMessage.Path!.Contains("/1101/"));
     }
 
+    [Fact]
+    public async Task DismissPreviousReviewAsync_UnverifiedAuthorWithMarker_IsNotDismissed()
+    {
+        // An author outside the repository cannot make the pipeline dismiss reviews by copying the marker
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/27/reviews"), new[]
+        {
+            BuildAuthoredReviewJson(1101, "outsider", "User", "NONE", $"Review {PrReviewMarker}")
+        });
+        StubDismissal(27, 1101);
+
+        await using var provider = CreateProvider();
+        await provider.DismissPreviousReviewAsync(27, PrReviewMarker, "Superseded", CancellationToken.None);
+
+        CountDismissalRequests().Should().Be(0, "the author is outside the repository");
+        CountPermissionLookups().Should().Be(1, "an author with association NONE is checked by permission");
+    }
+
+    [Fact]
+    public async Task DismissPreviousReviewAsync_UnverifiedReviewFirst_StillDismissesTheVerifiedOne()
+    {
+        // Skipping an unverified review must not end the scan: the pipeline's own review after it is still dismissed
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/31/reviews"), new[]
+        {
+            BuildAuthoredReviewJson(1101, "outsider", "User", "NONE", $"Planted {PrReviewMarker}"),
+            BuildAuthoredReviewJson(1102, "pipeline-user", "User", "MEMBER", $"Review {PrReviewMarker}")
+        });
+        StubDismissal(31, 1101);
+        StubDismissal(31, 1102);
+
+        await using var provider = CreateProvider();
+        await provider.DismissPreviousReviewAsync(31, PrReviewMarker, "Superseded", CancellationToken.None);
+
+        var dismissEntries = Server.LogEntries
+            .Where(e => e.RequestMessage.Path?.Contains("/dismissals") == true)
+            .ToList();
+        dismissEntries.Should().ContainSingle("only the review by a verified author is dismissed");
+        dismissEntries.Should().Contain(e => e.RequestMessage.Path!.Contains("/1102/"));
+        dismissEntries.Should().NotContain(e => e.RequestMessage.Path!.Contains("/1101/"));
+    }
+
+    [Fact]
+    public async Task DismissPreviousReviewAsync_PrivateMemberWithMarker_IsDismissed()
+    {
+        // A private organization member is reported as CONTRIBUTOR, so only the permission lookup shows write access
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/28/reviews"), new[]
+        {
+            BuildAuthoredReviewJson(1201, "private-member", "User", "CONTRIBUTOR", $"Review {PrReviewMarker}")
+        });
+        StubPermission("private-member", "write");
+        StubDismissal(28, 1201);
+
+        await using var provider = CreateProvider();
+        await provider.DismissPreviousReviewAsync(28, PrReviewMarker, "Superseded", CancellationToken.None);
+
+        CountDismissalRequests().Should().Be(1);
+        CountPermissionLookups().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DismissPreviousReviewAsync_LookupFails_Throws()
+    {
+        // A failed lookup never reads as "not verified": the call fails and no review is dismissed
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/29/reviews"), new[]
+        {
+            BuildAuthoredReviewJson(1301, "alice", "User", "NONE", $"Review {PrReviewMarker}")
+        });
+        StubError(ApiPath($"/repos/{Owner}/{Repo}/collaborators/alice/permission"), 500,
+            new { message = "Internal Server Error" });
+        StubDismissal(29, 1301);
+
+        await using var provider = CreateProvider();
+        await provider.Invoking(p => p.DismissPreviousReviewAsync(29, PrReviewMarker, "Superseded", CancellationToken.None))
+            .Should().ThrowAsync<Octokit.ApiException>();
+
+        CountDismissalRequests().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DismissPreviousReviewAsync_AppBotReview_IsDismissed()
+    {
+        // Reviews posted under a GitHub App are by a Bot account: verified without any permission lookup
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/30/reviews"), new[]
+        {
+            BuildAuthoredReviewJson(1401, "pipeline-app[bot]", "Bot", "NONE", $"Review {PrReviewMarker}")
+        });
+        StubDismissal(30, 1401);
+
+        await using var provider = CreateProvider();
+        await provider.DismissPreviousReviewAsync(30, PrReviewMarker, "Superseded", CancellationToken.None);
+
+        CountDismissalRequests().Should().Be(1);
+        CountPermissionLookups().Should().Be(0);
+    }
+
     #endregion
 
     #region FindExistingReviewCommentAsync
@@ -624,6 +719,50 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
             () => provider.FindExistingReviewCommentAsync(34, null!, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_UnverifiedCommentFirst_ReturnsTheVerifiedOne()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/35/comments"), new[]
+        {
+            BuildAuthoredCommentJson(701, $"Planted {PrReviewMarker}", "outsider", "User", "NONE"),
+            BuildAuthoredCommentJson(702, $"Real {PrReviewMarker}", "pipeline-user", "User", "MEMBER")
+        });
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(35, PrReviewMarker, CancellationToken.None);
+
+        id.Should().Be(702, "a comment by someone outside the repository does not count, even if it comes first");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_OnlyUnverified_ReturnsNull()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/36/comments"), new[]
+        {
+            BuildAuthoredCommentJson(801, $"Planted {PrReviewMarker}", "outsider", "User", "NONE")
+        });
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(36, PrReviewMarker, CancellationToken.None);
+
+        id.Should().BeNull("the only comment with the marker is by someone outside the repository");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_AppBotComment_ReturnsItsId()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/37/comments"), new[]
+        {
+            BuildAuthoredCommentJson(901, $"Review {PrReviewMarker}", "pipeline-app[bot]", "Bot", "NONE")
+        });
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(37, PrReviewMarker, CancellationToken.None);
+
+        id.Should().Be(901);
+        CountPermissionLookups().Should().Be(0, "a Bot account is verified without a permission lookup");
+    }
+
     #endregion
 
     #region UpdateReviewCommentAsync
@@ -691,6 +830,7 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         body,
         state = "CHANGES_REQUESTED",
         user = new { login, id = login.GetHashCode() },
+        author_association = "MEMBER",
         html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
         submitted_at = "2026-01-15T10:00:00Z"
     };
@@ -701,9 +841,47 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         body,
         state,
         user = new { login, id = login.GetHashCode() },
+        author_association = "MEMBER",
         html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
         submitted_at = "2026-01-15T10:00:00Z"
     };
+
+    private static object BuildAuthoredReviewJson(long id, string login, string type, string association, string body) => new
+    {
+        id,
+        body,
+        state = "CHANGES_REQUESTED",
+        user = new { login, id = login.GetHashCode(), type },
+        author_association = association,
+        html_url = $"https://github.com/{Owner}/{Repo}/pull/1#pullrequestreview-{id}",
+        submitted_at = "2026-01-15T10:00:00Z"
+    };
+
+    private static object BuildAuthoredCommentJson(long id, string body, string login, string type, string association) => new
+    {
+        id,
+        body,
+        user = new { login, id = 1, type },
+        author_association = association,
+        created_at = "2026-01-15T10:30:00Z",
+        updated_at = "2026-01-15T10:30:00Z"
+    };
+
+    private void StubDismissal(int prNumber, long reviewId) =>
+        Server.Given(Request.Create()
+                .WithPath(ApiPath($"/repos/{Owner}/{Repo}/pulls/{prNumber}/reviews/{reviewId}/dismissals"))
+                .UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("{}"));
+
+    private void StubPermission(string login, string permission) =>
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/collaborators/{login}/permission"),
+            new { permission, role_name = permission });
+
+    private int CountDismissalRequests() =>
+        Server.LogEntries.Count(e => e.RequestMessage.Path?.Contains("/dismissals") == true);
+
+    private int CountPermissionLookups() =>
+        Server.LogEntries.Count(e => e.RequestMessage.Path?.Contains("/collaborators/") == true);
 
     #endregion
 }
