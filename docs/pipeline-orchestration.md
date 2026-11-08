@@ -147,7 +147,7 @@ The workspace baseline's build and tests run next to the analysis (`AnalyzingCod
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
 | **CheckingDroppedIdentifiers** | Post-codegen verification that identifiers present in force-resolved conflict files were re-applied during code generation. Non-blocking — always continues regardless of outcome. |
-| **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
+| **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. The acceptance criteria check runs next to the review agents when the provider supports parallel runs, and after them otherwise. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
 | **RunningQualityGates** | Build, tests, and external CI checks run |
 | **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time if the cleanup changed the commit or the working tree, or if that cannot be determined. Otherwise the earlier passing result stands. |
 | **FinalizingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here. For a normal PR the agent then writes a structured PR description (non-fatal on failure) and the PR is marked ready for review last |
