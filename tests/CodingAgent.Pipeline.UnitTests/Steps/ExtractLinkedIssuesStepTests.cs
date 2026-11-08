@@ -91,6 +91,48 @@ public class ExtractLinkedIssuesStepTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExtractLinkedIssues_LinkedIssueAsSubject_CarriesIsAuthorVerified(bool isAuthorVerified)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"test-extract-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var run = new PipelineRun
+            {
+                RunId = "test-run",
+                IssueIdentifier = "10",
+                IssueTitle = "Test PR",
+                IssueProviderConfigId = "ip",
+                RepoProviderConfigId = "rp",
+                StartedAt = DateTime.UtcNow,
+                WorkspacePath = tempDir,
+                RunType = PipelineRunType.Review,
+                ReviewPrDescription = "PR body text",
+                LinkedIssueContexts =
+                [
+                    new() { Identifier = "42", Title = "Linked", Description = "Linked issue", IsAuthorVerified = isAuthorVerified }
+                ]
+            };
+
+            var context = BuildContext(run);
+
+            await new ExtractLinkedIssuesStep(new IssueDescriptionParser()).ExecuteAsync(context, CancellationToken.None);
+
+            context.Issue.Should().NotBeNull();
+            context.Issue!.Identifier.Should().Be("42");
+            context.Issue.IsAuthorVerified.Should().Be(isAuthorVerified, "the subject is the first linked issue, whose author was checked at dispatch");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ExecuteAsync_WithLinkedIssues_PopulatesParsedIssue()
     {

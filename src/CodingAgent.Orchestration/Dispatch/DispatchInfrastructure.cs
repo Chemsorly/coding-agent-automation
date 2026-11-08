@@ -120,7 +120,8 @@ public class DispatchInfrastructure
             Identifier = identifier,
             Title = title,
             Description = desc,
-            Labels = Array.Empty<string>()
+            Labels = Array.Empty<string>(),
+            IsAuthorVerified = false
         };
         var parsedIssue = new IssueDescriptionParser().Parse(desc);
         return (issueDetail, parsedIssue);
@@ -392,7 +393,8 @@ public class DispatchInfrastructure
             Description = pullRequest.Description,
             Labels = pullRequest.Labels,
             Images = images,
-            Url = pullRequest.Url
+            Url = pullRequest.Url,
+            IsAuthorVerified = pullRequest.IsAuthorVerified
         };
         return new IssueContextResult(
             detail, new IssueDescriptionParser().Parse(detail.Description), [],
@@ -450,15 +452,7 @@ public class DispatchInfrastructure
                 "BuildIssueContextAsync: image extraction failed for {IssueIdentifier} — continuing with empty image list",
                 issueIdentifier);
         }
-        issueDetail = new IssueDetail
-        {
-            Description = issueDetail.Description,
-            Identifier = issueDetail.Identifier,
-            Labels = issueDetail.Labels,
-            Title = issueDetail.Title,
-            Images = images,
-            Url = issueDetail.Url
-        };
+        issueDetail = issueDetail.WithImages(images);
 
         var (existingAnalysis, forceRefreshAnalysis, stalenessSignal) =
             await DetectAnalysisStalenessAsync(issueComments, issueIdentifier, issueProviderId, ct);

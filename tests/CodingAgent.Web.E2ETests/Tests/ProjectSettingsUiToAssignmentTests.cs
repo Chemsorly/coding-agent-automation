@@ -128,6 +128,7 @@ public sealed class ProjectSettingsUiToAssignmentTests : E2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issue,
             Title = $"UI Settings test — issue {issue}",
             Description = "## Requirements\nUI settings E2E\n\n## Acceptance Criteria\n- [ ] Done",

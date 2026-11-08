@@ -50,6 +50,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "50",
             Title = "No agent available issue",
             Description = "Test",
@@ -102,6 +103,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "51",
             Title = "Already processing issue",
             Description = "Test",

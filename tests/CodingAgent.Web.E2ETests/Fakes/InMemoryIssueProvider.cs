@@ -160,6 +160,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
             updated.UnionWith(labels);
             Issues[idx] = new IssueDetail
             {
+                IsAuthorVerified = existing.IsAuthorVerified,
                 Description = existing.Description,
                 Identifier = existing.Identifier,
                 Labels = updated.ToList(),
@@ -184,6 +185,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
             var updatedLabels = existing.Labels.Where(l => l != label).ToList();
             Issues[idx] = new IssueDetail
             {
+                IsAuthorVerified = existing.IsAuthorVerified,
                 Description = existing.Description,
                 Identifier = existing.Identifier,
                 Labels = updatedLabels,

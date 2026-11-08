@@ -30,6 +30,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = title,
             Description = "## Requirements\nRace condition test\n\n## Acceptance Criteria\n- [ ] Done",

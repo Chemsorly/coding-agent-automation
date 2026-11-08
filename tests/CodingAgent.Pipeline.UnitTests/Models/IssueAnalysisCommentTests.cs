@@ -159,6 +159,7 @@ public class IssueAnalysisCommentTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Test",

@@ -88,6 +88,7 @@ public class DecompositionCapPropertyTests
     {
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = input.Identifier,
             Title = input.Title,
             Description = input.Description,
@@ -186,6 +187,7 @@ public class DecompositionCapPropertyTests
                 .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
                 .Returns<IssueIdentifier, CancellationToken>((id, ct) => Task.FromResult(new IssueDetail
                 {
+                    IsAuthorVerified = true,
                     Identifier = id.Value,
                     Title = $"Issue {id}",
                     Description = $"Description for issue {id}",

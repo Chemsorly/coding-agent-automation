@@ -106,7 +106,7 @@ public class RepoSteeringContentIntegrationTests : IDisposable
         {
             JobId = "integration-test-run",
             IssueIdentifier = "1652",
-            IssueDetail = new IssueDetail { Identifier = "1652", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "1652", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = repoProviderId,
             AgentProviderConfigId = "agent-1",
@@ -173,7 +173,7 @@ public class RepoSteeringContentIntegrationTests : IDisposable
         {
             JobId = "integration-test-null",
             IssueIdentifier = "1652",
-            IssueDetail = new IssueDetail { Identifier = "1652", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "1652", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = repoProviderId,
             AgentProviderConfigId = "agent-1",

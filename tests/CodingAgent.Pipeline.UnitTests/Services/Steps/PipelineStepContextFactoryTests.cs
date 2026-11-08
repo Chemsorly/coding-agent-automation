@@ -137,7 +137,7 @@ public class PipelineStepContextFactoryTests
     [Fact]
     public void ForAgent_SetsPrePopulatedIssueData()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = ["ac1"] };
         var comments = new List<IssueComment>
         {

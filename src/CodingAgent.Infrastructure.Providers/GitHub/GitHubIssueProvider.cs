@@ -88,7 +88,8 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             Description = issue.Body ?? string.Empty,
             Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
-            Url = issue.HtmlUrl
+            Url = issue.HtmlUrl,
+            IsAuthorVerified = false
         };
     }
 

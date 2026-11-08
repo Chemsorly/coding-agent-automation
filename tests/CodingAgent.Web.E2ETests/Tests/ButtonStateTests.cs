@@ -74,6 +74,7 @@ public sealed class ButtonStateTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test issue",
             Description = "Test",
@@ -111,6 +112,7 @@ public sealed class ButtonStateTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "10",
             Title = "Test issue for dispatch",
             Description = "Test",
@@ -151,6 +153,7 @@ public sealed class ButtonStateTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "99",
             Title = "Double-click test issue",
             Description = "Test",
@@ -302,6 +305,7 @@ public sealed class ButtonStateTests : E2ETestBase
         {
             Fixture.IssueProvider.Issues.Add(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = i.ToString(),
                 Title = $"Issue {i}",
                 Description = "Test",
@@ -342,6 +346,7 @@ public sealed class ButtonStateTests : E2ETestBase
         {
             Fixture.IssueProvider.Issues.Add(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = i.ToString(),
                 Title = $"Issue {i}",
                 Description = "Test",
@@ -468,6 +473,7 @@ public sealed class ButtonStateTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test issue",
             Description = "Test",

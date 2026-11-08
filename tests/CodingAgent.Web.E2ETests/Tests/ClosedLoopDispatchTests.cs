@@ -21,6 +21,7 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase
         // Arrange: seed issue with agent:next label
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "100",
             Title = "Closed-loop test issue",
             Description = "## Requirements\nTest issue for closed-loop dispatch\n\n## Acceptance Criteria\n- [ ] Dispatched automatically",

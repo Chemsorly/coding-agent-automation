@@ -226,7 +226,7 @@ public class AnalysisConfidenceGateTests
     [Fact]
     public void BuildAnalysisPrompt_IncludesAssessmentInstructions()
     {
-        var issue = new IssueDetail { Identifier = "1", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "1", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() };
         var parsed = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = Array.Empty<string>() };
 
         var prompt = PromptBuilder.BuildAnalysisPrompt(PipelineConfigurationDefaults.DefaultAnalysisPrompt, issue, parsed);

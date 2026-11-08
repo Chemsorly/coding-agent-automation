@@ -91,6 +91,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         // Issue "52": dispatched with the project that has MaxRetries = 5.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "52",
             Title = "Override test — with override",
             Description = "## Requirements\nTest MaxRetries override\n\n## Acceptance Criteria\n- [ ] Done",
@@ -100,6 +101,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
         // Issue "53": dispatched against the Default project (MaxRetries = null → falls back to 3).
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "53",
             Title = "Override test — no override",
             Description = "## Requirements\nTest global default\n\n## Acceptance Criteria\n- [ ] Done",
@@ -184,6 +186,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "54",
             Title = "Deep merge test",
             Description = "## Requirements\nTest CodeReview deep merge\n\n## Acceptance Criteria\n- [ ] Done",
@@ -249,6 +252,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "56",
             Title = "Snapshot timing test",
             Description = "## Requirements\nTest snapshot timing\n\n## Acceptance Criteria\n- [ ] Done",
@@ -339,6 +343,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "57",
             Title = "MCP merge test",
             Description = "## Requirements\nTest MCP server merge\n\n## Acceptance Criteria\n- [ ] Done",
@@ -429,6 +434,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "58",
             Title = "Secret merge test",
             Description = "## Requirements\nTest secret merge\n\n## Acceptance Criteria\n- [ ] Done",
@@ -502,6 +508,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "59",
             Title = "BrainReadOnly true test",
             Description = "## Requirements\nTest BrainReadOnly template override\n\n## Acceptance Criteria\n- [ ] Done",
@@ -562,6 +569,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "49",
             Title = "BrainReadOnly false-does-not-override test",
             Description = "## Requirements\nTest BrainReadOnly one-directional\n\n## Acceptance Criteria\n- [ ] Done",
@@ -644,6 +652,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "63",
             Title = "Project review test",
             Description = "## Requirements\nTest the project review\n\n## Acceptance Criteria\n- [ ] Done",

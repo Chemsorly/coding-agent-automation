@@ -166,6 +166,65 @@ public class DispatchInfrastructureTests
         // Empty string is NOT coalesced — null-coalescing only applies to null
         issueDetail.Description.Should().Be(string.Empty);
     }
+
+    // ── The author-verified flag survives the rebuilds ──
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BuildIssueContext_KeepsIsAuthorVerified(bool isAuthorVerified)
+    {
+        var issueConfig = new ProviderConfig { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "Test", DisplayName = "IP" };
+        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "org/repo#1",
+                Title = "T",
+                Description = "See ![shot](https://example.com/shot.png)",
+                Labels = ["bug"],
+                Url = "https://example.com/issues/1",
+                CreatedAt = new DateTime(2026, 5, 1, 8, 0, 0, DateTimeKind.Utc),
+                IsAuthorVerified = isAuthorVerified
+            });
+        provider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<IssueComment>)[]);
+        provider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(provider.Object);
+
+        var result = await CreateInfrastructure().BuildIssueContextAsync(
+            new IssueIdentifier("org/repo#1"), new ProviderConfigId("ip-1"), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.IssueDetail.IsAuthorVerified.Should().Be(isAuthorVerified, "the rebuild that adds the images keeps the flag");
+        result.IssueDetail.Url.Should().Be("https://example.com/issues/1");
+        result.IssueDetail.Images.Should().NotBeEmpty("the rebuild ran with the image found in the body");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildPullRequestContext_KeepsIsAuthorVerified(bool isAuthorVerified)
+    {
+        var pullRequest = new IssueDetail
+        {
+            Identifier = "42",
+            Title = "My PR",
+            Description = "Adds the thing",
+            Labels = [],
+            Url = "https://example.com/pull/42",
+            IsAuthorVerified = isAuthorVerified
+        };
+
+        var result = CreateInfrastructure().BuildPullRequestContext(pullRequest);
+
+        result.IssueDetail.IsAuthorVerified.Should().Be(isAuthorVerified, "the copy of the pull request subject keeps the flag");
+        result.IssueDetail.Identifier.Should().Be("42");
+        result.IssueDetail.Url.Should().Be("https://example.com/pull/42");
+    }
 }
 
 // ── Staleness detection tests (1F-001) ────────────────────────────────────────
@@ -204,7 +263,7 @@ public class DispatchInfrastructureStalenessTests
         };
 
         return new DispatchInfrastructure.IssueContextResult(
-            new IssueDetail { Identifier = "org/repo#1", Title = "T", Description = "", Labels = [] },
+            new IssueDetail { IsAuthorVerified = true, Identifier = "org/repo#1", Title = "T", Description = "", Labels = [] },
             new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" },
             comments ?? [analysisComment],
             ExistingAnalysis: analysisComment.Body,
@@ -373,7 +432,7 @@ public class DispatchInfrastructureStalenessTests
 
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "org/repo#1", Title = "T", Description = "", Labels = [] });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "org/repo#1", Title = "T", Description = "", Labels = [] });
         mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<IssueComment>)[analysisComment]);
         mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
@@ -410,7 +469,7 @@ public class DispatchInfrastructureStalenessTests
 
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "org/repo#1", Title = "T", Description = "", Labels = [] });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "org/repo#1", Title = "T", Description = "", Labels = [] });
         mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<IssueComment>)[analysisComment]);
         mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);

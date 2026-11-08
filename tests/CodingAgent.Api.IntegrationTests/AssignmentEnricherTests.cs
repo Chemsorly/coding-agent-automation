@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.Api.IntegrationTests.AgentRouting;
+using CodingAgent.Api.Triage;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration;
@@ -134,6 +135,7 @@ public sealed class AssignmentEnricherTests
         new(
             IssueDetail: new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "owner/repo#42",
                 Title = "Fix the crash",
                 Description = "Bug description",
@@ -205,6 +207,9 @@ public sealed class AssignmentEnricherTests
 
         public IPipelineRunHistoryService? RunHistory { get; init; }
 
+        /// <summary>Where triage assignments read the operator's report from; null: triage assignments cannot be enriched.</summary>
+        public ITriageStore? TriageStore { get; init; }
+
         public Serilog.ILogger Logger { get; init; } = Serilog.Log.Logger;
 
         public AssignmentEnricher Build()
@@ -223,7 +228,7 @@ public sealed class AssignmentEnricherTests
             return new AssignmentEnricher(
                 Infra, profileStore.Object, Preparer.Object, projectStore.Object,
                 new ConsolidationTemplateResolver(projectStore.Object), JobTemplates, Logger,
-                new ConsolidationRunContextSources(RunHistory));
+                new ConsolidationRunContextSources(RunHistory), TriageStore);
         }
     }
 
@@ -241,8 +246,13 @@ public sealed class AssignmentEnricherTests
         IReadOnlyList<string>? stackLabels = null, IReadOnlyDictionary<WorkItemTaskType, AgentRoute>? rows = null) =>
         new()
         {
-            Id = "t-repo", Name = "repo", IssueProviderId = "issue-prov-1", RepoProviderId = "repo-prov-1", Enabled = true,
-            RequiredLabels = stackLabels, AgentRoutes = rows,
+            Id = "t-repo",
+            Name = "repo",
+            IssueProviderId = "issue-prov-1",
+            RepoProviderId = "repo-prov-1",
+            Enabled = true,
+            RequiredLabels = stackLabels,
+            AgentRoutes = rows,
         };
 
     // ── Success path ─────────────────────────────────────────────────────────────────
@@ -453,7 +463,7 @@ public sealed class AssignmentEnricherTests
             IssueProviderConfigId = "repo-prov-1",
             TaskType = WorkItemTaskType.Review,
             RunType = PipelineRunType.Review,
-            IssueDetail = new IssueDetail { Identifier = "5", Title = "Add pagination", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "5", Title = "Add pagination", Description = "", Labels = [] },
             ReviewPrDescription = "Pages the API",
             LinkedPullRequest = new LinkedPullRequest
             {
@@ -473,6 +483,58 @@ public sealed class AssignmentEnricherTests
         pullRequest.Title.Should().Be("Add pagination");
         pullRequest.Description.Should().Be("Pages the API");
         pullRequest.Url.Should().Be("https://gitlab.example.com/group/repo/-/merge_requests/5");
+    }
+
+    [Fact]
+    public async Task OperatorTriage_SubjectIsVerified()
+    {
+        // An operator's own report is not outside text, so its subject counts as verified, and the flag must reach the
+        // assignment through the pull-request-subject copy. The stub turns the subject into the issue context, as the
+        // real infrastructure does, so the enriched IssueDetail is what the enricher passed and not a fixture.
+        var project = MakeProject();
+        var triage = new TriageRecord
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = project.Id,
+            Source = TriageSource.Operator,
+            Title = "Orders stuck in Pending",
+            Request = new TriageRequest { Title = "Orders stuck in Pending", WhatHappened = "Paid but Pending", Expected = "Paid" },
+            RequestedBy = "ben",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        };
+        var store = new Mock<ITriageStore>();
+        store.Setup(s => s.GetAsync(triage.Id, It.IsAny<CancellationToken>())).ReturnsAsync(triage);
+        store.Setup(s => s.ListRecentAsync(
+                project.Id, It.IsAny<DateTimeOffset>(), TriageConstants.MaxHistoryContext, triage.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var setup = new Setup
+        {
+            TriageStore = store.Object,
+            Infra = new((request, _) => Task.FromResult<CoreResult?>(MakeCoreResult(request) with
+            {
+                IssueContext = MakeIssueContext() with { IssueDetail = request.PullRequest! }
+            })),
+        };
+        setup.Infra.ProjectEpicContext = new DecompositionProjectContext
+        {
+            ProjectName = "Shop",
+            Repositories = [new RepositoryTarget { TemplateName = "api", Description = "", RepoProviderId = "repo-prov-1" }],
+        };
+        var identity = MakeIdentity() with
+        {
+            TaskType = WorkItemTaskType.Triage,
+            RunType = PipelineRunType.Triage,
+            IssueIdentifier = TriageConstants.IssueIdentifierFor(triage.Id),
+            IssueProviderConfigId = TriageConstants.ProviderConfigId,
+            RunId = "run-1",
+        };
+
+        var result = Enriched(await setup.Build().EnrichAsync(identity, project, CancellationToken.None));
+
+        TriageContextRenderer.ToIssueDetail(triage).IsAuthorVerified.Should().BeTrue("the renderer builds an operator's own form");
+        setup.Infra.CapturedRequest!.PullRequest!.IsAuthorVerified.Should().BeTrue("the subject handed to the dispatch core is the operator's form");
+        result.IssueDetail!.IsAuthorVerified.Should().BeTrue("the assignment's issue is the verified subject");
     }
 
     // ── Decomposition scope ──────────────────────────────────────────────────────────
@@ -1005,7 +1067,8 @@ public sealed class AssignmentEnricherTests
         var identity = MakeConsolidationIdentity(
             runType: ConsolidationRunType.RefactoringDetection,
             templateId: "tmpl-preserve",
-            autoDispatch: true) with { IssueDetail = null };
+            autoDispatch: true) with
+        { IssueDetail = null };
 
         var result = Enriched(await ConsolidationSetup().Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
 

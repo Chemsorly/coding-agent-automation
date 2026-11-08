@@ -2072,6 +2072,7 @@ public class QualityGateExecutorFinalizeDraftPrCategoryTests
         QualityGateConfigs = new List<QualityGateConfiguration>(),
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "4111",
             Title = "FinalizeDraftPr category test",
             Description = "Test description",

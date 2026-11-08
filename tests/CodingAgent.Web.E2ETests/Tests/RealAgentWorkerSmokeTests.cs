@@ -81,7 +81,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             TimeoutSeconds = 3600,
             RunType = runType,
             IssueDetail = Fixture.IssueProvider.Issues.FirstOrDefault(i => i.Identifier == issueId)
-                ?? new IssueDetail { Identifier = issueId, Title = "", Description = "", Labels = [] },
+                ?? new IssueDetail { IsAuthorVerified = true, Identifier = issueId, Title = "", Description = "", Labels = [] },
             PayloadSchemaVersion = 1
         };
 
@@ -138,6 +138,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         // Seed the issue with agent:next label
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Add input validation",
             Description = "## Requirements\nAdd null checks.\n\n## Acceptance Criteria\n- [ ] All methods validate inputs",
@@ -259,6 +260,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Epic: Implement feature X",
             Description = "## Goal\nBuild feature X end-to-end",
@@ -401,6 +403,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Vague issue with no acceptance criteria",
             Description = "## Goal\nDo something.",

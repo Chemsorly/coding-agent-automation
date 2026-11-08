@@ -449,7 +449,7 @@ public class PullRequestOrchestratorTests
             .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedFinalizeBody = body)
             .Returns(Task.CompletedTask);
 
-        var issue = new IssueDetail { Title = "My Issue", Identifier = "42", Description = "", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Title = "My Issue", Identifier = "42", Description = "", Labels = [] };
 
         // Run CreatePullRequestAsync
         var createRun = CreateRun();

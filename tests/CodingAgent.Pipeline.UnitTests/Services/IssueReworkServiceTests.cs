@@ -37,6 +37,7 @@ public class IssueReworkServiceTests
 
     private static IssueDetail MakeIssue(string id, params string[] labels) => new()
     {
+        IsAuthorVerified = true,
         Identifier = id,
         Title = $"Issue {id}",
         Description = string.Empty,

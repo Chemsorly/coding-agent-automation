@@ -225,6 +225,7 @@ public class JobDistributionRequestArbitraries
         from labels in Gen.ArrayOf(Gen.Elements("bug", "feature", "chore", "priority:high"), labelCount)
         select new IssueDetail
         {
+            IsAuthorVerified = true,
             Description = desc,
             Identifier = id,
             Title = title,

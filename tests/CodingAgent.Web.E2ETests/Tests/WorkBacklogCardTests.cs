@@ -43,6 +43,7 @@ public sealed class WorkBacklogCardTests : E2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = identifier,
             Title = $"Backlog issue {identifier}",
             Description = description,

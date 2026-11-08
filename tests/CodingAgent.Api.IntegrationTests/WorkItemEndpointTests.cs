@@ -443,6 +443,7 @@ public sealed class WorkItemEndpointTests
             ProjectName = "Default",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = issueId,
                 Title = "My issue title",
                 Description = "Some description",
@@ -643,6 +644,7 @@ public sealed class WorkItemEndpointTests
         {
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "A test issue",
                 Identifier = entity.IssueIdentifier,
                 Labels = [],

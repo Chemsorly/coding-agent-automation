@@ -261,6 +261,7 @@ public class FailPhaseAsyncTests
             OrchestratorCts = null,
             Issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Issue",
                 Description = "Test description",

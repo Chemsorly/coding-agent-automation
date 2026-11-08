@@ -117,6 +117,7 @@ public sealed class AgentRoutingE2ETests : E2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "5301",
             Title = "Epic: routed decomposition",
             Description = "## Goal\nSplit this epic",

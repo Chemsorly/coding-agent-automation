@@ -36,6 +36,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = title,
             Description = "## Requirements\nDo the thing\n\n## Acceptance Criteria\n- [ ] Done",
@@ -104,6 +105,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         // Re-seed the issue (it was consumed by the first dispatch)
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "101",
             Title = "Re-dispatched issue",
             Description = "## Requirements\nAgain\n\n## Acceptance Criteria\n- [ ] Done",
@@ -213,6 +215,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
         Fixture.IssueProvider.Issues.Clear();
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "999-does-not-exist",
             Title = "Wrong issue",
             Description = "Wrong",
@@ -407,6 +410,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "700",
             Title = "Special label issue",
             Description = "## Requirements\nSpecial\n\n## Acceptance Criteria\n- [ ] Done",

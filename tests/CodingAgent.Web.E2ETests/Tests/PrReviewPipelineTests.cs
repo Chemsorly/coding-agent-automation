@@ -33,6 +33,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
     private void SeedPrAsIssue(string identifier, string title, string description) =>
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = identifier,
             Title = title,
             Description = description,

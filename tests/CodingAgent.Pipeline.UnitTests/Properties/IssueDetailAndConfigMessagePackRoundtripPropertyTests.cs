@@ -44,6 +44,7 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
             from hasImages in Gen.Elements(true, false)
             select new IssueDetail
             {
+                IsAuthorVerified = true,
                 Title = title,
                 Identifier = id,
                 Description = desc,
@@ -75,6 +76,7 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
     {
         var original = new IssueDetail
         {
+            IsAuthorVerified = true,
             Title = "Empty labels test",
             Identifier = "1",
             Description = "desc",

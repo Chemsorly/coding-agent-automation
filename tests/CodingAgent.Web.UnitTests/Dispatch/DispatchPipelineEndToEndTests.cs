@@ -112,7 +112,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider.Setup(p => p.GetIssueAsync("org/repo#42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "org/repo#42", Title = "Test", Description = "Do thing", Labels = [] });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "org/repo#42", Title = "Test", Description = "Do thing", Labels = [] });
         mockIssueProvider.Setup(p => p.ListCommentsAsync("org/repo#42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<IssueComment>());
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockIssueProvider.Object);

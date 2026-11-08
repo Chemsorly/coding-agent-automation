@@ -616,7 +616,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
             DownloadedImages = new[] { testImage }
         };
@@ -681,7 +681,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
             DownloadedImages = new[] { testImage }
         };
@@ -706,7 +706,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } }
         };
     }
@@ -760,7 +760,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1" } },
             InjectedSecrets = injectedSecrets
         };
@@ -1708,7 +1708,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 IssueOps = _mockIssueOps.Object,
                 Callbacks = _mockCallbacks.Object,
                 OrchestratorCts = null,
-                Issue = new IssueDetail { Identifier = "99", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
+                Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "99", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
                 ParsedIssue = new ParsedIssue { RequirementsSection = "Requirements", AcceptanceCriteria = new[] { "AC1" } }
             };
 
@@ -1791,7 +1791,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
                 IssueOps = _mockIssueOps.Object,
                 Callbacks = _mockCallbacks.Object,
                 OrchestratorCts = null,
-                Issue = new IssueDetail { Identifier = "100", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
+                Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "100", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
                 ParsedIssue = new ParsedIssue { RequirementsSection = "Requirements", AcceptanceCriteria = new[] { "AC1" } }
             };
 

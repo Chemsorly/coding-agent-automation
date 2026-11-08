@@ -234,6 +234,7 @@ public sealed class AgentHubIssueProxyTests
         var (_, mockProvider) = SetupIssueProvider();
         var expected = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Test",
             Description = "Test description",
@@ -858,6 +859,7 @@ public sealed class AgentHubIssueProxyTests
         var (_, mockProvider) = SetupIssueProvider("issue-cfg-1");
         var expected = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Issue via DB fallback",
             Description = "Resolved from WorkItem metadata",

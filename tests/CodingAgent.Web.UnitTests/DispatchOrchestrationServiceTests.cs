@@ -120,6 +120,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("issue-42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "issue-42",
                 Title = "Test Issue Title",
                 Description = "## Requirements\nDo the thing",
@@ -736,7 +737,7 @@ public class DispatchOrchestrationServiceTests
         var tracker = new Mock<IIssueProvider>();
         tracker
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Unrelated issue", Description = "Not the PR", Labels = [] });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Unrelated issue", Description = "Not the PR", Labels = [] });
         _mockProviderFactory
             .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(tracker.Object);
@@ -892,6 +893,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "PR #42",
                 Description = "Fixes #99",
@@ -904,6 +906,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("99", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "99",
                 Title = "Parent Issue",
                 Description = "## Requirements\nDo the thing",
@@ -948,6 +951,83 @@ public class DispatchOrchestrationServiceTests
         result.LinkedIssueContexts[0].Description.Should().Be("## Requirements\nDo the thing");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PrepareReviewDistributionRequestAsync_LinkedIssue_CarriesIsAuthorVerified(bool isAuthorVerified)
+    {
+        // Arrange — the linked issue's author was checked by the provider; the context carries the answer.
+        SetupStandardMocks();
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig
+            {
+                Id = "repo-1",
+                DisplayName = "Repo",
+                ProviderType = "github",
+                Kind = ProviderKind.Repository,
+                RequiredLabels = ["dotnet"]
+            });
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig
+            {
+                Id = "issue-1",
+                DisplayName = "Issue Provider",
+                ProviderType = "github",
+                Kind = ProviderKind.Issue
+            });
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "PR #42", Description = "Fixes #99", Labels = [], IsAuthorVerified = false });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("99", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "99",
+                Title = "Parent Issue",
+                Description = "## Requirements\nDo the thing",
+                Labels = [],
+                IsAuthorVerified = isAuthorVerified
+            });
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var service = CreateService();
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrNumber = 42,
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "Fixes #99",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        // Act
+        var result = await service.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.LinkedIssueContexts.Should().ContainSingle().Which.IsAuthorVerified.Should().Be(isAuthorVerified);
+    }
+
     [Fact]
     public async Task PrepareReviewDistributionRequestAsync_PrWithNoClosingKeywords_LinkedIssueContextsIsNull()
     {
@@ -970,6 +1050,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Refactor PR",
                 Description = "This PR adds pagination support to the API",
@@ -1063,6 +1144,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "PR #42",
                 Description = "Fixes #99",
@@ -1151,6 +1233,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Big PR",
                 Description = "Fixes #1\nFixes #2\nFixes #3\nFixes #4\nFixes #5\nFixes #6\nFixes #7",
@@ -1168,6 +1251,7 @@ public class DispatchOrchestrationServiceTests
                 .Setup(p => p.GetIssueAsync(num, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new IssueDetail
                 {
+                    IsAuthorVerified = true,
                     Identifier = num,
                     Title = $"Issue {num}",
                     Description = $"Body of issue {num}",
@@ -1242,6 +1326,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "PR #42",
                 Description = "Fixes #10\nFixes #11",
@@ -1255,6 +1340,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("10", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "10",
                 Title = "Issue Ten",
                 Description = "Body of issue 10",
@@ -1338,6 +1424,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "PR #42",
                 Description = "See https://github.com/Chemsorly/coding-agent-automation/issues/99 for context.",
@@ -1350,6 +1437,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("99", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "99",
                 Title = "Linked Issue",
                 Description = "## Requirements\nImplement the feature",
@@ -1435,6 +1523,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "PR #42",
                 Description = "Fixes #99\nSee https://github.com/org/repo/issues/99 for details.",
@@ -1447,6 +1536,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("99", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "99",
                 Title = "Parent Issue",
                 Description = "## Requirements\nDo the thing",
@@ -1515,6 +1605,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("epic-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "epic-1",
                 Title = "Epic: Build the thing",
                 Description = "## Requirements\nBuild all the things",
@@ -1671,6 +1762,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync(epicId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = epicId,
                 Title = "Epic",
                 Description = "## Requirements\nSplit it",
@@ -1707,6 +1799,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("epic-2", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "epic-2",
                 Title = "Epic: Decompose",
                 Description = "## Requirements\nDecompose the thing",
@@ -2019,6 +2112,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("issue-42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "issue-42",
                 Title = "Test Issue",
                 Description = "## Requirements\nDo the thing",
@@ -2073,6 +2167,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(p => p.GetIssueAsync("issue-42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "issue-42",
                 Title = "Test Issue",
                 Description = "## Requirements\nDo the thing",

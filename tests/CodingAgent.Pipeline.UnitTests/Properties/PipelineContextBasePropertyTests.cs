@@ -47,6 +47,7 @@ public class PipelineContextBasePropertyTests
 
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Test Issue",
             Description = "Description",
@@ -171,6 +172,7 @@ public class PipelineContextBasePropertyTests
                 OrchestratorCts = null,
                 Issue = new IssueDetail
                 {
+                    IsAuthorVerified = true,
                     Identifier = i.ToString(),
                     Title = $"Issue {i}",
                     Description = $"Desc {i}",

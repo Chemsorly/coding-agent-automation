@@ -176,6 +176,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         MockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "99",
                 Title = "Add input validation",
                 Description = "## Requirements\nAdd null checks to all public methods\n\n## Acceptance Criteria\n- [ ] All public methods validate inputs\n- [ ] ArgumentNullException thrown for null args",

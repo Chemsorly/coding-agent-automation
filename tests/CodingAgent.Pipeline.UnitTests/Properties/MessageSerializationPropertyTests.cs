@@ -464,6 +464,7 @@ public class MessageSerializationPropertyTests
             IssueIdentifier = "42",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Epic",
                 Description = "Test description",

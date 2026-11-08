@@ -219,7 +219,7 @@ public class IConsolidationExecutorTests
         {
             JobId = "test-job-1",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             IssueComments = [],
             RepoProviderConfigId = "repo-1",

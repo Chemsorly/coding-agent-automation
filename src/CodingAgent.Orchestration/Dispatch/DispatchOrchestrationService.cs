@@ -222,7 +222,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             Title = reviewRequest.PrTitle,
             Description = reviewRequest.PrDescription ?? "",
             Labels = [],
-            Url = reviewRequest.PrUrl
+            Url = reviewRequest.PrUrl,
+            IsAuthorVerified = false
         };
         var result = await PrepareAsync(
             new OrchestratorPreparationRequest(
@@ -345,7 +346,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 {
                     Identifier = issue.Identifier,
                     Title = issue.Title,
-                    Description = issue.Description
+                    Description = issue.Description,
+                    IsAuthorVerified = issue.IsAuthorVerified
                 });
             }
             catch (OperationCanceledException)

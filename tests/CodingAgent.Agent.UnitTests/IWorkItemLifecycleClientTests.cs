@@ -43,7 +43,7 @@ public class IWorkItemLifecycleClientTests
         {
             JobId = "test-job",
             IssueIdentifier = "owner/repo#42",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#42", Title = "Test Issue", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#42", Title = "Test Issue", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             IssueComments = [],
             RepoProviderConfigId = "repo-1",

@@ -181,6 +181,7 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
         // Seed the issue and the PR
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9321",
             Title = "Toggle loop test issue",
             Description = "Should not be dispatched when ImplementationEnabled=false",
@@ -282,6 +283,7 @@ public sealed class TemplateFeatureToggleUiTests : E2ETestBase
         // Seed the same issue and PR as test 8
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9321",
             Title = "Toggle loop test issue",
             Description = "Should be dispatched when ReviewEnabled=false",

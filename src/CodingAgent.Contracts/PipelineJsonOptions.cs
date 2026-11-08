@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Pipeline;
@@ -12,10 +13,32 @@ namespace CodingAgent.Pipeline;
 public static class PipelineJsonOptions
 {
     /// <summary>
+    /// The resolver for every options instance that reads <see cref="IssueDetail"/>. C# <c>required</c> makes
+    /// each construction site decide, but JSON written before <see cref="IssueDetail.IsAuthorVerified"/>
+    /// existed must still load, and reads false.
+    /// </summary>
+    public static IJsonTypeInfoResolver Resolver { get; } = new DefaultJsonTypeInfoResolver
+    {
+        Modifiers = { AllowMissingAuthorVerified }
+    };
+
+    private static void AllowMissingAuthorVerified(JsonTypeInfo info)
+    {
+        if (info.Type != typeof(IssueDetail))
+            return;
+        foreach (var property in info.Properties)
+        {
+            if (string.Equals(property.Name, nameof(IssueDetail.IsAuthorVerified), StringComparison.OrdinalIgnoreCase))
+                property.IsRequired = false;
+        }
+    }
+
+    /// <summary>
     /// Standard options for serialization: camelCase, indented, enum-as-string, TimeSpan support.
     /// </summary>
     public static JsonSerializerOptions Default { get; } = new()
     {
+        TypeInfoResolver = Resolver,
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
@@ -27,6 +50,7 @@ public static class PipelineJsonOptions
     /// </summary>
     public static JsonSerializerOptions Lenient { get; } = new()
     {
+        TypeInfoResolver = Resolver,
         PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() }
     };

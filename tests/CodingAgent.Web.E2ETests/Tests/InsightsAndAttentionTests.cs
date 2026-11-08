@@ -259,6 +259,7 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         // Seed issue 14 with a "Blocked by #99" reference
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "14",
             Title = "Blocked issue fourteen",
             Description = "Blocked by #99",
