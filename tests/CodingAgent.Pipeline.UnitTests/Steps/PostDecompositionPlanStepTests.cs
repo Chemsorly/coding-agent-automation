@@ -68,6 +68,32 @@ public class PostDecompositionPlanStepTests : IDisposable
         WorkspacePath = _workspacePath
     };
 
+    private static IssueComment MakePlanComment(string id, int hoursAgo, bool? isVerified) => new()
+    {
+        Id = id,
+        Body = $"{CommentMarkers.DecompositionPlan}\n\nPlan",
+        Author = "someone",
+        CreatedAt = DateTime.UtcNow.AddHours(-hoursAgo),
+        IsVerified = isVerified
+    };
+
+    /// <summary>Runs the step with a valid plan file and the given comments on the epic.</summary>
+    private async Task<StepResult> ExecuteWithCommentsAsync(params IssueComment[] comments)
+    {
+        WritePlanFile("This is a valid decomposition plan with enough content to pass validation.");
+
+        _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(comments.ToList());
+        _issueOps.Setup(x => x.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        return await new PostDecompositionPlanStep().ExecuteAsync(BuildContext(CreateRun()), CancellationToken.None);
+    }
+
     private void WritePlanFile(string content)
     {
         var planPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionPlanFilePath);
@@ -201,6 +227,31 @@ public class PostDecompositionPlanStepTests : IDisposable
 
         result.Should().Be(StepResult.Continue);
         _issueOps.Verify(x => x.UpdateCommentAsync("42", 5L, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnlyUnverifiedPlanComment_PostsNewComment()
+    {
+        var result = await ExecuteWithCommentsAsync(MakePlanComment("7", hoursAgo: 1, isVerified: false));
+
+        result.Should().Be(StepResult.Continue);
+        _issueOps.Verify(x => x.PostCommentAsync("42",
+            It.Is<string>(body => body.Contains(CommentMarkers.DecompositionPlan)),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NewestPlanCommentUnverified_UpdatesTheVerifiedOne()
+    {
+        var result = await ExecuteWithCommentsAsync(
+            MakePlanComment("3", hoursAgo: 2, isVerified: true),
+            MakePlanComment("9", hoursAgo: 1, isVerified: false));
+
+        result.Should().Be(StepResult.Continue);
+        _issueOps.Verify(x => x.UpdateCommentAsync("42", 3L, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

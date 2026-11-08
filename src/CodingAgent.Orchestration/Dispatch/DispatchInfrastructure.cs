@@ -505,7 +505,7 @@ public class DispatchInfrastructure
         string? stalenessSignal = null;
 
         var analysisComment = issueComments
-            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .Where(c => c.HasVerifiedMarker(CommentMarkers.AnalysisHeader))
             .OrderByDescending(c => c.CreatedAt)
             .FirstOrDefault();
 
@@ -513,9 +513,9 @@ public class DispatchInfrastructure
         {
             existingAnalysis = analysisComment.Body;
             var gateRejection = issueComments
-                .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
+                .FirstOrDefault(c => c.HasVerifiedMarker(CommentMarkers.GateRejection));
             var gateWontDo = issueComments
-                .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
+                .FirstOrDefault(c => c.HasVerifiedMarker(CommentMarkers.GateWontDo));
             if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
             {
                 forceRefreshAnalysis = true;
@@ -706,7 +706,7 @@ public class DispatchInfrastructure
                 return (false, null);
 
             var latestAnalysisComment = issueContext.IssueComments
-                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+                .Where(c => c.HasVerifiedMarker(CommentMarkers.AnalysisHeader))
                 .OrderByDescending(c => c.CreatedAt)
                 .FirstOrDefault();
 

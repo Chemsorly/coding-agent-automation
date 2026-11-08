@@ -25,4 +25,11 @@ public sealed class IssueComment
     /// </summary>
     [Key(4)]
     public bool? IsVerified { get; init; }
+
+    /// <summary>
+    /// Whether this comment carries <paramref name="marker"/> and the marker counts. A marker counts unless the
+    /// provider reported the author as outside the repository; null counts, see <see cref="IsVerified"/>.
+    /// </summary>
+    public bool HasVerifiedMarker(string marker) =>
+        IsVerified != false && Body.Contains(marker, StringComparison.Ordinal);
 }

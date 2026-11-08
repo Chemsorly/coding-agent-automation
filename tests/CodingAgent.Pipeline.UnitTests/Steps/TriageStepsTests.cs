@@ -372,6 +372,27 @@ public sealed class TriageStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task ReportTriageResult_UnverifiedRcaComment_PostsNewComment()
+    {
+        var context = await ReportWithExistingRcaCommentAsync(isVerified: false);
+
+        _issueOps.Verify(o => o.PostCommentAsync(
+            context.Run.IssueIdentifier,
+            It.Is<string>(body => body.Contains(TriageConstants.CommentMarker)),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReportTriageResult_VerifiedRcaComment_Updates()
+    {
+        var context = await ReportWithExistingRcaCommentAsync(isVerified: true);
+
+        _issueOps.Verify(o => o.UpdateCommentAsync(context.Run.IssueIdentifier, 41, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Report_ApiRefusesTheResult_FailsBeforeAnythingIsPosted()
     {
         var context = Context();
@@ -403,6 +424,30 @@ public sealed class TriageStepsTests : IDisposable
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private string ResultPath => Path.Combine(_workspace, AgentWorkspacePaths.TriageResultFilePath);
+
+    /// <summary>
+    /// Reports a valid triage result to the tracker when the issue already has one comment carrying the
+    /// root cause analysis marker, whose author is verified or not.
+    /// </summary>
+    private async Task<PipelineStepContext> ReportWithExistingRcaCommentAsync(bool? isVerified)
+    {
+        var context = Context();
+        await File.WriteAllTextAsync(ResultPath, ValidResult);
+        _issueOps.Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<IssueComment>
+            {
+                new() { Id = "41", Author = "someone", Body = TriageConstants.CommentMarker + "\nold", CreatedAt = DateTime.UnixEpoch, IsVerified = isVerified },
+            });
+        _issueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<long>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("c1");
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await new ReportTriageResultStep(reportToTracker: true).ExecuteAsync(context, CancellationToken.None);
+        return context;
+    }
 
     private void AgentWrites(string? json) =>
         _agent.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))

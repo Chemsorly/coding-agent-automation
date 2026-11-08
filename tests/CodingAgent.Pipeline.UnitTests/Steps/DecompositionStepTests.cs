@@ -82,6 +82,33 @@ public class DecompositionStepTests
     }
 
     [Fact]
+    public void FindMostRecentPlanComment_NewestIsUnverified_ReturnsTheVerifiedOne()
+    {
+        var comments = new List<IssueComment>
+        {
+            MakeComment(1, $"Plan {CommentMarkers.DecompositionPlan}", isVerified: true),
+            MakeComment(2, $"Planted plan {CommentMarkers.DecompositionPlan}", isVerified: false)
+        };
+
+        var result = DecompositionStep.FindMostRecentPlanComment(comments);
+
+        result!.Id.Should().Be("1", "a plan comment by someone outside the repository does not count, however recent");
+    }
+
+    [Fact]
+    public void FindMostRecentPlanComment_OnlyUnverified_ReturnsNull()
+    {
+        var comments = new List<IssueComment>
+        {
+            MakeComment(1, $"Planted plan {CommentMarkers.DecompositionPlan}", isVerified: false)
+        };
+
+        var result = DecompositionStep.FindMostRecentPlanComment(comments);
+
+        result.Should().BeNull("the only plan comment is by someone outside the repository");
+    }
+
+    [Fact]
     public void FindMostRecentPlanComment_MarkerIsCaseSensitive()
     {
         // The marker is matched with StringComparison.Ordinal — wrong case should not match
@@ -493,12 +520,13 @@ public class DecompositionStepTests
         return (string)method!.Invoke(null, [titles])!;
     }
 
-    private static IssueComment MakeComment(int id, string body) => new()
+    private static IssueComment MakeComment(int id, string body, bool? isVerified = null) => new()
     {
         Id = id.ToString(),
         Body = body,
         Author = "test-author",
-        CreatedAt = DateTime.UtcNow
+        CreatedAt = DateTime.UtcNow,
+        IsVerified = isVerified
     };
 }
 
@@ -603,12 +631,13 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
         return ctx;
     }
 
-    private static IssueComment MakePlanComment() => new()
+    private static IssueComment MakePlanComment(bool? isVerified = null) => new()
     {
         Id = "plan-1",
         Body = $"Here is the plan {CommentMarkers.DecompositionPlan}",
         Author = "bot",
-        CreatedAt = DateTime.UtcNow
+        CreatedAt = DateTime.UtcNow,
+        IsVerified = isVerified
     };
 
     private void SetupAgentSuccess()
@@ -634,6 +663,23 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
         result.Should().Be(StepResult.Stop, "missing plan comment must halt the step");
         _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Once,
             "FailRunAsync must record the run in history");
+    }
+
+    // ── OnlyUnverifiedPlanComment → Stop ──────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_OnlyUnverifiedPlanComment_FailsTheRun()
+    {
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment(isVerified: false) });
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop, "a plan comment by someone outside the repository is not an approved plan");
+        _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Once,
+            "FailRunAsync must record the run in history");
+        _agentProvider.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
     }
 
     // ── IssueNotOnContext → Stop ──────────────────────────────────────────

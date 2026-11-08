@@ -132,6 +132,58 @@ public class GitLabIssueProviderCommentVerificationTests
             because: "the token's own user is always verified regardless of membership role");
     }
 
+    // ─── The pipeline's own plan comment keeps its marker ─────────────────────
+
+    private const string PlanBody = $"{CodingAgent.Pipeline.CommentMarkers.DecompositionPlan}\n\nThe plan";
+
+    /// <summary>
+    /// Creates an issue, has <paramref name="author"/> note <see cref="PlanBody"/> on it, and lists its comments
+    /// through a provider that uses <paramref name="providerClient"/>.
+    /// </summary>
+    private static async Task<IReadOnlyList<CodingAgent.Pipeline.Models.IssueComment>> ListPlanCommentAsync(
+        GitLabServer server, IGitLabClient defaultClient, int projectId, NGitLab.Mock.User author, IGitLabClient providerClient)
+    {
+        var issue = await defaultClient.Issues.CreateAsync(
+            new IssueCreate { ProjectId = projectId, Title = "t" }, CancellationToken.None);
+
+        server.CreateClient(author).GetProjectIssueNoteClient(projectId)
+            .Create(new ProjectIssueNoteCreate { IssueId = issue.IssueId, Body = PlanBody });
+
+        var provider = new GitLabIssueProvider(providerClient, projectId);
+        return await provider.ListCommentsAsync(issue.IssueId.ToString(), CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(null)]              // no explicit role on the project
+    [InlineData(AccessLevel.Reporter)]
+    [InlineData(AccessLevel.Developer)]
+    public async Task ListCommentsAsync_PipelinePlanCommentByTokensOwnUser_MarkerCounts(AccessLevel? roleForToken)
+    {
+        var (server, client, projectId) = BuildServer();
+
+        var tokenUser = server.Users.First(u => u.UserName == "Rep");
+        if (roleForToken.HasValue)
+            server.AllProjects.First().Permissions.Add(new NGitLab.Mock.Permission(tokenUser, roleForToken.Value));
+
+        var comments = await ListPlanCommentAsync(server, client, projectId, tokenUser, server.CreateClient(tokenUser));
+
+        comments.Should().ContainSingle().Which.HasVerifiedMarker(CodingAgent.Pipeline.CommentMarkers.DecompositionPlan)
+            .Should().BeTrue("the pipeline must find its own plan comment again, whatever role its token's user has");
+    }
+
+    [Fact]
+    public async Task ListCommentsAsync_OutsidePlanComment_MarkerDoesNotCount()
+    {
+        var (server, client, projectId) = BuildServer();
+
+        var outsider = server.Users.First(u => u.UserName == "Outsider");
+
+        var comments = await ListPlanCommentAsync(server, client, projectId, outsider, client);
+
+        comments.Should().ContainSingle().Which.HasVerifiedMarker(CodingAgent.Pipeline.CommentMarkers.DecompositionPlan)
+            .Should().BeFalse("a plan marker in a comment by someone outside the repository must not count");
+    }
+
     // ─── Moq-based helpers ────────────────────────────────────────────────────
 
     private static (Mock<IGitLabClient> ClientMock, Mock<IMembersClient> MembersMock, Mock<IUserClient> UsersMock)

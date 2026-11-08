@@ -69,7 +69,7 @@ After Phase 1 posts the decomposition plan:
 
 - **Approve**: Remove `agent:epic-review`, add `agent:epic-approved` → Phase 2 runs automatically
 - **Request changes**: Post a comment on the epic with feedback, then remove `agent:epic-review` and add `agent:epic` → Phase 1 re-runs with your feedback as context
-- **The plan comment is updated** (not duplicated) on re-runs, identified by the `<!-- agent:decomposition-plan -->` marker
+- **The plan comment is updated** (not duplicated) on re-runs, identified by the `<!-- agent:decomposition-plan -->` marker. The marker counts only on a comment by a verified author (see [Verified authors](github-issue-workflows.md#verified-authors))
 
 ## Configuration
 

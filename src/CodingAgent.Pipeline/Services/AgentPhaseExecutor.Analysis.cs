@@ -64,11 +64,11 @@ public partial class AgentPhaseExecutor
         bool forceRefreshFromDispatch)
     {
         var analysisComment = issueComments
-            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .Where(c => c.HasVerifiedMarker(CommentMarkers.AnalysisHeader))
             .OrderByDescending(c => c.CreatedAt)
             .FirstOrDefault();
-        var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
-        var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
+        var gateRejection = issueComments.FirstOrDefault(c => c.HasVerifiedMarker(CommentMarkers.GateRejection));
+        var gateWontDo = issueComments.FirstOrDefault(c => c.HasVerifiedMarker(CommentMarkers.GateWontDo));
 
         var latestGateComment = new[] { gateRejection, gateWontDo }
             .Where(c => c != null)
@@ -568,7 +568,7 @@ public partial class AgentPhaseExecutor
             markdown += $"\n<!-- agent:analysis-body-hash:{bodyHash} -->";
 
             var existingComment = issueComments
-                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+                .Where(c => c.HasVerifiedMarker(CommentMarkers.AnalysisHeader))
                 .OrderByDescending(c => c.CreatedAt)
                 .FirstOrDefault();
 

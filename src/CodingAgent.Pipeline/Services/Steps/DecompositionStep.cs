@@ -156,7 +156,7 @@ public sealed class DecompositionStep : IPipelineStep
         // Iterate in reverse to find the most recent comment with the marker
         for (var i = comments.Count - 1; i >= 0; i--)
         {
-            if (comments[i].Body.Contains(CommentMarkers.DecompositionPlan, StringComparison.Ordinal))
+            if (comments[i].HasVerifiedMarker(CommentMarkers.DecompositionPlan))
                 return comments[i];
         }
 
