@@ -92,6 +92,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Issue",
                 Description = "Test description",
@@ -264,7 +265,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task StartPipeline_WithMissingIssueTitle_FailsWithInsufficientInfo()
     {
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "", Description = "Some description", Labels = Array.Empty<string>() });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "", Description = "Some description", Labels = Array.Empty<string>() });
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -275,7 +276,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task StartPipeline_WithMissingDescription_FailsWithInsufficientInfo()
     {
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Valid Title", Description = "", Labels = Array.Empty<string>() });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Valid Title", Description = "", Labels = Array.Empty<string>() });
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Failed);
@@ -975,7 +976,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var firstRepoProvider = new Mock<IRepositoryProvider>();
         var firstAgentProvider = new Mock<IAgentProvider>();
 
-        firstIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>())).ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() });
+        firstIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>())).ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() });
         firstIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<IssueComment>());
         firstIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
         firstIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
@@ -1548,6 +1549,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Issue",
                 Description = "Test description",
@@ -1936,7 +1938,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task PipelineEvents_FailedRun_EmitsFailureMessage()
     {
         _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "", Description = "desc", Labels = Array.Empty<string>() });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "", Description = "desc", Labels = Array.Empty<string>() });
 
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);

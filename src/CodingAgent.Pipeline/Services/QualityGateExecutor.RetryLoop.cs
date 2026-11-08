@@ -37,7 +37,7 @@ public partial class QualityGateExecutor
 
             LogAndRecordReport(context, report, "quality gates");
 
-            report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
+            (report, var endedByProviderFailure) = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
             // Spec 056 DD14: a used-up quota or a rejected login opens no draft PR and asks the provider nothing more;
@@ -51,7 +51,7 @@ public partial class QualityGateExecutor
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, report, linkedCt);
             else
-                await FinalizeDraftPrAsync(context, run, report, "exhausted", linkedCt);
+                await FinalizeDraftPrAsync(context, run, report, "exhausted", endedByProviderFailure, linkedCt);
         }
         catch (OperationCanceledException ex)
         {
@@ -189,6 +189,7 @@ public partial class QualityGateExecutor
         }
 
         var report = passedReport;
+        var endedByProviderFailure = false;
         var treeAfterCleanup = await TryCaptureTreeStateAsync(context, linkedCt);
         if (IsSameTreeState(treeBeforeCleanup, treeAfterCleanup))
         {
@@ -204,7 +205,7 @@ public partial class QualityGateExecutor
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
             LogAndRecordReport(context, report, "final quality gates");
-            report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
+            (report, endedByProviderFailure) = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
         }
 
@@ -234,7 +235,7 @@ public partial class QualityGateExecutor
             await HandlePostPrCiAsync(context, report, prReadyFallback, linkedCt);
         }
         else
-            await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
+            await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", endedByProviderFailure, linkedCt);
     }
 
     /// <summary>
@@ -272,7 +273,7 @@ public partial class QualityGateExecutor
 
         if (!report.AllPassed)
         {
-            report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
+            (report, var endedByProviderFailure) = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
             if (report.AllPassed)
@@ -282,7 +283,7 @@ public partial class QualityGateExecutor
                 await context.Callbacks.RewriteBrainInbox(run, linkedCt);
             }
             else
-                await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
+                await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", endedByProviderFailure, linkedCt);
         }
     }
 
@@ -327,19 +328,33 @@ public partial class QualityGateExecutor
     /// Encapsulates the draft-PR finalization pattern: log a warning, emit a UI line,
     /// build and enqueue an error summary, collect failure feedback, then finalize as draft PR.
     /// </summary>
+    /// <param name="endedByProviderFailure">
+    /// True when the retry loop stopped because the fix agent's model provider failed, not because the retries ran
+    /// out: the lines say so and the run is an infrastructure failure.
+    /// </param>
     private async Task FinalizeDraftPrAsync(
         QualityGateContext context,
         PipelineRun run,
         QualityGateReport report,
         string logContext,
+        bool endedByProviderFailure,
         CancellationToken ct)
     {
         var config = context.Config;
         var callbacks = context.Callbacks;
 
-        _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) {LogContext}, finalizing as draft PR",
-            run.RunId, config.MaxRetries, logContext);
-        callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
+        if (endedByProviderFailure)
+        {
+            _logger.Warning("Pipeline {RunId} retry loop stopped by an agent provider failure ({LogContext}), finalizing as draft PR",
+                run.RunId, logContext);
+            callbacks.EmitOutputLine("❌ Agent provider unavailable — leaving PR as draft (infrastructure failure, not a code problem)");
+        }
+        else
+        {
+            _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) {LogContext}, finalizing as draft PR",
+                run.RunId, config.MaxRetries, logContext);
+            callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
+        }
 
         var errorSummary = BuildQualityGateErrorSummary(report);
         run.RetryErrors.Enqueue(errorSummary);
@@ -350,8 +365,9 @@ public partial class QualityGateExecutor
         // (a) FinalizePullRequest sees the correct FailureCategory if it reads run.FailureCategory,
         // (b) if FinalizePullRequest throws, the category is still recorded on the run object
         // and the metric will emit "quality_gate_exhausted" instead of "unknown".
-        // An infrastructure failure of external CI stays one: it is not the agent's failure.
-        run.FailureCategory = report.ExternalCi is { IsInfrastructureFailure: true }
+        // An infrastructure failure of external CI stays one, and so does a failure of the fix agent's model
+        // provider: neither is the agent's failure.
+        run.FailureCategory = endedByProviderFailure || report.ExternalCi is { IsInfrastructureFailure: true }
             ? FailureReason.InfrastructureFailure
             : FailureReason.QualityGateExhausted;
         await callbacks.FinalizePullRequest(run, true, ct);
@@ -380,7 +396,8 @@ public partial class QualityGateExecutor
             Identifier = run.IssueIdentifier,
             Title = run.IssueTitle,
             Description = "(Issue description not available)",
-            Labels = []
+            Labels = [],
+            IsAuthorVerified = false
         };
 
         await _feedbackService.CollectFeedbackCoreAsync(
@@ -405,14 +422,19 @@ public partial class QualityGateExecutor
 
     /// <summary>
     /// Encapsulates the shared retry pattern: execute agent → run QG validation → append external CI → check results.
-    /// Returns the final <see cref="QualityGateReport"/> after all retries are exhausted or the report passes.
+    /// Returns the final <see cref="QualityGateReport"/> after all retries are exhausted or the report passes,
+    /// and whether the loop stopped because the fix agent's model provider failed.
     /// </summary>
     /// <param name="context">The quality gate context containing run, config, callbacks, and providers.</param>
     /// <param name="initialReport">The report from the preceding QG validation run.</param>
     /// <param name="retryAgentDescription">Description prefix for the retry agent (used in logging and chat history).</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The final quality gate report after retries.</returns>
-    private async Task<QualityGateReport> RunRetryLoopAsync(
+    /// <returns>
+    /// The final quality gate report after retries, and <c>EndedByProviderFailure</c>: <see langword="true"/> when the
+    /// loop stopped on a permanent provider failure or on the consecutive-transient cap, so the failure is the
+    /// provider's and not the agent's.
+    /// </returns>
+    private async Task<(QualityGateReport Report, bool EndedByProviderFailure)> RunRetryLoopAsync(
         QualityGateContext context,
         QualityGateReport initialReport,
         string retryAgentDescription,
@@ -424,6 +446,7 @@ public partial class QualityGateExecutor
         var report = initialReport;
 
         var consecutiveTransientRetries = 0;
+        var endedByProviderFailure = false;
 
         // NOTE: run.RetryErrors accumulates one entry per loop iteration (including transient
         // provider-error iterations where no fix was attempted). On repeated 429/503 responses, this
@@ -502,18 +525,22 @@ public partial class QualityGateExecutor
             consecutiveTransientRetries = decision.ConsecutiveTransientRetries;
 
             if (decision.ShouldContinue) continue;
-            if (decision.ShouldBreak) break;
+            if (decision.ShouldBreak)
+            {
+                endedByProviderFailure = decision.EndedByProviderFailure;
+                break;
+            }
 
             callbacks.TransitionTo(PipelineStep.RunningQualityGates);
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, ct);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
-            if (run.CurrentStep.IsQualityGateExitState()) return report;
+            if (run.CurrentStep.IsQualityGateExitState()) return (report, false);
 
             LogAndRecordReport(context, report, "retry quality gates");
         }
 
-        return report;
+        return (report, endedByProviderFailure);
     }
 
     /// <summary>
@@ -664,7 +691,8 @@ public partial class QualityGateExecutor
                 ShouldBreak: true,
                 ShouldContinue: false,
                 ConsecutiveTransientRetries: consecutiveTransientRetries,
-                RetryCountDelta: 0);
+                RetryCountDelta: 0,
+                EndedByProviderFailure: true);
         }
 
         _logger.Warning(
@@ -700,7 +728,8 @@ public partial class QualityGateExecutor
             ShouldBreak: true,
             ShouldContinue: false,
             ConsecutiveTransientRetries: consecutiveTransientRetries,
-            RetryCountDelta: 0));
+            RetryCountDelta: 0,
+            EndedByProviderFailure: true));
     }
 
     /// <summary>

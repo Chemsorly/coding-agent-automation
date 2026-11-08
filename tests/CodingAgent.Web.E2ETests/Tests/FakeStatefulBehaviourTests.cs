@@ -23,6 +23,7 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         const string issueId = "1001";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Test issue",
             Description = "desc",
@@ -49,6 +50,7 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         const string issueId = "1002";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Test issue",
             Description = "desc",
@@ -75,6 +77,7 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         const string issueId = "1003";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Test issue",
             Description = "desc",
@@ -102,6 +105,7 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         const string issueId = "2001";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Test issue",
             Description = "desc",
@@ -213,6 +217,7 @@ public sealed class FakeStatefulBehaviourTests : HeadlessE2ETestBase
         const string issueId = "3001";
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = "Test issue",
             Description = "desc",

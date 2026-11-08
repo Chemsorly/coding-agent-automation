@@ -60,6 +60,7 @@ public class DecompositionAnalysisStepTokenAccumulationTests : IDisposable
             .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Epic",
                 Description = "Epic description",

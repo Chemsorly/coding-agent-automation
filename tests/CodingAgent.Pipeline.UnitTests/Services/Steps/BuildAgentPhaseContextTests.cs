@@ -80,7 +80,7 @@ public class BuildAgentPhaseContextTests
     public void BuildAgentPhaseContext_NullParsedIssue_ThrowsInvalidOperationException()
     {
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = null;
 
         var act = () => context.BuildAgentPhaseContext();
@@ -93,7 +93,7 @@ public class BuildAgentPhaseContextTests
     public void BuildAgentPhaseContext_ValidState_ReturnsCorrectContext()
     {
         var context = BuildContext();
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = ["bug"] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = ["bug"] };
         var parsedIssue = new ParsedIssue { RequirementsSection = "requirements", AcceptanceCriteria = ["AC1", "AC2"] };
         context.Issue = issue;
         context.ParsedIssue = parsedIssue;
@@ -169,7 +169,7 @@ public class BuildAgentPhaseContextImageTests
     public void BuildAgentPhaseContext_WithDownloadedImages_PropagatesImages()
     {
         var context = BuildContext();
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.Issue = issue;
         context.ParsedIssue = parsedIssue;
@@ -191,7 +191,7 @@ public class BuildAgentPhaseContextImageTests
     public void BuildAgentPhaseContext_NullDownloadedImages_PropagatesNull()
     {
         var context = BuildContext();
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.Issue = issue;
         context.ParsedIssue = parsedIssue;
@@ -208,7 +208,7 @@ public class BuildAgentPhaseContextImageTests
         // Verifies that InjectedSecrets set on the PipelineStepContext flows through
         // to the AgentPhaseContext produced by BuildAgentPhaseContext (issue #1913).
         var context = BuildContext();
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.Issue = issue;
         context.ParsedIssue = parsedIssue;
@@ -232,7 +232,7 @@ public class BuildAgentPhaseContextImageTests
     {
         // Verifies that null InjectedSecrets produces null in the resulting context.
         var context = BuildContext();
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.Issue = issue;
         context.ParsedIssue = parsedIssue;

@@ -37,8 +37,14 @@ public class ManualDispatchServiceTests
     private readonly Mock<IRepositoryProvider> _repository = new();
     private readonly JobDistributionRequest _prepared = new()
     {
-        IssueIdentifier = "42", IssueProviderConfigId = "ip-1", RepoProviderConfigId = "rp-1", InitiatedBy = "manual",
-        TaskType = WorkItemTaskType.Implementation, AgentSelector = "dotnet", TimeoutSeconds = 3600, ProviderConfigs = []
+        IssueIdentifier = "42",
+        IssueProviderConfigId = "ip-1",
+        RepoProviderConfigId = "rp-1",
+        InitiatedBy = "manual",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "dotnet",
+        TimeoutSeconds = 3600,
+        ProviderConfigs = []
     };
 
     public ManualDispatchServiceTests()
@@ -80,7 +86,7 @@ public class ManualDispatchServiceTests
 
     private static void HasIssue(Mock<IIssueProvider> tracker, string id, string title = "Issue", params string[] labels) =>
         tracker.Setup(t => t.GetIssueAsync(It.Is<IssueIdentifier>(i => i.Value == id), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = id, Title = title, Description = $"Body of {id}", Labels = labels });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = id, Title = title, Description = $"Body of {id}", Labels = labels });
 
     private void ProviderGone(string id, ProviderKind kind) =>
         _configs.Setup(c => c.GetProviderConfigByIdAsync(id, kind, It.IsAny<CancellationToken>())).ReturnsAsync((ProviderConfig?)null);
@@ -236,8 +242,16 @@ public class ManualDispatchServiceTests
     {
         _repository.Setup(r => r.GetOpenPullRequestAsync(3363, It.IsAny<CancellationToken>())).ReturnsAsync(new PullRequestSummary
         {
-            Number = 3363, Identifier = "3363", Title = "Fix it", Description = "Closes #42", Labels = [], BranchName = "agent/42-fix",
-            TargetBranch = "main", Url = "https://example.test/pull/3363", IsDraft = false, Author = "bot"
+            Number = 3363,
+            Identifier = "3363",
+            Title = "Fix it",
+            Description = "Closes #42",
+            Labels = [],
+            BranchName = "agent/42-fix",
+            TargetBranch = "main",
+            Url = "https://example.test/pull/3363",
+            IsDraft = false,
+            Author = "bot"
         });
 
         var message = await Service().DispatchPullRequestAsync(Target(), 3363, CancellationToken.None);
@@ -275,7 +289,15 @@ public class ManualDispatchServiceTests
     {
         _repository.Setup(r => r.GetOpenPullRequestAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new PullRequestSummary
         {
-            Number = 7, Identifier = "7", Title = "T", Description = "", Labels = [], BranchName = "b", TargetBranch = "main", Url = "u", IsDraft = false
+            Number = 7,
+            Identifier = "7",
+            Title = "T",
+            Description = "",
+            Labels = [],
+            BranchName = "b",
+            TargetBranch = "main",
+            Url = "u",
+            IsDraft = false
         });
         Distributes(success: false);
 
@@ -359,7 +381,15 @@ public class ManualDispatchServiceTests
         HasIssue(_issues, "e-1", "The epic", AgentLabels.Epic);
         _repository.Setup(r => r.GetOpenPullRequestAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new PullRequestSummary
         {
-            Number = 7, Identifier = "7", Title = "T", Description = "", Labels = [], BranchName = "b", TargetBranch = "main", Url = "u", IsDraft = false
+            Number = 7,
+            Identifier = "7",
+            Title = "T",
+            Description = "",
+            Labels = [],
+            BranchName = "b",
+            TargetBranch = "main",
+            Url = "u",
+            IsDraft = false
         });
         IsRefused();
 
@@ -377,18 +407,18 @@ public class ManualDispatchServiceTests
     private static PipelineRunSummary FailedRun(
         string? projectId = "8F0D5C1E-0000-0000-0000-000000000001", PipelineStep finalStep = PipelineStep.Failed,
         PipelineRunType runType = PipelineRunType.Implementation, string? issueProvider = "ip-1") => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = "42",
-        IssueTitle = "Issue 42",
-        FinalStep = finalStep,
-        RunType = runType,
-        IssueProviderConfigId = issueProvider,
-        RepoProviderConfigId = "rp-1",
-        BrainProviderConfigId = "brain-1",
-        PipelineProviderConfigId = "ci-1",
-        ProjectId = projectId,
-    };
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Issue 42",
+            FinalStep = finalStep,
+            RunType = runType,
+            IssueProviderConfigId = issueProvider,
+            RepoProviderConfigId = "rp-1",
+            BrainProviderConfigId = "brain-1",
+            PipelineProviderConfigId = "ci-1",
+            ProjectId = projectId,
+        };
 
     [Fact]
     public async Task RedispatchRunAsync_QueuesTheRunsIssue_WithItsProvidersAndProject()

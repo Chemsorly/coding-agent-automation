@@ -51,6 +51,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Issue {issueId} test",
             Description = "Test",
@@ -98,6 +99,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Issue {issueId} test",
             Description = "Test",
@@ -246,6 +248,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         // rather than duplicating the boilerplate.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "92",
             Title = "Issue 92 test",
             Description = "Test",
@@ -360,6 +363,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         {
             Fixture.IssueProvider.Issues.Add(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = id,
                 Title = $"Issue {id} test",
                 Description = "Test",

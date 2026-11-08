@@ -204,6 +204,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         // Set Issue and ParsedIssue so BuildAgentPhaseContext works
         context.Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Test PR",
             Description = "Test body",

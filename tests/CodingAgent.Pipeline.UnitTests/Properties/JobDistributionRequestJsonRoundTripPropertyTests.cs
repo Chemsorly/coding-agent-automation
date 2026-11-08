@@ -156,6 +156,7 @@ public class JobDistributionRequestArbitraries
         from labels in Gen.ArrayOf(GenString()).Resize(2)
         select new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = identifier,
             Title = title,
             Description = description,

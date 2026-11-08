@@ -87,7 +87,7 @@ curl -H "Authorization: Bearer $AGENT_API_KEY" \
 {
   "jobId": "550e8400-e29b-41d4-a716-446655440000",
   "issueIdentifier": "owner/repo#42",
-  "issueDetail": { "title": "Fix login bug", "body": "..." },
+  "issueDetail": { "title": "Fix login bug", "body": "...", "isAuthorVerified": true },
   "parsedIssue": { "title": "Fix login bug", "body": "..." },
   "issueComments": [],
   "repoProviderConfigId": "a1b2c3d4-...",

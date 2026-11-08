@@ -116,6 +116,7 @@ public class DownloadIssueImagesStepTests : IDisposable
             };
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "Has ![img](https://example.com/img.png)",
                 Identifier = "42",
                 Labels = [],
@@ -152,6 +153,7 @@ public class DownloadIssueImagesStepTests : IDisposable
         {
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "Has ![img](https://example.com/img.png)",
                 Identifier = "42",
                 Labels = [],
@@ -186,6 +188,7 @@ public class DownloadIssueImagesStepTests : IDisposable
         {
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "No images here",
                 Identifier = "42",
                 Labels = [],
@@ -220,6 +223,7 @@ public class DownloadIssueImagesStepTests : IDisposable
         {
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "Has image",
                 Identifier = "42",
                 Labels = [],
@@ -264,6 +268,7 @@ public class DownloadIssueImagesStepTests : IDisposable
             // Issue has no images, but PR description does
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "No images",
                 Identifier = "55",
                 Labels = [],
@@ -312,6 +317,7 @@ public class DownloadIssueImagesStepTests : IDisposable
             // Issue has one image AND PR description has another
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "Issue text",
                 Identifier = "60",
                 Labels = [],
@@ -370,6 +376,7 @@ public class DownloadIssueImagesStepTests : IDisposable
         {
             var issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Description = "GitLab issue with a relative upload",
                 Identifier = "42",
                 Labels = [],

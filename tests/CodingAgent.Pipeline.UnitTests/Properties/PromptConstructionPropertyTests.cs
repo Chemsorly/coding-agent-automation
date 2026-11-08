@@ -29,6 +29,7 @@ public class PromptConstructionPropertyTests
 
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = title.Get,
             Description = description.Get,
@@ -61,6 +62,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Unique-description-content-xyz",
@@ -98,6 +100,7 @@ public class PromptConstructionPropertyTests
 
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = title.Get,
             Description = description.Get,
@@ -128,6 +131,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -160,6 +164,7 @@ public class PromptConstructionPropertyTests
 
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -191,6 +196,7 @@ public class PromptConstructionPropertyTests
 
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -215,6 +221,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Add caching layer",
             Description = "We need Redis caching",
@@ -245,6 +252,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Add caching layer",
             Description = "We need Redis caching",
@@ -273,6 +281,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -299,6 +308,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = title.Get,
             Description = description.Get,
@@ -324,6 +334,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -347,6 +358,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -672,6 +684,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Add caching",
             Description = "Desc",
@@ -693,6 +706,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -713,6 +727,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",
@@ -762,6 +777,7 @@ public class PromptConstructionPropertyTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Test",
             Description = "Desc",

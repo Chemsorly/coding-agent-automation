@@ -51,6 +51,7 @@ public sealed class RunPageLiveCompletionTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Issue {issueId} run page test",
             Description = "Test",

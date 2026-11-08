@@ -130,7 +130,7 @@ public class LocalPipelineExecutorBrainWarningTests
             JobId = jobId,
             IssueIdentifier = issueIdentifier,
             RunType = runType,
-            IssueDetail = new IssueDetail { Identifier = issueIdentifier, Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = issueIdentifier, Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",

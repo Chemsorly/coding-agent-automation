@@ -42,6 +42,7 @@ public sealed class FleetViewTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"Fleet test issue {issueId}",
             Description = "E2E test",

@@ -226,6 +226,7 @@ public class ActiveJobStateFactoryTests
             IssueIdentifier = issueIdentifier,
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = issueIdentifier,
                 Title = issueTitle ?? "",
                 Description = "",

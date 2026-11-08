@@ -22,6 +22,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "80",
             Title = "Feedback success test",
             Description = "## Requirements\nTest feedback flow\n\n## Acceptance Criteria\n- [ ] Feedback collected",
@@ -113,6 +114,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "81",
             Title = "Feedback failure test",
             Description = "## Requirements\nTest failure feedback\n\n## Acceptance Criteria\n- [ ] Feedback on failure",
@@ -200,6 +202,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "82",
             Title = "No feedback test",
             Description = "## Requirements\nTest null feedback\n\n## Acceptance Criteria\n- [ ] Run completes without feedback",
@@ -251,6 +254,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         // Arrange: seed test data and complete a run with feedback
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "83",
             Title = "Feedback UI test",
             Description = "## Requirements\nTest feedback UI\n\n## Acceptance Criteria\n- [ ] Feedback visible in modal",
@@ -350,6 +354,7 @@ public sealed class FeedbackFlowTests : E2ETestBase
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "84",
             Title = "Full issue feedback test",
             Description = "## Requirements\nTest all issue feedback fields\n\n## Acceptance Criteria\n- [ ] All fields persisted",

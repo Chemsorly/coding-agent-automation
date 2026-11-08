@@ -363,6 +363,7 @@ public class QualityGateExecutorFeedbackTests
             },
             Issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Issue for Feedback",
                 Description = "This is a test issue description",

@@ -45,6 +45,7 @@ public sealed class AgentDisconnectTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "60",
             Title = "Disconnect test issue",
             Description = "Test",
@@ -114,6 +115,7 @@ public sealed class AgentDisconnectTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "61",
             Title = "Cancel from work test",
             Description = "Test",

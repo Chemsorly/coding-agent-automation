@@ -19,19 +19,27 @@ public sealed class ClaudeMissingCredentialResolverTests
 {
     private static readonly ProviderConfig RepoConfig = new()
     {
-        Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo", Settings = new Dictionary<string, string>(),
+        Id = "repo-1",
+        Kind = ProviderKind.Repository,
+        ProviderType = "GitHub",
+        DisplayName = "Repo",
+        Settings = new Dictionary<string, string>(),
     };
 
     private static readonly ProviderConfig AgentConfig = new()
     {
-        Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "Claude", DisplayName = "Claude", Settings = new Dictionary<string, string>(),
+        Id = "agent-1",
+        Kind = ProviderKind.Agent,
+        ProviderType = "Claude",
+        DisplayName = "Claude",
+        Settings = new Dictionary<string, string>(),
     };
 
     private static JobAssignmentMessage Job() => new()
     {
         JobId = "job-claude-missing-token",
         IssueIdentifier = "owner/repo#1",
-        IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "T", Description = "", Labels = [] },
+        IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "T", Description = "", Labels = [] },
         ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
         RepoProviderConfigId = RepoConfig.Id,
         AgentProviderConfigId = AgentConfig.Id,

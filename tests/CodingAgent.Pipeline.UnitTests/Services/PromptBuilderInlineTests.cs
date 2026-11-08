@@ -13,6 +13,7 @@ public class PromptBuilderInlineTests
 {
     private static IssueDetail CreateIssue() => new()
     {
+        IsAuthorVerified = true,
         Identifier = "42",
         Title = "Add feature X",
         Description = "Implement feature X as described.",

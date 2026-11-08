@@ -43,6 +43,7 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
     private void SeedPrAsIssue(string identifier, string title, string description) =>
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = identifier,
             Title = title,
             Description = description,
@@ -481,6 +482,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
     private void SeedIssue(string identifier, string title = "Test issue") =>
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = identifier,
             Title = title,
             Description = "Test description",
@@ -694,6 +696,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
         // Arrange
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "12",
             Title = "Issue twelve",
             Description = "Body of issue 12",
@@ -701,6 +704,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "13",
             Title = "Issue thirteen",
             Description = "Body of issue 13",
@@ -758,6 +762,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
         {
             Fixture.IssueProvider.Issues.Add(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = id,
                 Title = $"Issue {id}",
                 Description = $"Body of issue {id}",
@@ -815,6 +820,7 @@ public sealed class PrReviewLifecycleHeadlessTests : HeadlessE2ETestBase
         // Arrange: issue 31 seeded, issue 32 NOT seeded
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "31",
             Title = "Issue thirty-one",
             Description = "Body of issue 31",

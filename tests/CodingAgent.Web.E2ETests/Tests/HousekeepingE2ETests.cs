@@ -63,21 +63,22 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
         bool isDraft = false,
         bool hasAutoMerge = false,
         IReadOnlyList<string>? labels = null) => new()
-    {
-        Number = number,
-        Identifier = number.ToString(),
-        Title = $"PR #{number}",
-        Description = string.Empty,
-        Labels = labels ?? Array.Empty<string>(),
-        BranchName = branchName,
-        TargetBranch = "main",
-        Url = $"https://github.com/e2e-org/e2e-repo/pull/{number}",
-        IsDraft = isDraft,
-        HasAutoMerge = hasAutoMerge,
-    };
+        {
+            Number = number,
+            Identifier = number.ToString(),
+            Title = $"PR #{number}",
+            Description = string.Empty,
+            Labels = labels ?? Array.Empty<string>(),
+            BranchName = branchName,
+            TargetBranch = "main",
+            Url = $"https://github.com/e2e-org/e2e-repo/pull/{number}",
+            IsDraft = isDraft,
+            HasAutoMerge = hasAutoMerge,
+        };
 
     private static IssueDetail MakeIssue(string id, params string[] labels) => new()
     {
+        IsAuthorVerified = true,
         Identifier = id,
         Title = $"Issue #{id}",
         Description = string.Empty,
@@ -668,7 +669,7 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
             EnabledTemplates: new[] { disabledTemplate },
             PollableTemplates: new[] { disabledTemplate },
             TemplateLookup: new Dictionary<string, PipelineJobTemplate>
-                { [disabledTemplate.Id] = disabledTemplate }.AsReadOnly(),
+            { [disabledTemplate.Id] = disabledTemplate }.AsReadOnly(),
             ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>(),
             ActiveDecompositionCount: 0);
 

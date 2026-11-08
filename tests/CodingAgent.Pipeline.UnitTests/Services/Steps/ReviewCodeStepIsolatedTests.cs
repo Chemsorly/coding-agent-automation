@@ -61,7 +61,7 @@ public class ReviewCodeStepIsolatedTests
         };
 
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.PreResolvedReviewerConfigs = reviewers;
 
@@ -80,7 +80,7 @@ public class ReviewCodeStepIsolatedTests
     {
         // The project reviewers run in the same review as the label reviewers, so they run concurrently with them
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.PreResolvedReviewerConfigs =
         [
@@ -106,7 +106,7 @@ public class ReviewCodeStepIsolatedTests
     public async Task ExecuteAsync_AlwaysReturnsContinue()
     {
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         context.PreResolvedReviewerConfigs = [];
 

@@ -282,6 +282,7 @@ public class QualityGateExecutorConflictRestartPreRetryTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "3045",
             Title = "ConflictRestart pre-retry guard test",
             Description = "Test issue description",

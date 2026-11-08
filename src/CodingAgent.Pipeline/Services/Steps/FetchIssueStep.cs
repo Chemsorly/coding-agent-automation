@@ -70,14 +70,7 @@ public sealed class FetchIssueStep : IPipelineStep
         var images = _imageExtractor.Extract(issue.Description, issueComments, issue.Identifier, ImageSourceKind.Issue);
 
         // Reconstruct IssueDetail with Images populated (init properties require new instance)
-        issue = new IssueDetail
-        {
-            Description = issue.Description,
-            Identifier = issue.Identifier,
-            Labels = issue.Labels,
-            Title = issue.Title,
-            Images = images
-        };
+        issue = issue.WithImages(images);
 
         context.Issue = issue;
         context.ParsedIssue = parsed;

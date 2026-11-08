@@ -89,7 +89,8 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
                 Identifier = primary.Identifier,
                 Title = primary.Title,
                 Description = primary.Description,
-                Labels = Array.Empty<string>()
+                Labels = Array.Empty<string>(),
+                IsAuthorVerified = primary.IsAuthorVerified
             };
             context.ParsedIssue = _issueParser.Parse(primary.Description);
         }
@@ -102,7 +103,8 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
                 Identifier = prNumber.ToString(),
                 Title = prTitle,
                 Description = prDescription,
-                Labels = Array.Empty<string>()
+                Labels = Array.Empty<string>(),
+                IsAuthorVerified = false
             };
             context.ParsedIssue = _issueParser.Parse(prDescription);
         }
