@@ -22,12 +22,14 @@ internal sealed class ConsolidationProviderResolver
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly Serilog.ILogger _logger;
     private readonly ProviderFailureRecorder? _failureRecorder;
+    private readonly IProviderFactory? _providerFactoryOverride;
 
     public ConsolidationProviderResolver(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         Serilog.ILogger logger,
-        ProviderFailureRecorder? failureRecorder = null)
+        ProviderFailureRecorder? failureRecorder = null,
+        IProviderFactory? providerFactoryOverride = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -37,6 +39,7 @@ internal sealed class ConsolidationProviderResolver
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _failureRecorder = failureRecorder;
+        _providerFactoryOverride = providerFactoryOverride;
     }
 
     public Task<ProviderResolutionResult<BrainConsolidationProviders>> ResolveBrainConsolidationProvidersAsync(
@@ -107,7 +110,9 @@ internal sealed class ConsolidationProviderResolver
             var agentProvider = factory.CreateAgentProvider(agentConfig);
             if (agentProvider is IAsyncDisposable ad) disposables.Add(ad);
 
-            var issueProvider = CreateIssueProviderForConsolidation(issueConfig, orchestratorProxy);
+            var issueProvider = _providerFactoryOverride is not null
+                ? _providerFactoryOverride.CreateIssueProvider(issueConfig)
+                : CreateIssueProviderForConsolidation(issueConfig, orchestratorProxy);
             if (issueProvider is IAsyncDisposable id) disposables.Add(id);
 
             var brainProvider = brainConfig is not null
@@ -128,7 +133,7 @@ internal sealed class ConsolidationProviderResolver
     /// Returns null (and removes from disposables) if validation fails, so the job can proceed without it.
     /// </summary>
     private async Task<IRepositoryProvider?> TryCreateAndValidateBrainProviderAsync(
-        AgentProviderFactory factory,
+        IProviderFactory factory,
         ProviderConfig brainConfig,
         List<IAsyncDisposable> disposables,
         string jobId,
@@ -186,9 +191,10 @@ internal sealed class ConsolidationProviderResolver
     private async Task<ProviderResolutionResult<T>> ResolveAsync<T>(
         ConsolidationJobMessage job,
         OrchestratorProxy? orchestratorProxy,
-        Func<AgentProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver) where T : IAsyncDisposable
+        Func<IProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver) where T : IAsyncDisposable
     {
-        var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration, orchestratorProxy, _failureRecorder);
+        IProviderFactory factory = _providerFactoryOverride
+            ?? new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration, orchestratorProxy, _failureRecorder);
         var disposables = new List<IAsyncDisposable>();
         try
         {
