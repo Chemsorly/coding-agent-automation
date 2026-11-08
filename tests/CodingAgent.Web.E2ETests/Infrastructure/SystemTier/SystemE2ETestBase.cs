@@ -11,6 +11,7 @@ using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 
 namespace CodingAgent.Web.E2ETests.Infrastructure.SystemTier;
 
@@ -35,6 +36,10 @@ public abstract class SystemE2ETestBase(SystemContainers containers) : IAsyncLif
         // Ensure both containers are running before each test. A prior test may have
         // stopped one (for failure-scenario testing); restarting here prevents cascading failures.
         await Containers.EnsureRunningAsync();
+        // Npgsql pools are process-wide and outlive the previous test's hosts. A connection opened
+        // before a Postgres stop is dead after the restart, and the next host's first command (the
+        // migration lock) fails with 57P01 if it takes one from the pool.
+        NpgsqlConnection.ClearAllPools();
         // Flush Redis state so tests start clean regardless of what a previous test left behind.
         await Containers.FlushRedisAsync();
     }
