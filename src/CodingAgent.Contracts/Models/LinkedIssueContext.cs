@@ -16,4 +16,8 @@ public sealed class LinkedIssueContext
 
     [Key(2)]
     public required string Title { get; init; }
+
+    /// <summary>Whether the issue's author is on the repository. Missing in a work item stored before this field, it reads false.</summary>
+    [Key(3)]
+    public bool IsAuthorVerified { get; init; }
 }

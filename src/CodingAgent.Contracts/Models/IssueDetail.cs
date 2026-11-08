@@ -36,4 +36,25 @@ public sealed class IssueDetail
     // intended default for DateTime?).
     [Key(6)]
     public DateTime? CreatedAt { get; init; }
+
+    /// <summary>
+    /// Whether the author is on the repository, by the same rule as <see cref="IssueComment.IsVerified"/>.
+    /// Required, so that every site that builds or rebuilds this type decides. Missing on the wire (an older
+    /// API, or a work item stored before this field) it reads false.
+    /// </summary>
+    [Key(7)]
+    public required bool IsAuthorVerified { get; init; }
+
+    /// <summary>A copy with <paramref name="images"/> set. Every other field is kept.</summary>
+    public IssueDetail WithImages(IReadOnlyList<ImageReference> images) => new()
+    {
+        Description = Description,
+        Identifier = Identifier,
+        Labels = Labels,
+        Title = Title,
+        Images = images,
+        Url = Url,
+        CreatedAt = CreatedAt,
+        IsAuthorVerified = IsAuthorVerified,
+    };
 }

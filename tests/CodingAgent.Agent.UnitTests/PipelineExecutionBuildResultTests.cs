@@ -63,7 +63,7 @@ public class PipelineExecutionBuildResultTests : IAsyncDisposable
             InitiatedBy = "test",
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
-            IssueDetail = new IssueDetail { Identifier = "test/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "test/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             PipelineConfiguration = new PipelineConfiguration(),
             ProviderConfigs = [],

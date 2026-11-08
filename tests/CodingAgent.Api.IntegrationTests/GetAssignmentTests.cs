@@ -685,6 +685,7 @@ public sealed class GetAssignmentTests
         {
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "owner/repo#42",
                 Title = "Fix the crash",
                 Description = "A very long issue body that should NOT be stored in the payload",
@@ -701,6 +702,29 @@ public sealed class GetAssignmentTests
             "IssueDetail.Description must be stripped from minimal payload");
         // TODO: [WARNING] Labels stripping is not asserted. BuildMinimalPayload sets Labels = [].
         // Add: minimal.IssueDetail.Labels.Should().BeEmpty("Labels must be stripped from minimal payload");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildMinimalPayload_KeepsIsAuthorVerified(bool isAuthorVerified)
+    {
+        var full = MakeFullRequest() with
+        {
+            IssueDetail = new IssueDetail
+            {
+                Identifier = "owner/repo#42",
+                Title = "Fix the crash",
+                Description = "body",
+                Labels = [],
+                IsAuthorVerified = isAuthorVerified
+            }
+        };
+
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
+
+        minimal.IssueDetail!.IsAuthorVerified.Should().Be(isAuthorVerified,
+            "the stored issue keeps the flag it was dispatched with, so a rebuild cannot flip it");
     }
 
     // ── BuildMinimalPayload: PayloadSchemaVersion ────────────────────────────────
@@ -1317,6 +1341,44 @@ public sealed class GetAssignmentTests
         var notFoundResult = result as Microsoft.AspNetCore.Http.HttpResults.NotFound;
         notFoundResult.Should().NotBeNull(
             "a malformed payload must return 404, not throw a JsonException (500)");
+    }
+
+    [Fact]
+    public void WorkItemPayload_TryDeserialize_PayloadStoredBeforeTheField_Succeeds()
+    {
+        // ARRANGE: the minimal payload BuildMinimalPayload wrote before IssueDetail had IsAuthorVerified:
+        // an issueDetail object (identity and title only) without that member. C# `required` is enforced by
+        // System.Text.Json, so without PipelineJsonOptions.Resolver this row would be unreadable and
+        // GetAssignment would answer 404 for every work item queued before the upgrade.
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("owner/repo#42"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            IssueDetail = new IssueDetail
+            {
+                Identifier = "owner/repo#42",
+                Title = "Fix the crash",
+                Description = string.Empty,
+                Labels = [],
+                IsAuthorVerified = true
+            }
+        };
+        var stored = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(request, PipelineJsonOptions.Default))!;
+        stored["issueDetail"]!.AsObject().Remove("isAuthorVerified").Should().BeTrue("the stored row must not have the new member");
+
+        // ACT
+        var result = WorkItemPayload.TryDeserialize(stored.ToJsonString(), out var deserialized);
+
+        // ASSERT
+        result.Should().BeTrue("a payload stored before the field must still be readable");
+        deserialized!.IssueDetail.Should().NotBeNull();
+        deserialized.IssueDetail!.Title.Should().Be("Fix the crash");
+        deserialized.IssueDetail.IsAuthorVerified.Should().BeFalse("a missing flag reads as not verified");
     }
 
     // ── Infrastructure: PipelineDbContext in-memory subclass ──────────────────────

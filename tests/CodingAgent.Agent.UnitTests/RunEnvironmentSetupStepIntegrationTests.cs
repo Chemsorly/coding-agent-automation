@@ -105,6 +105,7 @@ public class RunEnvironmentSetupStepIntegrationTests : IDisposable
             IssueIdentifier = "myorg/private-project#42",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "myorg/private-project#42",
                 Title = "Add input validation",
                 Description = "Implement null checks",
@@ -332,6 +333,7 @@ public class RunEnvironmentSetupStepIntegrationTests : IDisposable
             IssueIdentifier = "myorg/repo#42",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "myorg/repo#42",
                 Title = "Test",
                 Description = "",

@@ -54,6 +54,7 @@ public sealed class AgentIssueOpsHubTests : HeadlessE2ETestBase
         // Seed issue
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Issue-ops E2E test issue",
             Description = "## Requirements\nTest hub issue operations end-to-end.",

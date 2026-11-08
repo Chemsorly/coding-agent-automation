@@ -100,6 +100,7 @@ public sealed class TriageStepsTests : IDisposable
         });
         context.Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "431",
             Title = "Checkout returns 502",
             Description = "Since 14:05 one in five checkouts fails.",
@@ -465,6 +466,7 @@ public sealed class TriageStepsTests : IDisposable
             ProjectContext = project,
             Issue = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "431",
                 Title = "Checkout returns 502",
                 Description = "Since 14:05 one in five checkouts fails.",

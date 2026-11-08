@@ -23,7 +23,7 @@ public sealed class OrchestratorProxyWireContractTests : IAsyncLifetime
 
     private readonly InMemoryAgentHub _hub = new InMemoryAgentHub()
         .Returns(HubMethodNames.RequestGetIssue,
-            new IssueDetail { Identifier = "2567", Title = "Epic", Description = "Epic body", Labels = ["agent:epic"] })
+            new IssueDetail { IsAuthorVerified = true, Identifier = "2567", Title = "Epic", Description = "Epic body", Labels = ["agent:epic"] })
         .Returns(HubMethodNames.RequestListComments,
             new[] { new IssueComment { Id = "1", Author = "Chemsorly", Body = "A comment", CreatedAt = new DateTime(2026, 9, 23, 6, 0, 0, DateTimeKind.Utc) } })
         .Returns(HubMethodNames.RequestTokenRefresh,

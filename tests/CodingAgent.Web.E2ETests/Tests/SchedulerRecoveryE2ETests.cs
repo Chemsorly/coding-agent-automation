@@ -135,6 +135,7 @@ public sealed class SchedulerRecoveryE2ETests : HeadlessE2ETestBase
         // Issue 9301 has agent:in-progress; we will insert a WorkItem for it
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9301",
             Title = "Issue #9301",
             Description = string.Empty,
@@ -206,6 +207,7 @@ public sealed class SchedulerRecoveryE2ETests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9302",
             Title = "Issue #9302",
             Description = string.Empty,

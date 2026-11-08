@@ -27,6 +27,7 @@ public sealed class PipelineRunFactoryTests
             RunType = PipelineRunType.Review,
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "owner/repo#42",
                 Title = "My Issue Title",
                 Description = "desc",
@@ -183,6 +184,7 @@ public sealed class PipelineRunFactoryTests
             RunId = "run-empty-title",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "owner/repo#77",
                 Title = "",
                 Description = "some description",
@@ -213,6 +215,7 @@ public sealed class PipelineRunFactoryTests
             RunId = "run-null-title",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "owner/repo#88",
                 Title = null!,
                 Description = "some description",
@@ -243,6 +246,7 @@ public sealed class PipelineRunFactoryTests
             RunId = "run-real-title",
             IssueDetail = new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "owner/repo#55",
                 Title = "Real Title",
                 Description = "desc",

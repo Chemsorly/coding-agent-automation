@@ -29,6 +29,7 @@ public sealed class ConflictRestartIntegrationTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = title,
             Description = "## Requirements\nDo the thing\n\n## Acceptance Criteria\n- [ ] Done",

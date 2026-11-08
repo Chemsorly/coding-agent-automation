@@ -490,7 +490,8 @@ public class AssignmentEnricher
         Title = identity.IssueDetail?.Title ?? "",
         Description = identity.ReviewPrDescription ?? "",
         Labels = [],
-        Url = identity.LinkedPullRequest?.Url
+        Url = identity.LinkedPullRequest?.Url,
+        IsAuthorVerified = false
     };
 
     /// <summary>Whether <paramref name="issueProviderConfigId"/> is the tracker of an enabled template of the project.</summary>

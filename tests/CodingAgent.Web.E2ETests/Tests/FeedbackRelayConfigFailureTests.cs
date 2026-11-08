@@ -29,6 +29,7 @@ public sealed class FeedbackRelayConfigFailureTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8201",
             Title = "Config failure relay test 8201",
             Description = "Test issue for relay config failure",
@@ -78,6 +79,7 @@ public sealed class FeedbackRelayConfigFailureTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8202",
             Title = "Config failure relay test 8202",
             Description = "Test issue for relay config failure exhaustion",
@@ -114,6 +116,7 @@ public sealed class FeedbackRelayConfigFailureTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "8203",
             Title = "Config failure relay test 8203",
             Description = "Test issue for relay repo config failure",

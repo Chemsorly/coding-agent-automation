@@ -52,6 +52,7 @@ public sealed class ReconciliationEnforcementTests : HeadlessE2ETestBase
         // 1. Seed the issue so FailRunWithLabelAsync can apply the terminal label.
         Fixture.IssueProvider.Issues.Add(new CodingAgent.Pipeline.Models.IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueIdentifier,
             Title = "Test issue",
             Description = "## Requirements\nTest\n\n## Acceptance Criteria\n- [ ] Done",

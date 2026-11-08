@@ -1032,6 +1032,7 @@ public class QualityGateExecutorRetryTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "99",
             Title = "Test Issue",
             Description = "Test issue description",
@@ -1414,6 +1415,7 @@ public class QualityGateExecutorFailureCategoryTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "99",
             Title = "Test Issue",
             Description = "Test issue description",
@@ -1692,6 +1694,7 @@ public class QualityGateExecutorCleanupCatchTests
         },
         Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "99",
             Title = "Test Issue",
             Description = "Test issue description",

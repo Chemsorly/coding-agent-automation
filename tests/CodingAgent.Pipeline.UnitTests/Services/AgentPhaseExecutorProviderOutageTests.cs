@@ -63,7 +63,7 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
             IssueOps = issueOps.Object,
             Callbacks = callbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "r", AcceptanceCriteria = ["a"] }
         };
 
@@ -113,7 +113,7 @@ public class AgentPhaseExecutorProviderOutageTests : IDisposable
             IssueOps = issueOps.Object,
             Callbacks = callbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "t", Description = "d", Labels = ["bug"] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "r", AcceptanceCriteria = ["a"] }
         };
 

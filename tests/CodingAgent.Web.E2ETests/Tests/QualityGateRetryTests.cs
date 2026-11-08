@@ -22,6 +22,7 @@ public sealed class QualityGateRetryTests : E2ETestBase
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Add input validation",
             Description = "## Requirements\nAdd null checks to all public methods\n\n## Acceptance Criteria\n- [ ] All public methods validate inputs",
@@ -110,6 +111,7 @@ public sealed class QualityGateRetryTests : E2ETestBase
         // Arrange: seed test data
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Add input validation",
             Description = "## Requirements\nAdd null checks to all public methods\n\n## Acceptance Criteria\n- [ ] All public methods validate inputs",

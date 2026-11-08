@@ -28,7 +28,8 @@ public static class JobAssignmentMessageFactory
                 Identifier = request.IssueIdentifier,
                 Title = string.Empty,
                 Description = string.Empty,
-                Labels = []
+                Labels = [],
+                IsAuthorVerified = true
             },
             ParsedIssue = request.ParsedIssue ?? new ParsedIssue
             {

@@ -78,7 +78,7 @@ public class PipelineStepTests
     [Fact]
     public async Task FetchIssueStep_Success_SetsContextIssueAndComments()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = ["bug"] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = ["bug"] };
         var comments = new List<IssueComment> { new() { Id = "c1", Author = "user", Body = "comment", CreatedAt = DateTime.UtcNow } };
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
         _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
@@ -96,7 +96,7 @@ public class PipelineStepTests
     [Fact]
     public async Task FetchIssueStep_EmptyTitle_FailsRun()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "", Description = "Desc", Labels = [] };
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
 
         var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
@@ -110,7 +110,7 @@ public class PipelineStepTests
     [Fact]
     public async Task FetchIssueStep_EmptyDescription_FailsRun()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "Title", Description = "  ", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Title", Description = "  ", Labels = [] };
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
 
         var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
@@ -138,7 +138,7 @@ public class PipelineStepTests
     [Fact]
     public async Task FetchIssueStep_CommentFetchFails_ContinuesWithoutComments()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
         _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("fail"));
@@ -155,7 +155,7 @@ public class PipelineStepTests
     public async Task FetchIssueStep_WithImagesInBody_PopulatesIssueImages()
     {
         var description = "Here is a screenshot:\n![error](https://user-images.githubusercontent.com/123/image.png)\nEnd.";
-        var issue = new IssueDetail { Identifier = "42", Title = "Bug", Description = description, Labels = ["bug"] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Bug", Description = description, Labels = ["bug"] };
         var comments = new List<IssueComment>();
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
         _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
@@ -174,7 +174,7 @@ public class PipelineStepTests
     [Fact]
     public async Task FetchIssueStep_WithNoImages_ReconstructsIssueDetailWithEmptyImages()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "Feature", Description = "No images here", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Feature", Description = "No images here", Labels = [] };
         var comments = new List<IssueComment>();
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
         _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
@@ -193,7 +193,7 @@ public class PipelineStepTests
     [Fact]
     public async Task FetchIssueStep_WithImagesInComments_PopulatesIssueImages()
     {
-        var issue = new IssueDetail { Identifier = "42", Title = "Bug", Description = "Description text", Labels = [] };
+        var issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Bug", Description = "Description text", Labels = [] };
         var comments = new List<IssueComment>
         {
             new() { Id = "c1", Author = "user", Body = "See ![screenshot](https://example.com/img.png)", CreatedAt = DateTime.UtcNow }
@@ -498,7 +498,7 @@ public class PipelineStepTests
 
         var step = new CreateBranchStep();
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Desc", Labels = [] };
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         Assert.Equal(StepResult.Continue, result);
@@ -568,7 +568,7 @@ public class PipelineStepTests
 
         var step = new CreateBranchStep();
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         Assert.Equal(StepResult.Stop, result);
@@ -591,7 +591,7 @@ public class PipelineStepTests
 
         var step = new GenerateCodeStep();
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -674,7 +674,7 @@ public class PipelineStepTests
     {
         var step = new AnalyzeCodeStep();
         var context = BuildContext();
-        context.Issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
         context.ParsedIssue = null;
 
         await Assert.ThrowsAsync<InvalidOperationException>(

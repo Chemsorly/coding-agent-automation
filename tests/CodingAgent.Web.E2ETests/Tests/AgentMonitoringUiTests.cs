@@ -21,6 +21,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = $"UI test issue {issueId}",
             Description = "## Requirements\nUI test\n\n## Acceptance Criteria\n- [ ] Done",

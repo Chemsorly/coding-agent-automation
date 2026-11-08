@@ -332,6 +332,7 @@ public sealed class LabelServiceTests
         mockProvider.Setup(p => p.GetIssueAsync(new IssueIdentifier("GH-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "GH-1",
                 Title = "T",
                 Description = "D",

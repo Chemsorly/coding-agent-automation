@@ -185,6 +185,7 @@ public class SessionIdSpanAttributeTests : IDisposable
         // Set Issue/ParsedIssue so BuildAgentPhaseContext works
         context.Issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = run.IssueIdentifier,
             Title = "Test Issue",
             Description = "Test description",

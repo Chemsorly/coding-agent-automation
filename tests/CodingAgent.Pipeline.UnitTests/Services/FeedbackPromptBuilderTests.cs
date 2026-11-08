@@ -35,6 +35,7 @@ public class FeedbackPromptBuilderContentTests
 
     private static IssueDetail CreateTestIssue(string? description = null) => new()
     {
+        IsAuthorVerified = true,
         Identifier = "42",
         Title = "Fix login bug",
         Description = description ?? "The login form throws a NullReferenceException when the email field is empty.",

@@ -228,6 +228,7 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
             .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Epic",
                 Description = "Epic description",
@@ -274,7 +275,7 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
         // Arrange — epic context succeeds but OpenIssuesDownloaded == 0 (hub errors during WriteOpenIssueContext)
         _issueOps
             .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
         _issueOps
             .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
@@ -307,7 +308,7 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
         // Arrange — epic context and issue download succeed; agent returns exit code 5
         _issueOps
             .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
         _issueOps
             .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
@@ -342,7 +343,7 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
         // Arrange — epic context succeeds, agent succeeds and writes a plan file that is too short
         _issueOps
             .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
+            .ReturnsAsync(new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Epic", Description = "desc", Labels = Array.Empty<string>() });
         _issueOps
             .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());

@@ -26,6 +26,7 @@ public class PromptBuilderSnapshotTests
 
     private static readonly IssueDetail TestIssue = new()
     {
+        IsAuthorVerified = true,
         Identifier = "1",
         Title = "Test Issue",
         Description = "Test description.",

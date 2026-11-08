@@ -55,7 +55,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-agent-creation-fail",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -124,7 +124,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-pipeline-creation-fail",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -166,18 +166,27 @@ public class AgentProviderResolverTests
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-api", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "api", Settings = new Dictionary<string, string>()
+            Id = "repo-api",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "api",
+            Settings = new Dictionary<string, string>()
         };
         var webConfig = new ProviderConfig
         {
-            Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "web", Settings = new Dictionary<string, string> { ["token"] = "vended-for-web" }
+            Id = "repo-web",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "web",
+            Settings = new Dictionary<string, string> { ["token"] = "vended-for-web" }
         };
         var agentConfig = new ProviderConfig
         {
-            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
-            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Agent",
+            Settings = new Dictionary<string, string>()
         };
 
         var jobFactory = new Mock<IProviderFactory>();
@@ -190,7 +199,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-project-epic",
             IssueIdentifier = "7",
-            IssueDetail = new IssueDetail { Identifier = "7", Title = "Epic", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "7", Title = "Epic", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RunType = PipelineRunType.DecompositionAnalysis,
             RepoProviderConfigId = "repo-api",
@@ -235,18 +244,27 @@ public class AgentProviderResolverTests
         var webRepoProvider = new Mock<IRepositoryProvider>();
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-api", Kind = ProviderKind.Repository, ProviderType = "GitLab",
-            DisplayName = "api", Settings = new Dictionary<string, string>()
+            Id = "repo-api",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "api",
+            Settings = new Dictionary<string, string>()
         };
         var webConfig = new ProviderConfig
         {
-            Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitLab",
-            DisplayName = "web", Settings = new Dictionary<string, string>()
+            Id = "repo-web",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "web",
+            Settings = new Dictionary<string, string>()
         };
         var agentConfig = new ProviderConfig
         {
-            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
-            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Agent",
+            Settings = new Dictionary<string, string>()
         };
         var jobFactory = new Mock<IProviderFactory>();
         jobFactory.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(primaryRepoProvider.Object);
@@ -258,7 +276,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-project-review",
             IssueIdentifier = "12",
-            IssueDetail = new IssueDetail { Identifier = "12", Title = "Add the order endpoint", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "12", Title = "Add the order endpoint", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RunType = runType,
             RepoProviderConfigId = "repo-api",
@@ -313,20 +331,26 @@ public class AgentProviderResolverTests
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "Repo", Settings = new Dictionary<string, string>()
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
+            Settings = new Dictionary<string, string>()
         };
         var agentConfig = new ProviderConfig
         {
-            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
-            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Agent",
+            Settings = new Dictionary<string, string>()
         };
 
         var job = new JobAssignmentMessage
         {
             JobId = "test-job-no-brain",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -367,20 +391,26 @@ public class AgentProviderResolverTests
 
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "Repo", Settings = new Dictionary<string, string>()
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
+            Settings = new Dictionary<string, string>()
         };
         var agentConfig = new ProviderConfig
         {
-            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
-            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Agent",
+            Settings = new Dictionary<string, string>()
         };
 
         var job = new JobAssignmentMessage
         {
             JobId = "test-job-brain-missing",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",
@@ -422,19 +452,28 @@ public class AgentProviderResolverTests
         var mockFactory = new Mock<IProviderFactory>();
         var brainConfig = new ProviderConfig
         {
-            Id = "brain-1", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "Brain", Settings = new Dictionary<string, string>()
+            Id = "brain-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Brain",
+            Settings = new Dictionary<string, string>()
         };
         // Distinguish brain from repo provider by ProviderConfig identity
         var repoConfig = new ProviderConfig
         {
-            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub",
-            DisplayName = "Repo", Settings = new Dictionary<string, string>()
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
+            Settings = new Dictionary<string, string>()
         };
         var agentConfig = new ProviderConfig
         {
-            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
-            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+            Id = "agent-1",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Agent",
+            Settings = new Dictionary<string, string>()
         };
         mockFactory.Setup(f => f.CreateRepositoryProvider(It.Is<ProviderConfig>(c => c.Id == "repo-1")))
             .Returns(mockRepoProvider.Object);
@@ -447,7 +486,7 @@ public class AgentProviderResolverTests
         {
             JobId = "test-job-brain-validate-fail",
             IssueIdentifier = "owner/repo#1",
-            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
             ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
             RepoProviderConfigId = "repo-1",
             AgentProviderConfigId = "agent-1",

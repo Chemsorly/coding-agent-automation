@@ -239,7 +239,7 @@ public class AgentPhaseExecutorCodeGenTests
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
             DownloadedImages = new[] { testImage }
         };
@@ -285,7 +285,7 @@ public class AgentPhaseExecutorCodeGenTests
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } },
             DownloadedImages = new[] { testImage }
         };
@@ -310,7 +310,7 @@ public class AgentPhaseExecutorCodeGenTests
             IssueOps = _mockIssueOps.Object,
             Callbacks = _mockCallbacks.Object,
             OrchestratorCts = orchestratorCts,
-            Issue = new IssueDetail { Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
+            Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test Issue", Description = "Test description", Labels = new[] { "bug" } },
             ParsedIssue = new ParsedIssue { RequirementsSection = "Test requirements", AcceptanceCriteria = new[] { "AC1", "AC2" } }
         };
     }

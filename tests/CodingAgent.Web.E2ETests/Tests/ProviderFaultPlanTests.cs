@@ -14,7 +14,7 @@ public sealed class ProviderFaultPlanTests
     public async Task FailNext_FailsOnlyTheNamedMethod()
     {
         var provider = new InMemoryIssueProvider();
-        provider.Issues.Add(new IssueDetail { Identifier = "1", Title = "t", Description = "d", Labels = [] });
+        provider.Issues.Add(new IssueDetail { IsAuthorVerified = true, Identifier = "1", Title = "t", Description = "d", Labels = [] });
         provider.Faults.FailNext(nameof(IIssueProvider.CreateIssueAsync));
 
         var issue = await provider.GetIssueAsync("1", CancellationToken.None);

@@ -118,7 +118,8 @@ internal static class WorkItemEntityBuilder
                     Identifier = request.IssueDetail.Identifier,
                     Title = request.IssueDetail.Title,
                     Description = string.Empty, // Strip body; re-fetched at assignment time
-                    Labels = []
+                    Labels = [],
+                    IsAuthorVerified = request.IssueDetail.IsAuthorVerified
                 }
                 : null,
 

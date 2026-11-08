@@ -28,6 +28,7 @@ internal static class JobReconciliationTestData
         // Step 1: add issue to fake provider so label-swap callbacks have an issue to act on.
         fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueIdentifier,
             Title = "Test issue",
             Description = "## Requirements\nTest\n\n## Acceptance Criteria\n- [ ] Done",

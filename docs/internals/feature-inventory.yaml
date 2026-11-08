@@ -23,3 +23,12 @@ features:
       baseline value entering ApplyTemplateOverrides. Template-level BrainReadOnly (F-006) is propagated
       via ApplyTemplateOverrides on all dispatch paths (confirmed fixed 2026-09-17). One-directional:
       template true overrides to true; template false is a no-op.
+
+  - id: F-023
+    name: IssueDetail.IsAuthorVerified
+    field: IssueDetail.IsAuthorVerified
+    propagation_risk: true
+    notes: >
+      Whether an issue's author is on the repository. Required, so every rebuild decides; copied by
+      IssueDetail.WithImages. JSON without the field reads false (PipelineJsonOptions.Resolver), and so
+      does MessagePack. Operator triage sets true.

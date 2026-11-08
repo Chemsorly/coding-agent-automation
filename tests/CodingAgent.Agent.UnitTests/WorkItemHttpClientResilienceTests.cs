@@ -207,7 +207,7 @@ public class WorkItemHttpClientResilienceTests : IDisposable
     {
         JobId = jobId,
         IssueIdentifier = issueId,
-        IssueDetail = new IssueDetail { Identifier = issueId, Title = "Test", Description = "", Labels = [] },
+        IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = issueId, Title = "Test", Description = "", Labels = [] },
         ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
         RepoProviderConfigId = "repo-1",
         AgentProviderConfigId = "agent-1",

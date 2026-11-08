@@ -35,6 +35,7 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
         // Arrange: seed issue, template, and agent profile
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "42",
             Title = "Data integrity test issue",
             Description = "## Requirements\nVerify field population\n\n## Acceptance Criteria\n- [ ] Done",
@@ -167,6 +168,7 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
         // all agent:next issues), or isolate issue providers per test to prevent cross-test interference.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "43",
             Title = "Failed step integrity test",
             Description = "## Requirements\nTest failure path\n\n## Acceptance Criteria\n- [ ] Done",

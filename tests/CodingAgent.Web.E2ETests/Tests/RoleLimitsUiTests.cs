@@ -202,6 +202,7 @@ public sealed class RoleLimitsUiTests : IAsyncLifetime
 
         _fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9403",
             Title = "#9403",
             Labels = ["enhancement"],
@@ -242,6 +243,7 @@ public sealed class RoleLimitsUiTests : IAsyncLifetime
 
         _fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9403",
             Title = "#9403",
             Labels = ["enhancement"],

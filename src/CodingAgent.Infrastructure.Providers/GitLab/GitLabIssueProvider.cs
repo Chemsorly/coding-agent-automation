@@ -49,7 +49,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
                 client => client.Issues.GetAsync(ProjectId, iid, ct),
                 "GetIssue", ct);
 
-            return MapToIssueDetail(issue);
+            return MapToIssueDetail(issue, await new AuthorVerifier(this).VerifyAsync(issue.Author?.Id, ct));
         }
         catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
@@ -407,7 +407,10 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
 
         var hasMore = allItems.Count > pageSize;
-        var items = allItems.Take(pageSize).Select(MapToIssueSummary).ToList();
+        var verifier = new AuthorVerifier(this);
+        var items = new List<IssueSummary>();
+        foreach (var issue in allItems.Take(pageSize))
+            items.Add(MapToIssueSummary(issue, await verifier.VerifyAsync(issue.Author?.Id, ct)));
 
         return new PagedResult<IssueSummary>
         {
@@ -444,7 +447,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     /// <summary>
     /// Maps a GitLab <see cref="Issue"/> to an <see cref="IssueDetail"/>.
     /// </summary>
-    private static IssueDetail MapToIssueDetail(Issue issue)
+    private static IssueDetail MapToIssueDetail(Issue issue, bool isAuthorVerified)
     {
         return new IssueDetail
         {
@@ -453,14 +456,15 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             Description = issue.Description ?? string.Empty,
             Labels = issue.Labels?.ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
-            Url = issue.WebUrl
+            Url = issue.WebUrl,
+            IsAuthorVerified = isAuthorVerified
         };
     }
 
     /// <summary>
     /// Maps a GitLab <see cref="Issue"/> to an <see cref="IssueSummary"/>.
     /// </summary>
-    private static IssueSummary MapToIssueSummary(Issue issue)
+    private static IssueSummary MapToIssueSummary(Issue issue, bool isAuthorVerified)
     {
         return new IssueSummary
         {
@@ -470,7 +474,8 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             Labels = issue.Labels?.ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
             CreatedAt = issue.CreatedAt.ToUniversalTime(),
-            Url = issue.WebUrl
+            Url = issue.WebUrl,
+            IsAuthorVerified = isAuthorVerified
         };
     }
 

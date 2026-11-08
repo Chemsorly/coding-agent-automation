@@ -22,6 +22,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         // Arrange: seed epic with agent:epic label
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "100",
             Title = "Epic: Implement feature X",
             Description = "## Goal\nBuild feature X end-to-end",
@@ -104,6 +105,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         // Arrange: seed epic with agent:epic-approved label (Phase 2 candidate)
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "200",
             Title = "Epic: Implement feature Y",
             Description = "## Goal\nBuild feature Y end-to-end",
@@ -200,6 +202,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         // Arrange: seed epic with agent:epic label
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "300",
             Title = "Epic: Implement feature Z",
             Description = "## Goal\nBuild feature Z end-to-end",

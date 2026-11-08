@@ -83,6 +83,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
     private static IssueDetail Detail(string id, string? title = null, string? description = null, string[]? labels = null) =>
         new()
         {
+            IsAuthorVerified = true,
             Identifier = id,
             Title = title ?? $"Issue {id}",
             Description = description ?? $"Body of {id}",
@@ -127,6 +128,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
         _issueOps.Setup(x => x.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Add pagination",
                 Description = "Implement pagination for the /users endpoint.",
@@ -507,6 +509,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
     {
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "99",
             Title = "Test issue with \"quotes\"",
             Description = "The body content",
@@ -527,6 +530,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
     {
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "1",
             Title = "Simple",
             Description = "Body",
@@ -543,6 +547,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
     {
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "99",
             Title = "Completed task",
             Description = "This was done",
@@ -561,6 +566,7 @@ public class WriteOpenIssueContextLogicTests : IDisposable
     {
         var detail = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "100",
             Title = "Open task",
             Description = "This is in progress",

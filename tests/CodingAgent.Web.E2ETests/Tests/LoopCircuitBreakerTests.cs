@@ -88,6 +88,7 @@ public sealed class LoopCircuitBreakerTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "9001",
             Title = "Circuit breaker test issue",
             Description = "## Requirements\nTest issue for circuit breaker E2E\n\n## Acceptance Criteria\n- [ ] Dispatched after circuit breaker resumes",

@@ -78,6 +78,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         const string issueIdentifier = "jc-e2e/smoke-1";
         Fixture.IssueProvider.Issues.Add(new Pipeline.Models.IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueIdentifier,
             Title = "Smoke test issue",
             Description = "## Requirements\nSmoke test\n\n## Acceptance Criteria\n- [ ] Done",
@@ -333,6 +334,7 @@ public sealed class JobControllerE2ETests : HeadlessE2ETestBase
         // Required so the label-swap callback triggered by PostStatusAsync has an issue to act on.
         Fixture.IssueProvider.Issues.Add(new Pipeline.Models.IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueIdentifier,
             Title = "Test failure issue",
             Description = "## Requirements\nTrigger infrastructure failure\n\n## Acceptance Criteria\n- [ ] Done",

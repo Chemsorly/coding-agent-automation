@@ -409,7 +409,7 @@ public class HubMessageRoundtripPropertyTests
         {
             JobId = "job-focus-test",
             IssueIdentifier = new IssueIdentifier("test/repo#1"),
-            IssueDetail = new IssueDetail { Identifier = new IssueIdentifier("test/repo#1"), Title = "t", Description = "d", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = new IssueIdentifier("test/repo#1"), Title = "t", Description = "d", Labels = [] },
             ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = string.Empty },
             IssueComments = [],
             RepoProviderConfigId = "rp-1",
@@ -437,7 +437,7 @@ public class HubMessageRoundtripPropertyTests
         {
             JobId = "job-default-focus",
             IssueIdentifier = new IssueIdentifier("test/repo#2"),
-            IssueDetail = new IssueDetail { Identifier = new IssueIdentifier("test/repo#2"), Title = "t", Description = "d", Labels = [] },
+            IssueDetail = new IssueDetail { IsAuthorVerified = true, Identifier = new IssueIdentifier("test/repo#2"), Title = "t", Description = "d", Labels = [] },
             ParsedIssue = new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = string.Empty },
             IssueComments = [],
             RepoProviderConfigId = "rp-1",

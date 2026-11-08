@@ -28,6 +28,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
     {
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = issueId,
             Title = issueTitle,
             Description = "## Requirements\nDo the thing\n\n## Acceptance Criteria\n- [ ] Done",
@@ -212,6 +213,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "46",
             Title = "Secrets test issue",
             Description = "## Requirements\nNeed secrets\n\n## Acceptance Criteria\n- [ ] Done",
@@ -254,6 +256,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         // Arrange: seed two issues
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "47",
             Title = "First multi-agent issue",
             Description = "## Requirements\nTask 1\n\n## Acceptance Criteria\n- [ ] Done",
@@ -261,6 +264,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "48",
             Title = "Second multi-agent issue",
             Description = "## Requirements\nTask 2\n\n## Acceptance Criteria\n- [ ] Done",
@@ -343,6 +347,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         // Seed issue + template using the token-bearing repo provider
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "50",
             Title = "Token refresh test issue",
             Description = "## Requirements\nNeeds token\n\n## Acceptance Criteria\n- [ ] Done",
@@ -422,6 +427,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "51",
             Title = "Brain token test",
             Description = "## Requirements\nNeeds brain\n\n## Acceptance Criteria\n- [ ] Done",

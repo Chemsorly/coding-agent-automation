@@ -132,7 +132,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         gracePeriod: TimeSpan.Zero); // no grace period — sweep immediately
 
     private static IssueDetail ToDetail(IssueSummary s) =>
-        new() { Identifier = s.Identifier, Title = s.Title, Description = "", Labels = s.Labels };
+        new() { IsAuthorVerified = true, Identifier = s.Identifier, Title = s.Title, Description = "", Labels = s.Labels };
 
     private static PagedResult<IssueSummary> OnePageOf(params IssueSummary[] items) =>
         new() { Items = items, Page = 1, PageSize = 100, HasMore = false };
@@ -193,6 +193,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         mock.Setup(p => p.GetIssueAsync(item.Identifier, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = item.Identifier,
                 Title = item.Title,
                 Description = "",
@@ -288,6 +289,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
                 .Setup(p => p.GetIssueAsync(issue.Identifier, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new IssueDetail
                 {
+                    IsAuthorVerified = true,
                     Identifier = issue.Identifier,
                     Title = issue.Title,
                     Description = "",
@@ -2142,6 +2144,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(p => p.GetIssueAsync("1635", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "1635",
                 Title = "Completed issue",
                 Description = "",
@@ -2223,6 +2226,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(p => p.GetIssueAsync("2481", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "2481",
                 Title = "Epic issue awaiting plan approval",
                 Description = "",

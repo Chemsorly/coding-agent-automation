@@ -107,6 +107,7 @@ public class DecompositionStepTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "org/repo#1",
             Title = "Fix the login bug",
             Description = "Users cannot log in when 2FA is enabled.",
@@ -124,6 +125,7 @@ public class DecompositionStepTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "org/repo#2",
             Title = "My Epic",
             Description = "Epic description",
@@ -148,6 +150,7 @@ public class DecompositionStepTests
     {
         var issue = new IssueDetail
         {
+            IsAuthorVerified = true,
             Identifier = "org/repo#3",
             Title = "Empty desc",
             Description = "",
@@ -593,6 +596,7 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
         {
             ctx.Issue = issue ?? new IssueDetail
             {
+                IsAuthorVerified = true,
                 Identifier = "42",
                 Title = "Test Epic",
                 Description = "Epic description",

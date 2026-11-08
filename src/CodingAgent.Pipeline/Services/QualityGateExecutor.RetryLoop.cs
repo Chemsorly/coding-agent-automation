@@ -396,7 +396,8 @@ public partial class QualityGateExecutor
             Identifier = run.IssueIdentifier,
             Title = run.IssueTitle,
             Description = "(Issue description not available)",
-            Labels = []
+            Labels = [],
+            IsAuthorVerified = false
         };
 
         await _feedbackService.CollectFeedbackCoreAsync(
