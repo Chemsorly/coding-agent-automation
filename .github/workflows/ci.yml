@@ -45,7 +45,7 @@ jobs:
         run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E&Category!=Integration" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@861674232075b2c6bd1405a04c4bb9b150653e81 # v5.5.12
+        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # v5.6.0
         with:
           reports: TestResults/**/coverage.cobertura.xml
           targetdir: CoverageReport
@@ -102,7 +102,7 @@ jobs:
         run: dotnet test tests/CodingAgent.Infrastructure.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@861674232075b2c6bd1405a04c4bb9b150653e81 # v5.5.12
+        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # v5.6.0
         with:
           reports: TestResults/**/coverage.cobertura.xml
           targetdir: CoverageReport
@@ -149,7 +149,7 @@ jobs:
         run: dotnet test tests/CodingAgent.Web.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration&Feature=IAM" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@861674232075b2c6bd1405a04c4bb9b150653e81 # v5.5.12
+        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # v5.6.0
         with:
           reports: TestResults/**/coverage.cobertura.xml
           targetdir: CoverageReport
@@ -195,7 +195,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v4.3.1
 
