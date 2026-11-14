@@ -647,6 +647,16 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Creates a sub-issue in another tracker via the hub's RequestCreateIssueForProvider method
+    /// (requires an active job; the hub refuses a tracker outside the job's scope).
+    /// </summary>
+    public async Task<CreatedIssueResult> RequestCreateIssueForProviderAsync(string jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        return await _connection.InvokeAsync<CreatedIssueResult>("RequestCreateIssueForProvider", jobId, issueProviderConfigId, title, body, labels);
+    }
+
+    /// <summary>
     /// Gets full issue details via the hub's RequestGetIssue method (requires an active job).
     /// The <paramref name="identifier"/> parameter is typed as <see cref="IssueIdentifier"/> (not
     /// <c>string</c>) so that <see cref="AgentHubMessagePack.SerializerOptions"/> applies the
