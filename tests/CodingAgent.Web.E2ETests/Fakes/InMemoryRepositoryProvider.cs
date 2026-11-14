@@ -26,6 +26,21 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     /// <summary>Tracks submitted reviews for assertion.</summary>
     public List<(int PrNumber, string Body, PullRequestReviewType Type)> PostedReviews { get; } = new();
 
+    /// <summary>Whether the provider offers native inline review comments. Default false, as today.</summary>
+    public bool SupportsInlineReviewComments { get; set; }
+
+    /// <summary>Every submission through the ReviewSubmission overload, with its comments.</summary>
+    public List<(int PrNumber, ReviewSubmission Submission)> ReviewSubmissions { get; } = new();
+
+    /// <summary>When set, a submission with at least one inline comment throws this and records nothing.</summary>
+    public Exception? InlineSubmissionError { get; set; }
+
+    /// <summary>When set, a body-only submission of type RequestChanges throws this and records nothing.</summary>
+    public Exception? BodyOnlyRequestChangesError { get; set; }
+
+    /// <summary>Every DismissPreviousReviewAsync call.</summary>
+    public List<(int PrNumber, string Marker, string Reason)> DismissedReviews { get; } = new();
+
     // ── IPullRequestHousekeepingProvider support ──────────────────────────
 
     /// <summary>
@@ -98,6 +113,11 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         PullRequests.Clear();
         PrLabelChanges.Clear();
         PostedReviews.Clear();
+        SupportsInlineReviewComments = false;
+        ReviewSubmissions.Clear();
+        InlineSubmissionError = null;
+        BodyOnlyRequestChangesError = null;
+        DismissedReviews.Clear();
         // Housekeeping collections
         PrMergeability.Clear();
         PrLinkedIssues.Clear();
@@ -271,13 +291,24 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public Task SubmitPullRequestReviewAsync(
         int prNumber, string body, PullRequestReviewType type, CancellationToken ct)
     {
+        if (BodyOnlyRequestChangesError is not null && type == PullRequestReviewType.RequestChanges)
+            throw BodyOnlyRequestChangesError;
         PostedReviews.Add((prNumber, body, type));
         return Task.CompletedTask;
     }
 
     public Task SubmitPullRequestReviewAsync(int prNumber, ReviewSubmission submission, CancellationToken ct)
     {
+        if (InlineSubmissionError is not null && submission.Comments.Count > 0)
+            throw InlineSubmissionError;
+        ReviewSubmissions.Add((prNumber, submission));
         PostedReviews.Add((prNumber, submission.Body, submission.Type));
+        return Task.CompletedTask;
+    }
+
+    public Task DismissPreviousReviewAsync(int prNumber, string marker, string reason, CancellationToken ct)
+    {
+        DismissedReviews.Add((prNumber, marker, reason));
         return Task.CompletedTask;
     }
 
