@@ -26,7 +26,8 @@
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />
+    <!-- 10.0.15: Microsoft.AspNetCore.SignalR.StackExchangeRedis 10.0.15 requires it; a lower central version is a restore downgrade error. -->
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.15" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
@@ -55,7 +56,8 @@
     <PackageVersion Include="KubernetesClient" Version="21.0.8" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.14" />
+    <!-- 10.0.15 resolves GHSA-wr8v-9x5q-ggcm (high severity denial of service, fixed in 10.0.15). -->
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.15" />
     <PackageVersion Include="StackExchange.Redis" Version="3.3.1" />
     <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
     <PackageVersion Include="Serilog" Version="4.4.0" />
@@ -78,6 +80,11 @@
     <PackageVersion Include="FsCheck" Version="3.4.0" />
     <PackageVersion Include="FsCheck.Xunit" Version="3.4.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.14" />
+    <!-- Pin Microsoft.AspNetCore.WebUtilities to 2.3.14 to resolve GHSA-6527-9fp8-r4x6 (moderate
+         severity denial of service in 2.3.0 to 2.3.13, fixed in 2.3.14). It is a transitive
+         dependency of WireMock.Net (via Microsoft.AspNetCore.Http 2.3.9); pinning via
+         CentralPackageTransitivePinningEnabled. -->
+    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="2.3.14" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
