@@ -55,6 +55,12 @@ for major in 10 11; do
   in_container "dotnet --list-sdks | grep -c '^${major}\\.' >/dev/null" || fail "the .NET ${major} SDK is missing"
   in_container "dotnet --list-runtimes | grep -c '^Microsoft.AspNetCore.App ${major}\\.' >/dev/null" || fail "the ASP.NET Core ${major} runtime is missing"
 done
+# The java21 and python312 labels: the agent's java and python3 (uv's 3.12, not Ubuntu's 3.14).
+in_container "java -version 2>&1 | grep -c 'version \"21\\.' >/dev/null" || fail "java is not JDK 21"
+in_container 'mvn -v >/dev/null' || fail "mvn does not run"
+in_container "python3 --version | grep -c '^Python 3\\.12\\.' >/dev/null" || fail "python3 is not Python 3.12"
+in_container 'python3 -m pip --version >/dev/null' || fail "python3 has no pip"
+in_container 'python3 -m venv /tmp/image-check-venv && rm -rf /tmp/image-check-venv' || fail "python3 cannot create a venv"
 
 case "${TARGET}" in
   opencode)
