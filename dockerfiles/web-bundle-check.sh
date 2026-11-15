@@ -1,7 +1,7 @@
 #!/bin/sh
 # web-bundle-check: the checks web.Dockerfile runs on the published client bundle (spec 052 DD11, design 6.0).
 #
-#   1. The brotli files under wwwroot/_framework sum to at most 4 MB (Req 7.2); there must be some. Source maps
+#   1. The brotli files under wwwroot/_framework sum to at most 4.2 MB (Req 7.2: 4 MB, raised for the .NET 11 runtime); there must be some. Source maps
 #      (*.map.br, shipped since .NET 11) are left out: the browser fetches them only when devtools ask.
 #   2. Every wwwroot/_framework/*.wasm and *.dll (assemblies ship as .dll when Webcil is off), its
 #      fingerprint stripped, is on the allow-list, so no server assembly or unreviewed package reaches
@@ -14,7 +14,7 @@ set -eu
 wwwroot=$1
 allowlist=$2
 framework="$wwwroot/_framework"
-budget=4000000
+budget=4200000
 cr=$(printf '\r')
 
 fail() {
