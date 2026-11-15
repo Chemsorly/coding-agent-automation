@@ -18,6 +18,9 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public bool ShouldFail { get; set; }
     public HashSet<string> ClosedIssueIdentifiers { get; } = new();
 
+    /// <summary>Titles for which CreateIssueAsync throws. A non-transient error: the product does not retry it.</summary>
+    public HashSet<string> CreateIssueFailTitles { get; } = new();
+
     /// <summary>
     /// When true, <see cref="ValidateAsync"/> throws so that <see cref="IIssueProvider.InitializeAsync"/>
     /// (which calls ValidateAsync first) surfaces a failure to the UI. Allows Scenario 3 failure-path tests
@@ -60,6 +63,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         InitializeShouldFail = false;
         EnsureAgentLabelsCallCount = 0;
         ClosedIssueIdentifiers.Clear();
+        CreateIssueFailTitles.Clear();
         Faults.Reset();
     }
 
@@ -217,6 +221,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     {
         Faults.ThrowIfPlanned(nameof(CreateIssueAsync));
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
+        if (CreateIssueFailTitles.Contains(title)) throw new InvalidOperationException($"Fake create failure for {title}");
         CreatedIssues.Add((title, body, labels));
         var number = (Issues.Count + CreatedIssues.Count).ToString();
         return Task.FromResult(new CreatedIssueResult
