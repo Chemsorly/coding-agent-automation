@@ -279,10 +279,7 @@
         // in process, so OnAfterRenderAsync(firstRender) ran before the projects above had loaded and
         // skipped the restore; without prerendering, JS already works during initialization.
         if (!_noReadableProject)
-        {
-            try { await RestoreSavedProjectScopeAsync(); }
-            catch (JSException ex) { Logger.LogWarning(ex, "CockpitLayout: could not read the saved project scope"); }
-        }
+            await RestoreSavedProjectScopeAsync();
 
         _accessReady = true;
         if (!_noReadableProject)
@@ -420,7 +417,12 @@
                 _dotNetRef = DotNetObjectReference.Create(this);
                 await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
 
-                await SyncThemeFromBrowserAsync();
+                var theme = await JS.InvokeAsync<string>("getTheme");
+                if (!string.IsNullOrEmpty(theme) && theme != _theme)
+                {
+                    _theme = theme;
+                    StateHasChanged();
+                }
             }
             catch (JSDisconnectedException) { /* Page torn down: nothing left to update. */ }
             catch (JSException) { /* Browser-side failure is non-fatal here. */ }
@@ -432,44 +434,41 @@
         await FaroBridge.FlushAsync();
     }
 
-    private async Task SyncThemeFromBrowserAsync()
-    {
-        var t = await JS.InvokeAsync<string>("getTheme");
-        if (!string.IsNullOrEmpty(t) && t != _theme)
-        {
-            _theme = t;
-            StateHasChanged();
-        }
-    }
-
     /// <summary>
     /// Restores the persisted project scope: null = key absent (first visit); "" = "All projects"
     /// explicitly saved. Runs at the end of OnInitializedAsync, once the readable projects are known.
     /// </summary>
     private async Task RestoreSavedProjectScopeAsync()
     {
-        var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
-        if (savedProjectId is null || _noReadableProject || !Access.Grant.HasAnyAccess)
-            return;
-
-        if (string.IsNullOrEmpty(savedProjectId))
+        try
         {
-            if (IsSelectable(""))
-                State.SetProject("", null);
-            return;
-        }
+            var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
+            if (savedProjectId is null || _noReadableProject || !Access.Grant.HasAnyAccess)
+                return;
 
-        var project = _projects.FirstOrDefault(p => p.Id == savedProjectId);
-        if (project is not null)
-            State.SetProject(project.Id, project.Name);
-        else
-            // TODO [WARNING]: A transient config-API failure causes OnInitializedAsync to
-            // degrade _projects to [] (documented). If that happens on a reload where a
-            // *valid* project ID is stored, this branch incorrectly treats it as "deleted"
-            // and permanently clears the saved preference. Consider tracking whether the
-            // project list loaded successfully (e.g. a bool _projectsLoadedOk flag set in
-            // OnInitializedAsync) and only clearing the stale key when the list loaded OK.
-            await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", ""); // clear stale
+            if (string.IsNullOrEmpty(savedProjectId))
+            {
+                if (IsSelectable(""))
+                    State.SetProject("", null);
+                return;
+            }
+
+            var project = _projects.FirstOrDefault(p => p.Id == savedProjectId);
+            if (project is not null)
+                State.SetProject(project.Id, project.Name);
+            else
+                // TODO [WARNING]: A transient config-API failure causes OnInitializedAsync to
+                // degrade _projects to [] (documented). If that happens on a reload where a
+                // *valid* project ID is stored, this branch incorrectly treats it as "deleted"
+                // and permanently clears the saved preference. Consider tracking whether the
+                // project list loaded successfully (e.g. a bool _projectsLoadedOk flag set in
+                // OnInitializedAsync) and only clearing the stale key when the list loaded OK.
+                await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", ""); // clear stale
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "CockpitLayout: could not read the saved project scope");
+        }
     }
 
     [JSInvokable]
@@ -497,7 +496,6 @@
     private void CloseShortcutHelp()
     {
         _showShortcutHelp = false;
-        StateHasChanged();
     }
 
     private async Task ToggleTheme()

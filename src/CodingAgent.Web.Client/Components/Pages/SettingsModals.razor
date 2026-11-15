@@ -193,7 +193,6 @@
 
         _configureLabelsWorking = true;
         _configureLabelsStatus = null;
-        StateHasChanged();
 
         try
         {
@@ -221,7 +220,6 @@
         finally
         {
             _configureLabelsWorking = false;
-            StateHasChanged();
         }
     }
 
@@ -239,7 +237,6 @@
     {
         _relatedModalSaving = true;
         _relatedModalStatus = null;
-        StateHasChanged();
 
         try
         {

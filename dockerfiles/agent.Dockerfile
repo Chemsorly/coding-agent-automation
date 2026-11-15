@@ -3,7 +3,8 @@
 # Runs the Agent Worker process that executes the full pipeline end-to-end.
 # Every image carries every supported tech stack, so one image serves .NET, Java and Python
 # repositories, polyglot ones included:
-#   .NET 10 SDK, JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js + npm, git, user-apt.
+#   .NET 11 and .NET 10 SDKs, JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js + npm, git,
+#   user-apt. Base: Ubuntu 26.04 (the .NET 11 SDK image).
 # Pick the agent tool with --target:
 #   claude   — Claude Code CLI
 #   kiro     — Kiro CLI
@@ -12,13 +13,13 @@
 # =============================================================================
 
 # Routing labels of the stacks the toolchain stage installs; each target prefixes its agent
-# tool. Keep in sync with the toolchain packages and docs/label-routing.md.
-ARG STACK_LABELS=dotnet,dotnet10,java,java21,python,python312
+# tool. Keep in sync with the toolchain packages and docs/agent-routing.md.
+ARG STACK_LABELS=dotnet,dotnet10,dotnet11,java,java21,python,python312
 
 # Stage 1: Build
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -43,14 +44,30 @@ COPY . .
 RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj \
     -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
+# The .NET 10 SDK and runtimes, copied into the toolchain below. Target platform, not the build
+# host's: these binaries run in the agent pod.
+FROM mcr.microsoft.com/dotnet/sdk:10.0.404 AS dotnet10
+
 # Stage 2: Toolchain shared by every agent tool. Full SDK, not the ASP.NET runtime: the quality
 # gates run dotnet build/test, mvn and pytest inside the agent pod.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS toolchain
+# Ubuntu 26.04, the only base of the .NET 11 images. Two SDKs side by side: the Agent app runs on
+# .NET 11, and repositories that still target net10.0 need the .NET 10 runtime for `dotnet test`.
+# A repository without a global.json is built by the newest SDK (11.0); the 10.0 SDK is used only
+# when its global.json pins it. The .NET 10 directories are copied next to the 11.0 ones; the
+# dotnet muxer and host/fxr stay those of .NET 11, which serve both SDKs. Not Ubuntu's
+# dotnet-sdk-10.0 package: it installs to /usr/lib/dotnet, which this muxer does not search.
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100 AS toolchain
+COPY --from=dotnet10 /usr/share/dotnet/sdk/ /usr/share/dotnet/sdk/
+COPY --from=dotnet10 /usr/share/dotnet/sdk-manifests/ /usr/share/dotnet/sdk-manifests/
+COPY --from=dotnet10 /usr/share/dotnet/shared/ /usr/share/dotnet/shared/
+COPY --from=dotnet10 /usr/share/dotnet/packs/ /usr/share/dotnet/packs/
+COPY --from=dotnet10 /usr/share/dotnet/templates/ /usr/share/dotnet/templates/
 
-# Stack toolchains (JDK 21 + Maven, Python 3.12), git, Node.js/npm for MCP servers, tini as
+# Stack toolchains (JDK 21 + Maven; Python below), git, Node.js/npm for MCP servers, tini as
 # PID 1 for OpenCode, unzip for the Kiro CLI installer, and gpg/gpgv/jq to verify the Claude
 # Code release manifest. apt-get upgrade picks up Ubuntu security fixes released after the base
-# image was built (the Trivy scan in ci.yml reports them).
+# image was built (the Trivy scan in ci.yml reports them). Ubuntu's python3 (3.14 on 26.04) stays
+# for system tools such as node-gyp; the agent's python3 is the uv-managed 3.12 below.
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -69,8 +86,6 @@ RUN apt-get update && \
         openjdk-21-jdk-headless \
         maven \
         python3 \
-        python3-pip \
-        python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # user-apt lets the agent, which runs as non-root with all capabilities dropped, install Ubuntu
@@ -91,8 +106,12 @@ ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
-# uv for MCP servers (uvx) AND Python package management (pytest, etc.)
-RUN curl -LsSf --proto '=https' --tlsv1.2 https://astral.sh/uv/install.sh | sh
+# uv for MCP servers (uvx) AND Python package management (pytest, etc.), and Python 3.12 (the
+# python312 label): Ubuntu 26.04 ships only 3.14. --default puts python, python3 and python3.12
+# into ~/.local/bin, first on PATH. The interpreter carries pip and venv.
+RUN curl -LsSf --proto '=https' --tlsv1.2 https://astral.sh/uv/install.sh | sh && \
+    uv python install 3.12 --default && \
+    python3 --version | grep -c '^Python 3\.12\.' >/dev/null
 
 WORKDIR /app
 

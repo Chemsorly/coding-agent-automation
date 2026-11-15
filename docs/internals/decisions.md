@@ -112,7 +112,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### One agent image per agent tool, with every tech stack
 <!-- 2026-10-04 -->
-**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 10 SDK, JDK 21 + Maven and Python 3.12. The routing table picks the agent profile and the profile names its job template, so one job template per tool is enough.
+**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 11 and .NET 10 SDKs, JDK 21 + Maven and Python 3.12, on Ubuntu 26.04 (the .NET 11 SDK image's base). The routing table picks the agent profile and the profile names its job template, so one job template per tool is enough.
 **Why:** The agent worker needs the .NET SDK in every image anyway, so per-stack images saved little, while nine near-copies of the Dockerfile drifted apart, CI built eighteen agent images per run, and no image could run a polyglot repository. **Accepting:** a larger image and a slower first pull on a new node, every stack's CVE findings in every agent image, and one version per stack.
 **Not:** one image per agent tool and stack.
 **Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.

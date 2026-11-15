@@ -10,7 +10,7 @@
 # Stage 1: Build
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -36,7 +36,7 @@ RUN sh dockerfiles/web-bundle-check.sh /app/publish/wwwroot dockerfiles/web-bund
 
 # Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
 # The web service serves the UI's files and the BFF endpoints.
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS runtime
 
 # Install curl for docker-compose/Kubernetes healthcheck, and pre-create the app
 # directory with correct ownership (before USER switch). apt-get upgrade picks up Ubuntu security

@@ -1,7 +1,7 @@
 # =============================================================================
 # E2E Test Runner Dockerfile
 # Runs Playwright browser tests against the Blazor Server app (in-process).
-# Based on .NET 10 SDK with Playwright Chromium + system dependencies.
+# Based on .NET 11 SDK with Playwright Chromium + system dependencies.
 #
 # Usage:
 #   docker build -f dockerfiles/e2e-tests.Dockerfile -t e2e-tests .
@@ -9,7 +9,8 @@
 # =============================================================================
 
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
+# Ubuntu 26.04, the only base of the .NET 11 images.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100 AS build
 WORKDIR /src
 
 # Restore into a world-readable location instead of the build user's ~/.nuget. The generated
@@ -68,12 +69,10 @@ ENV ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
 # Disable the Terminal Logger's animated progress/timer display (noisy in non-TTY output)
 ENV MSBUILDTERMINALLOGGER=off
 
-# Install libvips for NetVips image processing (used by pipeline under test)
-# Install PowerShell (needed for playwright.ps1 browser installer)
-RUN apt-get update && apt-get install -y --no-install-recommends libvips42t64 wget apt-transport-https \
-    && wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb \
-    && dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb \
-    && apt-get update && apt-get install -y --no-install-recommends powershell \
+# Install libvips for NetVips image processing (used by pipeline under test), and tini as PID 1
+# (see ENTRYPOINT). PowerShell, which runs the playwright.ps1 browser installer below, ships in the
+# SDK image.
+RUN apt-get update && apt-get install -y --no-install-recommends libvips42t64 tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Playwright Chromium + system dependencies using the bundled script,
@@ -81,13 +80,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends libvips42t64 wg
 # TestResults directory is mounted as a volume; ensure the non-root user can write to it.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # groupadd/useradd rather than addgroup/adduser: the latter are Debian wrapper scripts from the
-# `adduser` package, which the .NET 10 SDK image no longer ships. groupadd and useradd come from
+# `adduser` package, which the .NET SDK images no longer ship. groupadd and useradd come from
 # `passwd` and are always present.
 #
 # --create-home is not optional. `adduser --system` made a home directory implicitly; useradd does
 # not, and the .NET CLI refuses to start without one ("The user's home directory could not be
 # determined"). USER does not set $HOME either, so it is set explicitly below.
-RUN pwsh tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium \
+RUN pwsh tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/playwright.ps1 install --with-deps chromium \
     && groupadd --system appgroup \
     && useradd --system --gid appgroup --create-home --home-dir /home/appuser appuser \
     && mkdir -p /src/TestResults && chown -R appuser:appgroup /src/TestResults \
@@ -101,4 +100,6 @@ ENV DOTNET_CLI_HOME=/home/appuser
 # 'dotnet vstest' against the built DLL, so the run never re-enters MSBuild inside the container.
 # The project now sets IsTestProject=true — with it false the VSTest target is a no-op and
 # `dotnet test` silently discovers zero tests, which is how the CI job passed while running nothing.
-ENTRYPOINT ["dotnet", "vstest", "tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]
+# tini as PID 1: with vstest as PID 1 nothing reaps the orphaned browser processes, and vstest
+# never exits after the run.
+ENTRYPOINT ["/usr/bin/tini", "--", "dotnet", "vstest", "tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/CodingAgent.Web.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]

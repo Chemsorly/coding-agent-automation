@@ -1,3 +1,5 @@
+using Microsoft.JSInterop;
+
 namespace CodingAgent.Web.Services;
 
 /// <summary>
@@ -16,6 +18,22 @@ public sealed class VersionWatch
     public event Action? Changed;
 
     public void SetBoot(string? version) => Boot = string.IsNullOrEmpty(version) ? null : version;
+
+    /// <summary>
+    /// Reads the page's version (<c>getAppVersion</c>) at start. A failed read must not stop the app from
+    /// booting: the watch then has no boot version, and nothing else depends on it.
+    /// </summary>
+    public async Task SetBootFromPageAsync(IJSRuntime js)
+    {
+        try
+        {
+            SetBoot(await js.InvokeAsync<string?>("getAppVersion"));
+        }
+        catch (JSException)
+        {
+            SetBoot(null);
+        }
+    }
 
     public void Report(string? version)
     {

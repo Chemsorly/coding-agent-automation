@@ -34,15 +34,19 @@ Microsoft.AspNetCore.SignalR.Protocols.Json
 Microsoft.JSInterop
 Microsoft.JSInterop.WebAssembly
 
-# Microsoft.Extensions: configuration, DI, logging, options, the HTTP client factory.
+# Microsoft.Extensions: configuration, DI, logging, options, the HTTP client factory. Since .NET 11 the
+# WebAssembly host also loads environment variables into configuration (EnvironmentVariables) and brings
+# Hosting.Abstractions.
 Microsoft.Extensions.Configuration
 Microsoft.Extensions.Configuration.Abstractions
+Microsoft.Extensions.Configuration.EnvironmentVariables
 Microsoft.Extensions.Configuration.Json
 Microsoft.Extensions.DependencyInjection
 Microsoft.Extensions.DependencyInjection.Abstractions
 Microsoft.Extensions.Diagnostics
 Microsoft.Extensions.Diagnostics.Abstractions
 Microsoft.Extensions.Features
+Microsoft.Extensions.Hosting.Abstractions
 Microsoft.Extensions.Http
 Microsoft.Extensions.Logging
 Microsoft.Extensions.Logging.Abstractions

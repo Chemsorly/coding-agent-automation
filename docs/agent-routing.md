@@ -121,13 +121,13 @@ whose end time passed ends by itself at the next dispatch. An automatic pause ne
 
 ## Agent Images
 
-Each agent tool has one image, built from `dockerfiles/agent.Dockerfile` with `--target`. Every image carries every supported tech stack: .NET 10 SDK, JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js and npm.
+Each agent tool has one image, built from `dockerfiles/agent.Dockerfile` with `--target`. Every image carries every supported tech stack: .NET 11 and .NET 10 SDKs (the worker runs on 11; repositories on `net10.0` test against the 10 runtime), JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js and npm. The base is Ubuntu 26.04, that of the .NET 11 SDK image; Python 3.12 comes from uv because Ubuntu 26.04 ships 3.14.
 
 | Image tag | Target | Agent tool | Stacks |
 |-----------|--------|------------|--------|
-| `coding-agent-kiro-latest` | `kiro` | Kiro CLI | .NET 10, Java 21, Python 3.12 |
-| `coding-agent-opencode-latest` | `opencode` | OpenCode | .NET 10, Java 21, Python 3.12 |
-| `coding-agent-claude-latest` | `claude` | Claude Code CLI | .NET 10, Java 21, Python 3.12 |
+| `coding-agent-kiro-latest` | `kiro` | Kiro CLI | .NET 11 + 10, Java 21, Python 3.12 |
+| `coding-agent-opencode-latest` | `opencode` | OpenCode | .NET 11 + 10, Java 21, Python 3.12 |
+| `coding-agent-claude-latest` | `claude` | Claude Code CLI | .NET 11 + 10, Java 21, Python 3.12 |
 
 The image does not route work: the route names a profile, the profile names its job template, and the template names
 the image. One job template per tool is enough; add another template of the same tool only for different capacity or

@@ -6,12 +6,18 @@
     here in 051.
   -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>CodingAgent.Web</RootNamespace>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <!-- Trim every assembly, not only those marked trimmable (Blazor's default, partial). Under partial,
+         CodingAgent.Contracts, MessagePack and Microsoft.NET.StringTools shipped whole, and MessagePack
+         kept System.Linq.Expressions and System.Runtime.Numerics, although the browser never uses
+         MessagePack (the UI hub speaks JSON): 520 KB brotli. The reflection-based parts of the client
+         are covered: the router's pages by TrimmerRootAssembly below, JSON by UiJsonContext. -->
+    <TrimMode>full</TrimMode>
     <!-- Number and date formatting stay invariant and no ICU data ships; ToLocalTime() keeps the
          browser's time zone (D6, DD10). -->
     <InvariantGlobalization>true</InvariantGlobalization>

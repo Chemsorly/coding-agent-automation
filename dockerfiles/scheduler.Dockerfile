@@ -7,7 +7,7 @@
 # =============================================================================
 
 # Stage 1: Build
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -33,7 +33,7 @@ RUN dotnet publish src/CodingAgent.Scheduler/CodingAgent.Scheduler.csproj \
     -o /app/publish
 
 # Stage 2: Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS runtime
 
 # apt-get upgrade picks up Ubuntu security fixes released after the base image was built (the
 # Trivy scan in ci.yml reports them).

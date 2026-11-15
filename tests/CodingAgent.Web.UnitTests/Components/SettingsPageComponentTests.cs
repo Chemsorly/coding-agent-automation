@@ -356,7 +356,7 @@ public class SettingsPageComponentTests : BunitContext
         // Verify the modal markup includes proper ARIA attributes by checking the source file.
         // Use the test assembly location to find the source file relative to the project root.
         var testDir = AppContext.BaseDirectory;
-        // Navigate from bin/Debug/net10.0 up to the solution root, then to the source file
+        // Navigate from bin/Debug/net11.0 up to the solution root, then to the source file
         var solutionRoot = Path.GetFullPath(Path.Combine(testDir, "..", "..", "..", "..", ".."));
         var razorPath = Path.Combine(solutionRoot, "src", "CodingAgent.Web.Client", "Components", "Pages", "SettingsModals.razor");
 

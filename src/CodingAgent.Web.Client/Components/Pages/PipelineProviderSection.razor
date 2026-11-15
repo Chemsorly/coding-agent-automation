@@ -198,7 +198,6 @@
         _saving = true;
         _validationMessage = "Validating GitHub App credentials...";
         _validationSuccess = true;
-        StateHasChanged();
 
         if (!long.TryParse(_form.InstallationId, out _))
         {
@@ -275,7 +274,6 @@
 
         _loadingRepos = true;
         _validationMessage = null;
-        StateHasChanged();
 
         try
         {
@@ -334,7 +332,6 @@
     {
         _form.ProviderType = newType;
         _validationMessage = null;
-        StateHasChanged();
     }
 
     private async Task SaveGitLabProvider()
@@ -363,7 +360,6 @@
         _saving = true;
         _validationMessage = "Validating GitLab credentials...";
         _validationSuccess = true;
-        StateHasChanged();
 
         try
         {

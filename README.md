@@ -155,7 +155,7 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 - **Kubernetes cluster** — Local (Rancher Desktop, Docker Desktop) or production
 - **PostgreSQL** — Required; must be accessible from the cluster
 - **Redis** — Required with the default two replicas of the Pipeline API; without Redis, install with `api.replicas=1` (the web UI never needs Redis)
-- **.NET 10 SDK** — For local development only (`dotnet run`)
+- **.NET 11 SDK** — For local development only (`dotnet run`)
 - **Issue tracker credentials** — App credentials for issue/repository access and PR creation (e.g., a GitHub App with Issues + Contents + Pull Requests permissions)
 - **Agent CLI authentication** — Kiro credential PVCs need CLI auth tokens (see First-Time Setup below)
 

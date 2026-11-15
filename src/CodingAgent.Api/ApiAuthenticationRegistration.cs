@@ -2,6 +2,7 @@ using CodingAgent.AgentGateway;
 using CodingAgent.Api.Ui;
 using CodingAgent.Infrastructure.Common.Auth;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.IdentityModel.Tokens;
 using ILogger = Serilog.ILogger;
 
@@ -51,8 +52,14 @@ internal static class ApiAuthenticationRegistration
                       .RequireClaim("auth_kind", "operator"))
             // Fail closed: an endpoint mapped without RequireAuthorization (or AllowAnonymous) is
             // denied instead of open. No credential gets a 401, an API key a 403.
+            // The one exception is a hub method call. Since .NET 11, SignalR evaluates a method
+            // without [Authorize] against this fallback policy (it passes every method attribute,
+            // async methods' AsyncStateMachine included, to AuthorizationPolicy.CombineAsync, which
+            // falls back when none is authorization metadata). The call runs on a connection the
+            // hub endpoint's own policy (MapHub(...).RequireAuthorization) already admitted, and the
+            // hubs check each call themselves (AgentAuthorizationFilter, IUiHubAuthorizer).
             .SetFallbackPolicy(new AuthorizationPolicyBuilder(AgentApiKeyDefaults.AuthenticationScheme)
-                .RequireAssertion(_ => false)
+                .RequireAssertion(context => context.Resource is HubInvocationContext)
                 .Build());
         UiPolicies.Register(authorization);
         services.AddSingleton<IAuthorizationHandler, UiAccessAuthorizationHandler>();

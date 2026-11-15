@@ -28,8 +28,7 @@ public static class WasmEntryPoint
         builder.Services.AddBrowserHostServices(new Uri(builder.HostEnvironment.BaseAddress));
 
         var host = builder.Build();
-        var appVersion = await host.Services.GetRequiredService<IJSRuntime>().InvokeAsync<string?>("getAppVersion");
-        host.Services.GetRequiredService<VersionWatch>().SetBoot(appVersion);
+        await host.Services.GetRequiredService<VersionWatch>().SetBootFromPageAsync(host.Services.GetRequiredService<IJSRuntime>());
         await host.RunAsync();
     }
 }

@@ -30,8 +30,8 @@ internal static class AuthEndpoints
 
         app.MapPost(LogoutEndpoint, LogoutAsync).AllowAnonymous();
 
-        // The login page component maps only GET and POST; HEAD (uptime monitors) gets a plain 200.
-        app.MapMethods(AuthPaths.Login, [HttpMethods.Head], () => Results.Ok()).AllowAnonymous();
+        // No HEAD /login here: since .NET 11 MapRazorComponents maps HEAD for every page, the login
+        // page included, and a second HEAD /login endpoint made the route ambiguous (500).
 
         return app;
     }

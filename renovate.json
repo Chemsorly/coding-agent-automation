@@ -11,6 +11,13 @@
       "groupName": "NuGet minor/patch updates"
     },
     {
+      "description": "The agent image copies the .NET 10 SDK in from the sdk:10 image (dotnet10 stage) for repositories on net10.0: patch that stage within 10.x, never move it to 11",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["mcr.microsoft.com/dotnet/sdk"],
+      "matchCurrentVersion": "/^10\\./",
+      "allowedVersions": "/^10\\./"
+    },
+    {
       "description": "Group GitHub Actions updates",
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions updates"
