@@ -30,7 +30,7 @@ COPY . .
 RUN dotnet publish src/CodingAgent.Web/CodingAgent.Web.csproj \
     -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
-# What the browser downloads: at most 4.2 MB of brotli under _framework, only the assemblies on
+# What the browser downloads: at most 4 MB of brotli under _framework, only the assemblies on
 # dockerfiles/web-bundle-allowlist.txt, and no appsettings*.json (spec 052 DD11, design 6.0).
 RUN sh dockerfiles/web-bundle-check.sh /app/publish/wwwroot dockerfiles/web-bundle-allowlist.txt
 
