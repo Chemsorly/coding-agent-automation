@@ -958,7 +958,6 @@
         // and is unnecessary — Blazor batches re-renders and the trailing call after finally is
         // sufficient. Removing it eliminates a narrow disposal-race surface: if _cts is cancelled
         // by a concurrent navigation/disposal, this call executes on a potentially detached component.
-        StateHasChanged();
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, _run?.ProjectId, "CancelRun");
@@ -982,7 +981,6 @@
         // component was disposed (user navigated away) while PostStatusAsync was in flight, _cts
         // is cancelled and the component is detached. Wrap in InvokeAsync with a disposal guard,
         // consistent with the InvokeAsync pattern used in hub callbacks elsewhere in this file.
-        StateHasChanged();
     }
 
     // Returns true when the re-dispatch button should be visible: terminal Implementation run
@@ -1011,7 +1009,6 @@
         // active work items for the same issue to suppress the button if one is already queued/running.
         _redispatchInProgress = true;
         _redispatchError = null;
-        StateHasChanged();
         try
         {
             await Guard.DemandAsync(AccessRole.Operator, _run.ProjectId, "RedispatchRun");
@@ -1033,7 +1030,6 @@
         {
             _redispatchInProgress = false;
         }
-        StateHasChanged();
     }
 
     // ── Sidebar view-model builders (ported from AgentMonitoring.razor.cs) ──

@@ -71,7 +71,6 @@
         _errorMessage = null;
         _dismissed = true;
         await EvaluateAsync();
-        StateHasChanged();
     }
 
     private void ClearError() => _errorMessage = null;

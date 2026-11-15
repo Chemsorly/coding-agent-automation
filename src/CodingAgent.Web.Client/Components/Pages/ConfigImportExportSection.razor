@@ -75,7 +75,6 @@
     {
         _exporting = true;
         _resultMessage = null;
-        StateHasChanged();
 
         try
         {
@@ -100,7 +99,6 @@
         finally
         {
             _exporting = false;
-            StateHasChanged();
         }
     }
 
@@ -118,7 +116,6 @@
 
         _loading = true;
         _resultMessage = null;
-        StateHasChanged();
 
         try
         {
@@ -153,7 +150,6 @@
         {
             _loading = false;
             _selectedFile = null;
-            StateHasChanged();
         }
     }
 }

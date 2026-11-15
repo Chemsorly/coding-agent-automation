@@ -43,7 +43,6 @@ else
     {
         _isError = false;
         _statusMessage = "Project saved.";
-        StateHasChanged();
     }
 
     private void HandleShowStatus((string Message, bool IsError) args)
@@ -55,6 +54,5 @@ else
     private void ClearStatus()
     {
         _statusMessage = null;
-        StateHasChanged();
     }
 }

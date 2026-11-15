@@ -370,7 +370,6 @@
         {
             _launching = false;
             if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
-            StateHasChanged();
         }
     }
 

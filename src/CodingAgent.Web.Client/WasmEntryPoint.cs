@@ -28,7 +28,11 @@ public static class WasmEntryPoint
         builder.Services.AddBrowserHostServices(new Uri(builder.HostEnvironment.BaseAddress));
 
         var host = builder.Build();
-        var appVersion = await host.Services.GetRequiredService<IJSRuntime>().InvokeAsync<string?>("getAppVersion");
+        // A failed version read must not stop the app from booting: without it the version watch has
+        // no boot version to compare against, and nothing else depends on it.
+        string? appVersion;
+        try { appVersion = await host.Services.GetRequiredService<IJSRuntime>().InvokeAsync<string?>("getAppVersion"); }
+        catch (JSException) { appVersion = null; }
         host.Services.GetRequiredService<VersionWatch>().SetBoot(appVersion);
         await host.RunAsync();
     }

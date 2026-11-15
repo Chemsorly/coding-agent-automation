@@ -135,7 +135,6 @@
         _fetchPhase = "Creating job…";
         _fetchElapsedSeconds = 0;
         _loadingModels = true;
-        StateHasChanged();
 
         _elapsedTimer = new System.Threading.Timer(_ =>
             InvokeAsync(() => { _fetchElapsedSeconds++; StateHasChanged(); }),

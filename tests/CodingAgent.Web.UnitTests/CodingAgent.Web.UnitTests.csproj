@@ -1,11 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <RunSettingsFilePath>$(MSBuildProjectDirectory)\coverlet.runsettings</RunSettingsFilePath>
+    <!-- The .NET 11 Blazor analyzers read test doubles as component code: BL0016 flags the
+         IJSRuntime.InvokeAsync calls inside Moq Setup/Verify expressions, BL0013 a test
+         AuthenticationStateProvider. Both stay on for the client project itself. -->
+    <NoWarn>$(NoWarn);BL0013;BL0016</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

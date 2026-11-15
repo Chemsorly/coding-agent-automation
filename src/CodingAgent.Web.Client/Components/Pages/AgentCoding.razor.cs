@@ -524,7 +524,6 @@ public partial class AgentCoding : IDisposable
     private async Task DispatchFromDrawer(IssueSummary issue)
     {
         PageService.IssueDrawerDispatching = true;
-        StateHasChanged();
         try
         {
             var (success, error, successMessage) = await PageService.DispatchFromIssueDrawerAsync(issue);
@@ -532,7 +531,6 @@ public partial class AgentCoding : IDisposable
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
-        finally { StateHasChanged(); }
     }
 
     // ── PR Drawer ──
@@ -587,7 +585,6 @@ public partial class AgentCoding : IDisposable
     private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
     {
         PageService.PrDrawerDispatching = true;
-        StateHasChanged();
         try
         {
             var (success, error, successMessage) = await PageService.DispatchFromPrDrawerAsync(pr);
@@ -595,7 +592,6 @@ public partial class AgentCoding : IDisposable
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Failed to dispatch PR review: {ex.Message}"; }
-        finally { StateHasChanged(); }
     }
 
     // ── Epic Drawer ──
@@ -650,7 +646,6 @@ public partial class AgentCoding : IDisposable
     private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
     {
         PageService.EpicDrawerDispatching = true;
-        StateHasChanged();
         try
         {
             var (success, error, successMessage) = await PageService.DispatchFromEpicDrawerAsync(issue);
@@ -658,7 +653,6 @@ public partial class AgentCoding : IDisposable
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
-        finally { StateHasChanged(); }
     }
 
     // ── Helpers ──

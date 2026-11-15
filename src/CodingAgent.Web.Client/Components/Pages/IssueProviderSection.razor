@@ -240,7 +240,6 @@
         _saving = true;
         _validationMessage = "Validating GitHub App credentials...";
         _validationSuccess = true;
-        if (!_cts.IsCancellationRequested) StateHasChanged();
 
         if (!long.TryParse(_form.InstallationId, out _))
         {
@@ -325,7 +324,6 @@
 
         _loadingRepos = true;
         _validationMessage = null;
-        if (!_cts.IsCancellationRequested) StateHasChanged();
 
         try
         {
@@ -372,7 +370,6 @@
     {
         _form.ProviderType = newType;
         _validationMessage = null;
-        StateHasChanged();
     }
 
     private async Task SaveGitLabProvider()
@@ -401,7 +398,6 @@
         _saving = true;
         _validationMessage = "Validating GitLab credentials...";
         _validationSuccess = true;
-        if (!_cts.IsCancellationRequested) StateHasChanged();
 
         try
         {

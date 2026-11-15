@@ -35,12 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install .NET 10 SDK
+      - name: Install .NET 11 SDK
         shell: sh
         run: |
           curl -sSL --proto '=https' --tlsv1.2 https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
           chmod +x /tmp/dotnet-install.sh
-          /tmp/dotnet-install.sh --install-dir /usr/share/dotnet --channel 10.0
+          /tmp/dotnet-install.sh --install-dir /usr/share/dotnet --channel 11.0
           rm /tmp/dotnet-install.sh
           dotnet --version
 
@@ -65,7 +65,7 @@ jobs:
       # The filter grows by about 125 bytes per test; Linux caps a single argument at 128 KB.
       - name: Select shard tests
         run: |
-          dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=E2E" --ListFullyQualifiedTests --ListTestsTargetPath:"$RUNNER_TEMP/e2e-listed.txt"
+          dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=E2E" --ListFullyQualifiedTests --ListTestsTargetPath:"$RUNNER_TEMP/e2e-listed.txt"
           LC_ALL=C sort -u "$RUNNER_TEMP/e2e-listed.txt" | awk 'NF' > "$RUNNER_TEMP/e2e-all.txt"
           awk -v total="${{ strategy.job-total }}" -v shard="${{ strategy.job-index }}" '(NR - 1) % total == shard' "$RUNNER_TEMP/e2e-all.txt" > "$RUNNER_TEMP/e2e-shard.txt"
           ALL=$(wc -l < "$RUNNER_TEMP/e2e-all.txt")
@@ -100,7 +100,7 @@ jobs:
           run_part() {
             local part=$1 filter=$2
             mkdir -p "$RUNNER_TEMP/tmp-$part"
-            TMPDIR="$RUNNER_TEMP/tmp-$part" dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"$filter" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:"TestResults/part$part" 2>&1 | sed -u "s/^/[$part] /"
+            TMPDIR="$RUNNER_TEMP/tmp-$part" dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"$filter" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:"TestResults/part$part" 2>&1 | sed -u "s/^/[$part] /"
           }
           run_part 0 "$E2E_FILTER_0" &
           first=$!
@@ -180,7 +180,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       - name: Restore
         run: dotnet restore tests/CodingAgent.Web.E2ETests/CodingAgent.Web.E2ETests.csproj
@@ -191,7 +191,7 @@ jobs:
 
       - name: Check System tests exist
         run: |
-          dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=System" --ListFullyQualifiedTests --ListTestsTargetPath:"$RUNNER_TEMP/system-listed.txt"
+          dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=System" --ListFullyQualifiedTests --ListTestsTargetPath:"$RUNNER_TEMP/system-listed.txt"
           COUNT=$(awk 'NF' "$RUNNER_TEMP/system-listed.txt" | wc -l)
           if [ "$COUNT" -eq 0 ]; then
             echo "::error::No System tests discovered"
@@ -200,7 +200,7 @@ jobs:
           echo "System tests: ${COUNT}"
 
       - name: Run System tests
-        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=System" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:"TestResults/system"
+        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=System" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:"TestResults/system"
         env:
           ASPNETCORE_ENVIRONMENT: Development
           E2E_REQUIRE_DOCKER: 'true'

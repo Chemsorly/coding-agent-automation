@@ -1,7 +1,7 @@
 # =============================================================================
 # E2E Test Runner Dockerfile
 # Runs Playwright browser tests against the Blazor Server app (in-process).
-# Based on .NET 10 SDK with Playwright Chromium + system dependencies.
+# Based on .NET 11 SDK with Playwright Chromium + system dependencies.
 #
 # Usage:
 #   docker build -f dockerfiles/e2e-tests.Dockerfile -t e2e-tests .
@@ -9,7 +9,13 @@
 # =============================================================================
 
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100 AS dotnet11
+
+# The .NET 11 images are Ubuntu 26.04 only. The image stays on the Ubuntu 24.04 .NET 10 SDK image,
+# for which the Playwright system dependencies, libvips and the Microsoft PowerShell repository
+# below are known, and gets the .NET 11 SDK copied in next to the 10.0 one.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.404 AS build
+COPY --from=dotnet11 /usr/share/dotnet/ /usr/share/dotnet/
 WORKDIR /src
 
 # Restore into a world-readable location instead of the build user's ~/.nuget. The generated
@@ -81,13 +87,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends libvips42t64 wg
 # TestResults directory is mounted as a volume; ensure the non-root user can write to it.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # groupadd/useradd rather than addgroup/adduser: the latter are Debian wrapper scripts from the
-# `adduser` package, which the .NET 10 SDK image no longer ships. groupadd and useradd come from
+# `adduser` package, which the .NET 10 and 11 SDK images no longer ship. groupadd and useradd come from
 # `passwd` and are always present.
 #
 # --create-home is not optional. `adduser --system` made a home directory implicitly; useradd does
 # not, and the .NET CLI refuses to start without one ("The user's home directory could not be
 # determined"). USER does not set $HOME either, so it is set explicitly below.
-RUN pwsh tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium \
+RUN pwsh tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/playwright.ps1 install --with-deps chromium \
     && groupadd --system appgroup \
     && useradd --system --gid appgroup --create-home --home-dir /home/appuser appuser \
     && mkdir -p /src/TestResults && chown -R appuser:appgroup /src/TestResults \
@@ -101,4 +107,4 @@ ENV DOTNET_CLI_HOME=/home/appuser
 # 'dotnet vstest' against the built DLL, so the run never re-enters MSBuild inside the container.
 # The project now sets IsTestProject=true — with it false the VSTest target is a no-op and
 # `dotnet test` silently discovers zero tests, which is how the CI job passed while running nothing.
-ENTRYPOINT ["dotnet", "vstest", "tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]
+ENTRYPOINT ["dotnet", "vstest", "tests/CodingAgent.Web.E2ETests/bin/Debug/net11.0/CodingAgent.Web.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]

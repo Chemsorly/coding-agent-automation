@@ -25,7 +25,7 @@ public class BffTelemetryTests : IClassFixture<BffWebApplicationFactory>
     {
         var (traceparent, spans) = await ForwardAndObserveAsync("/api/ui/health");
 
-        traceparent.Should().EndWith("-00", "the API must not record a span for a poll");
+        IsSampled(traceparent).Should().BeFalse("the API must not record a span for a poll");
         spans.Should().NotBeEmpty("positive control: the listener saw the call's spans");
         spans.Should().OnlyContain(s => !s.Recorded, "no span of a poll may be exported");
     }
@@ -35,10 +35,16 @@ public class BffTelemetryTests : IClassFixture<BffWebApplicationFactory>
     {
         var (traceparent, spans) = await ForwardAndObserveAsync("/api/ui/runs");
 
-        traceparent.Should().EndWith("-01");
+        IsSampled(traceparent).Should().BeTrue();
         spans.Should().Contain(s => s.Recorded && s.Kind == ActivityKind.Server, "the web host's server span");
         spans.Should().Contain(s => s.Recorded && s.Kind == ActivityKind.Client, "the forwarder's client span");
     }
+
+    /// <summary>
+    /// The sampled bit of the trace-flags byte. Since .NET 11 the byte also carries the W3C Trace Context
+    /// level 2 random-trace-id flag (0x02), so a sampled call ends in <c>-03</c>, not <c>-01</c>.
+    /// </summary>
+    private static bool IsSampled(string traceparent) => (Convert.ToByte(traceparent[^2..], 16) & 0x01) == 0x01;
 
     /// <summary>
     /// Forwards one GET and returns the <c>traceparent</c> the stub API received, plus every finished
