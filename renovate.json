@@ -11,6 +11,13 @@
       "groupName": "NuGet minor/patch updates"
     },
     {
+      "description": "The agent and E2E images keep the Ubuntu 24.04 .NET 10 SDK image as their base and copy the .NET 11 SDK in (the .NET 11 images are Ubuntu 26.04 only): patch that base within 10.x, never move it to 11",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["mcr.microsoft.com/dotnet/sdk"],
+      "matchCurrentVersion": "/^10\\./",
+      "allowedVersions": "/^10\\./"
+    },
+    {
       "description": "Group GitHub Actions updates",
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions updates"

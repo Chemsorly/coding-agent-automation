@@ -3,7 +3,8 @@
 # Runs the Agent Worker process that executes the full pipeline end-to-end.
 # Every image carries every supported tech stack, so one image serves .NET, Java and Python
 # repositories, polyglot ones included:
-#   .NET 10 SDK, JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js + npm, git, user-apt.
+#   .NET 11 and .NET 10 SDKs, JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js + npm, git,
+#   user-apt.
 # Pick the agent tool with --target:
 #   claude   — Claude Code CLI
 #   kiro     — Kiro CLI
@@ -12,13 +13,13 @@
 # =============================================================================
 
 # Routing labels of the stacks the toolchain stage installs; each target prefixes its agent
-# tool. Keep in sync with the toolchain packages and docs/label-routing.md.
-ARG STACK_LABELS=dotnet,dotnet10,java,java21,python,python312
+# tool. Keep in sync with the toolchain packages and docs/agent-routing.md.
+ARG STACK_LABELS=dotnet,dotnet10,dotnet11,java,java21,python,python312
 
 # Stage 1: Build
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -43,9 +44,21 @@ COPY . .
 RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj \
     -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
+# The .NET 11 SDK and runtimes, copied into the toolchain below. Target platform, not the build
+# host's: these binaries run in the agent pod.
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100 AS dotnet11
+
 # Stage 2: Toolchain shared by every agent tool. Full SDK, not the ASP.NET runtime: the quality
 # gates run dotnet build/test, mvn and pytest inside the agent pod.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS toolchain
+# Two SDKs side by side: the Agent app runs on .NET 11, and repositories that still target
+# net10.0 need the .NET 10 runtime for `dotnet test` (and the 10.0 SDK when their global.json
+# pins it). The base stays the .NET 10 image because it is Ubuntu 24.04: the .NET 11 images are
+# Ubuntu 26.04 only, which would change the JDK, Python and library packages below (and the
+# java21/python312 labels). Copying /usr/share/dotnet adds the 11.0 sdk/, shared/, packs/ and
+# host/fxr/ versions next to the 10.0 ones and replaces the dotnet muxer with the newer one,
+# which serves both SDKs. The DOTNET_VERSION/DOTNET_SDK_VERSION variables still name 10.0.
+FROM mcr.microsoft.com/dotnet/sdk:10.0.404 AS toolchain
+COPY --from=dotnet11 /usr/share/dotnet/ /usr/share/dotnet/
 
 # Stack toolchains (JDK 21 + Maven, Python 3.12), git, Node.js/npm for MCP servers, tini as
 # PID 1 for OpenCode, unzip for the Kiro CLI installer, and gpg/gpgv/jq to verify the Claude

@@ -50,6 +50,11 @@ in_container 'test -w /app' && fail "/app is writable by the agent user"
 in_container 'test -w /app/CodingAgent.Agent.dll' && fail "/app/CodingAgent.Agent.dll is writable by the agent user"
 in_container 'test -w /app/CodingAgent.Agent.runtimeconfig.json' && fail "the runtime configuration is writable by the agent user"
 in_container 'test -w /app/workspaces' || fail "/app/workspaces is not writable by the agent user"
+# Both .NET SDKs: the worker runs on 11, repositories on net10.0 still test against the 10 runtime.
+for major in 10 11; do
+  in_container "dotnet --list-sdks | grep -c '^${major}\\.' >/dev/null" || fail "the .NET ${major} SDK is missing"
+  in_container "dotnet --list-runtimes | grep -c '^Microsoft.AspNetCore.App ${major}\\.' >/dev/null" || fail "the ASP.NET Core ${major} runtime is missing"
+done
 
 case "${TARGET}" in
   opencode)
