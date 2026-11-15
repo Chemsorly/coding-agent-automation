@@ -104,7 +104,7 @@ public class PipelineTelemetryPropagationTests : IDisposable
         result.Should().NotBeNull();
         result!.Should().ContainKey("traceparent");
         // A valid W3C traceparent starts with "00-" followed by a 32-hex trace ID.
-        result["traceparent"].Should().MatchRegex(@"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+        result["traceparent"].Should().MatchRegex(@"^00-[0-9a-f]{32}-[0-9a-f]{16}-0[0-3]$",
             "the generated traceparent must conform to the W3C spec");
     }
 
@@ -135,7 +135,7 @@ public class PipelineTelemetryPropagationTests : IDisposable
             "traceparent must encode the activity's trace ID");
         result.Should().Contain(activity.SpanId.ToHexString(),
             "traceparent must encode the activity's span ID");
-        result.Should().MatchRegex(@"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+        result.Should().MatchRegex(@"^00-[0-9a-f]{32}-[0-9a-f]{16}-0[0-3]$",
             "traceparent must conform to the W3C spec");
     }
 }

@@ -1,6 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Security.Claims;
 using AwesomeAssertions;
+using CodingAgent.AgentGateway;
 using CodingAgent.Api.Ui;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace CodingAgent.Api.IntegrationTests.Security;
@@ -78,6 +84,26 @@ public sealed class EndpointAuthorizationInventoryTests(ApiWebApplicationFactory
         ui.Where(e => !e.Policies.Contains(UiPolicies.AnyAccess) || e.Policies.Count(p => p != UiPolicies.AnyAccess) > 1)
             .Select(e => e.Describe())
             .Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// The fallback policy fails closed for everything but a SignalR hub method call: since .NET 11 SignalR checks
+    /// hub method calls against it, so it passes <see cref="HubInvocationContext"/> (the connection already passed
+    /// the hub endpoint's own policy). An HTTP request is authorized with the <see cref="HttpContext"/> as resource
+    /// and must stay denied, even for the master key. The hub-call half is covered by AgentHubGateTests and UiHubTests.
+    /// </summary>
+    [Fact]
+    public async Task FallbackPolicy_DeniesEveryResourceButAHubMethodCall()
+    {
+        var fallback = await factory.Services.GetRequiredService<IAuthorizationPolicyProvider>().GetFallbackPolicyAsync();
+        fallback.Should().NotBeNull("an endpoint mapped without a policy must not be open");
+        var authorization = factory.Services.GetRequiredService<IAuthorizationService>();
+        var operatorKey = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("auth_kind", "operator")], AgentApiKeyDefaults.AuthenticationScheme));
+
+        foreach (var resource in new object?[] { new DefaultHttpContext(), null, new object() })
+            (await authorization.AuthorizeAsync(operatorKey, resource, fallback!)).Succeeded
+                .Should().BeFalse($"the fallback policy must deny resource {resource?.GetType().Name ?? "null"}");
     }
 
     private static string SourceDirectory([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;

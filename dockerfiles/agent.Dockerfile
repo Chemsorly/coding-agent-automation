@@ -51,8 +51,8 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0.100 AS dotnet11
 # Stage 2: Toolchain shared by every agent tool. Full SDK, not the ASP.NET runtime: the quality
 # gates run dotnet build/test, mvn and pytest inside the agent pod.
 # Two SDKs side by side: the Agent app runs on .NET 11, and repositories that still target
-# net10.0 need the .NET 10 runtime for `dotnet test` (and the 10.0 SDK when their global.json
-# pins it). The base stays the .NET 10 image because it is Ubuntu 24.04: the .NET 11 images are
+# net10.0 need the .NET 10 runtime for `dotnet test`. A repository without a global.json is built
+# by the newest SDK (11.0); the 10.0 SDK is used only when its global.json pins it. The base stays the .NET 10 image because it is Ubuntu 24.04: the .NET 11 images are
 # Ubuntu 26.04 only, which would change the JDK, Python and library packages below (and the
 # java21/python312 labels). Copying /usr/share/dotnet adds the 11.0 sdk/, shared/, packs/ and
 # host/fxr/ versions next to the 10.0 ones and replaces the dotnet muxer with the newer one,

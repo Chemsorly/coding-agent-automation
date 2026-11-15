@@ -17,7 +17,7 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// </summary>
 public partial class SonarGateBugConditionTests
 {
-    // Resolve repo root from the test assembly location (bin/Debug/net10.0 → up 5 levels)
+    // Resolve repo root from the test assembly location (bin/Debug/net11.0 → up 5 levels)
     private static string RepoRoot { get; } = GetRepoRoot();
 
     private static string GetRepoRoot()

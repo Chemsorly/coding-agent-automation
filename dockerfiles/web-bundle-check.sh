@@ -1,7 +1,8 @@
 #!/bin/sh
 # web-bundle-check: the checks web.Dockerfile runs on the published client bundle (spec 052 DD11, design 6.0).
 #
-#   1. The brotli files under wwwroot/_framework sum to at most 4 MB (Req 7.2); there must be some.
+#   1. The brotli files under wwwroot/_framework sum to at most 4 MB (Req 7.2); there must be some. Source maps
+#      (*.map.br, shipped since .NET 11) are left out: the browser fetches them only when devtools ask.
 #   2. Every wwwroot/_framework/*.wasm and *.dll (assemblies ship as .dll when Webcil is off), its
 #      fingerprint stripped, is on the allow-list, so no server assembly or unreviewed package reaches
 #      the browser (Req 14.6). The client assembly must be among them.
@@ -34,9 +35,9 @@ allowed() {
 
 [ -d "$framework" ] || fail "$framework is missing"
 
-brotli=$(find "$framework" -type f -name '*.br' | wc -l)
+brotli=$(find "$framework" -type f -name '*.br' ! -name '*.map.br' | wc -l)
 [ "$brotli" -gt 0 ] || fail "no brotli files under _framework: compression is off, so the budget cannot be checked"
-size=$(find "$framework" -type f -name '*.br' -exec cat {} + | wc -c)
+size=$(find "$framework" -type f -name '*.br' ! -name '*.map.br' -exec cat {} + | wc -c)
 [ "$size" -le "$budget" ] || fail "the brotli files under _framework sum to $size bytes, above the $budget-byte budget"
 echo "OK: _framework brotli total $size bytes in $brotli files (budget $budget)"
 
