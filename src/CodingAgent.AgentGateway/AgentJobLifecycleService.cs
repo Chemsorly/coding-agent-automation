@@ -498,6 +498,11 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             && !string.IsNullOrEmpty(branchName))
             _ = _facade.RecordBranchNameAsync(jobId, branchName, CancellationToken.None);
 
+        // An agent reports Cancelled on SIGTERM too, while Kubernetes retries the pod and the work item stays
+        // Running. A real cancel arrives as a status (RunLifecycleManager.CancelRunAsync sets the step).
+        if (step == PipelineStep.Cancelled)
+            return;
+
         var run = _facade.GetRun(jobId);
         if (run is not null)
         {
