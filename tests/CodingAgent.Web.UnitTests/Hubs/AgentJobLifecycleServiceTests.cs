@@ -994,6 +994,58 @@ public sealed class AgentJobLifecycleServiceTests
         _changeNotifier.Verify(n => n.NotifyChange(), Times.Once);
     }
 
+    /// <summary>
+    /// Issue #4192: an agent reports Cancelled on SIGTERM too, while Kubernetes retries the pod and the
+    /// work item stays Running. A real cancel arrives as a status (RunLifecycleManager.CancelRunAsync sets
+    /// the step), so the hub must not take Cancelled from a step report.
+    /// </summary>
+    [Fact]
+    public void HandleStepTransition_Cancelled_DoesNotChangeTheRunStep()
+    {
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+
+        _sut.HandleStepTransition(jobId, PipelineStep.Cancelled, DateTimeOffset.UtcNow, null);
+
+        run.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
+        _facade.Verify(f => f.ReplaceRun(It.IsAny<PipelineRun>()), Times.Never);
+        _changeNotifier.Verify(n => n.NotifyChange(), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void HandleStepTransition_CancelledWithBranchMetadata_StillRecordsBranchName(bool runInMemory)
+    {
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        _facade.Setup(f => f.GetRun(jobId)).Returns(runInMemory ? run : null);
+
+        _sut.HandleStepTransition(jobId, PipelineStep.Cancelled, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["BranchName"] = "feature/auto-4192-sigterm-6d1e0c3a" });
+
+        _facade.Verify(f => f.RecordBranchNameAsync(
+            jobId, "feature/auto-4192-sigterm-6d1e0c3a", It.IsAny<CancellationToken>()), Times.Once);
+        run.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
+    }
+
+    [Fact]
+    public void HandleStepTransition_Failed_StillUpdatesCurrentStep()
+    {
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+
+        _sut.HandleStepTransition(jobId, PipelineStep.Failed, DateTimeOffset.UtcNow, null);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        _changeNotifier.Verify(n => n.NotifyChange(), Times.Once);
+    }
+
     [Fact]
     public void HandleStepTransition_WhenNoRun_DoesNothing()
     {
@@ -1109,7 +1161,7 @@ public sealed class AgentJobLifecycleServiceTests
             new JobId("job-1"), PipelineStep.Cancelled, DateTimeOffset.UtcNow, null);
 
         run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode,
-            "terminal Cancelled step must not update HighWaterMark");
+            "a Cancelled step report is ignored entirely (issue #4192), so it cannot update HighWaterMark");
     }
 
     [Fact]
