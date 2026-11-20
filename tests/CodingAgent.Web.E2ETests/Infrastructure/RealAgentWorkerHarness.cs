@@ -220,6 +220,14 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
         }
     }
 
+    /// <summary>Stops the worker's host the way Kubernetes does with SIGTERM.</summary>
+    public void SimulateSigterm()
+    {
+        if (_app is null)
+            throw new InvalidOperationException("Agent not started. Call StartAsync first.");
+        _app.Lifetime.StopApplication();
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_app is not null)
