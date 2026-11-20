@@ -104,6 +104,9 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     /// </summary>
     public Dictionary<string, string> BrainSeedFiles { get; } = [];
 
+    /// <summary>Latest body per PR number, set by the nullable UpdatePullRequestAsync overload.</summary>
+    public Dictionary<int, string> PullRequestBodies { get; } = [];
+
     public void Reset()
     {
         MethodCalls.Clear();
@@ -126,6 +129,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         BranchUpdateCalls.Clear();
         PrMergedState.Clear();
         BrainSeedFiles.Clear();
+        PullRequestBodies.Clear();
     }
 
     public Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct)
@@ -212,6 +216,15 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task UpdatePullRequestAsync(int prNumber, string body, bool markReady, CancellationToken ct) =>
         Task.CompletedTask;
+
+    public Task<string?> GetPullRequestBodyAsync(int prNumber, CancellationToken ct) =>
+        Task.FromResult(PullRequestBodies.TryGetValue(prNumber, out var body) ? body : null);
+
+    public Task UpdatePullRequestAsync(int prNumber, string? body, bool? markReady, CancellationToken ct)
+    {
+        if (body is not null) PullRequestBodies[prNumber] = body;
+        return Task.CompletedTask;
+    }
 
     // TODO: This implementation ignores the labels parameter. If future tests rely on label-filtered
     // PR listing (e.g., pipeline loop filtering by "agent:next"), add filtering logic here.
