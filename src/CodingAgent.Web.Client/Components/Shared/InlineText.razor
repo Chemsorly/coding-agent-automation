@@ -1,0 +1,26 @@
+@using CodingAgent.Web.Services
+
+@*
+    Agent-written text with code spans and bold. Elements are built from the parser's tokens and every token
+    is rendered as text, so nothing in the text can become markup.
+*@
+
+@foreach (var t in InlineTextParser.Parse(Text))
+{
+    if (t.Kind == InlineKind.Code)
+    {
+        <code class="inline-code">@t.Text</code>
+    }
+    else if (t.Kind == InlineKind.Bold)
+    {
+        <strong>@t.Text</strong>
+    }
+    else
+    {
+        <text>@t.Text</text>
+    }
+}
+
+@code {
+    [Parameter] public string? Text { get; set; }
+}
