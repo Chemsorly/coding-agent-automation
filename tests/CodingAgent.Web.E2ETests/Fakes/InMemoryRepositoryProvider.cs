@@ -105,7 +105,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public Dictionary<string, string> BrainSeedFiles { get; } = [];
 
     /// <summary>Latest body per PR number, set by the nullable UpdatePullRequestAsync overload.</summary>
-    public Dictionary<int, string> PullRequestBodies { get; } = new();
+    public Dictionary<int, string> PullRequestBodies { get; } = [];
 
     public void Reset()
     {
