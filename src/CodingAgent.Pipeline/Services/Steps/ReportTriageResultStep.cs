@@ -68,7 +68,7 @@ public sealed class ReportTriageResultStep : IPipelineStep
         var posted = await context.TryCriticalAsync(async () =>
         {
             var comments = await context.IssueOps.ListCommentsAsync(context.Run.IssueIdentifier, ct);
-            var existing = comments.LastOrDefault(c => c.Body.Contains(TriageConstants.CommentMarker, StringComparison.Ordinal));
+            var existing = comments.LastOrDefault(c => c.HasVerifiedMarker(TriageConstants.CommentMarker));
             if (existing is not null && long.TryParse(existing.Id, out var commentId))
                 await context.IssueOps.UpdateCommentAsync(context.Run.IssueIdentifier, commentId, comment, ct);
             else
