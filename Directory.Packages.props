@@ -36,32 +36,31 @@
     <PackageVersion Include="NetVips" Version="3.2.0" />
     <PackageVersion Include="NGitLab" Version="12.3.0" />
     <PackageVersion Include="Octokit" Version="14.0.0" />
-    <PackageVersion Include="OpenTelemetry" Version="1.19.1" />
-    <PackageVersion Include="OpenTelemetry.Api" Version="1.19.1" />
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.19.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.19.0" />
+    <PackageVersion Include="OpenTelemetry" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.20.2" />
     <!-- Pin Polly.Core to 8.6.6 for .NET 10 compatibility.
          Microsoft.Extensions.Resilience 10.6.0 pulls in Polly.Core 8.4.2 which uses
          [Range(typeof(TimeSpan), ...)] attributes incompatible with .NET 10's RangeAttribute. -->
     <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />
-    <!-- EF Core stays on 10.x, which runs on .NET 11: the provider's major version must match EF Core's,
-         and Npgsql.EntityFrameworkCore.PostgreSQL 11.0.0 is not released yet (rc.3 on 2026-11-15). -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
-    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- EF Core and its Npgsql provider move together: the provider's major version must match EF Core's. -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="11.0.0" />
     <PackageVersion Include="KubernetesClient" Version="21.0.8" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="11.0.0" />
     <!-- At least 10.0.15: resolves GHSA-wr8v-9x5q-ggcm (high severity denial of service, fixed in 10.0.15). -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="11.0.0" />
     <PackageVersion Include="StackExchange.Redis" Version="3.3.1" />
-    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
+    <PackageVersion Include="Npgsql.OpenTelemetry" Version="11.0.0" />
     <PackageVersion Include="Serilog" Version="4.4.0" />
     <PackageVersion Include="Serilog.AspNetCore" Version="11.0.0" />
     <PackageVersion Include="Serilog.Formatting.Compact" Version="3.0.0" />
@@ -82,11 +81,11 @@
     <PackageVersion Include="FsCheck" Version="3.4.0" />
     <PackageVersion Include="FsCheck.Xunit" Version="3.4.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0" />
-    <!-- Pin Microsoft.AspNetCore.WebUtilities to 2.3.14 to resolve GHSA-6527-9fp8-r4x6 (moderate
+    <!-- Pin Microsoft.AspNetCore.WebUtilities (11.0.0, past the 2.3.14 fix) to resolve GHSA-6527-9fp8-r4x6 (moderate
          severity denial of service in 2.3.0 to 2.3.13, fixed in 2.3.14). It is a transitive
          dependency of WireMock.Net (via Microsoft.AspNetCore.Http 2.3.9); pinning via
          CentralPackageTransitivePinningEnabled. -->
-    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="2.3.14" />
+    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="11.0.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
