@@ -526,7 +526,7 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var service = TestAgentWorkerServiceFactory.Create();
         var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "ReportChatCompletedAsync")
-            .Invoke(GetChatJobHandler(service), ["sess-1", 0, (string?)null])!;
+            .Invoke(GetChatJobHandler(service), ["sess-1", 0, (string?)null, null, null])!;
         await act.Should().NotThrowAsync();
     }
 
@@ -535,7 +535,7 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var service = TestAgentWorkerServiceFactory.Create();
         var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "ReportChatCompletedAsync")
-            .Invoke(GetChatJobHandler(service), ["sess-2", 1, "some error"])!;
+            .Invoke(GetChatJobHandler(service), ["sess-2", 1, "some error", null, null])!;
         await act.Should().NotThrowAsync();
     }
 

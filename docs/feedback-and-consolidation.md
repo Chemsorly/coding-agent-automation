@@ -116,7 +116,7 @@ The Scheduler checks every 15 minutes whether any consolidation type has crossed
 
 1. **Only work the scan did not create counts toward its trigger.** The counter excludes issues the scan itself filed (identified by the footer they carry), so the scan's own issues never trigger another scan.
 2. **Automatic runs never add `agent:next`.** `TriggerAutomaticAsync` always passes `autoDispatch: false`; a human decides what gets implemented.
-3. **Backpressure:** No automatic scan runs while the template still has at least `MaxRefactoringProposals` open scan issues.
+3. **Backpressure:** No automatic scan runs while the template still has at least `MaxRefactoringProposals` open scan issues. Only issues by a verified author count as scan issues, here and in rule 1.
 
 **Pause-after-failure:** When a consolidation run ends in failure, that scope's automatic start is paused until a later run of the same scope succeeds. This prevents retry storms without a cooldown setting. A run whose route is refused when an agent claims it (for example, its profile was deleted after the run was dispatched) fails, so it pauses the scope too, until a successful run. A run that ends because its credential's quota is used up or its login was rejected does not count: it is queued again and waits for the credential (spec 056). An automatic start is never refused for routing: without a route the run is queued and waits, and the deduplication key keeps a second one from being queued.
 

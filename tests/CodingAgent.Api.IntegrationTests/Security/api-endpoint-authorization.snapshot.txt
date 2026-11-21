@@ -20,6 +20,7 @@ GET /api/pipeline-runs/active-branches -> Service: OperatorApiKey
 PUT /api/scheduler/loop-status -> Service: OperatorApiKey
 POST /api/scheduler/maintenance/retention-sweep -> Service: OperatorApiKey
 GET /api/ui/agent-credentials -> Ui: Ui.AnyAccess
+PUT /api/ui/agent-credentials/usage-thresholds -> Ui: Ui.Admin, Ui.AnyAccess
 POST /api/ui/agent-credentials/{credential}/pause -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 POST /api/ui/agent-credentials/{credential}/resume -> Ui: Ui.AnyAccess, Ui.GlobalOperate
 GET /api/ui/agents -> Ui: Ui.AnyAccess

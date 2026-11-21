@@ -673,7 +673,8 @@ public class RefactoringExecutorTests : IDisposable
                 new IssueSummary
                 {
                     Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5),
-                    Description = $"## Problem\n...\n*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
+                    Description = $"## Problem\n...\n*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*",
+                    IsAuthorVerified = true
                 },
                 new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }
             ],
@@ -812,10 +813,10 @@ public class RefactoringExecutorTests : IDisposable
         {
             Items = new[]
             {
-                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "agent:generated", "agent:done" }, Description = scanFooter },
-                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "agent:generated", "agent:wont-do" }, Description = scanFooter },
+                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "agent:generated", "agent:done" }, Description = scanFooter, IsAuthorVerified = true },
+                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "agent:generated", "agent:wont-do" }, Description = scanFooter, IsAuthorVerified = true },
                 // A decomposition sub-issue shares agent:generated but is not a scan proposal
-                new IssueSummary { Identifier = "102", Title = "Sub-issue of an epic", Labels = new[] { "agent:generated", "agent:done" }, Description = "## Summary\nPart 2 of the epic." }
+                new IssueSummary { Identifier = "102", Title = "Sub-issue of an epic", Labels = new[] { "agent:generated", "agent:done" }, Description = "## Summary\nPart 2 of the epic.", IsAuthorVerified = true }
             },
             Page = 1,
             PageSize = 50,
@@ -864,7 +865,8 @@ public class RefactoringExecutorTests : IDisposable
                 new IssueSummary
                 {
                     Identifier = "3236", Title = "Stop swallowing cancellation", Labels = ["agent:generated", "agent:done"],
-                    Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
+                    Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*",
+                    IsAuthorVerified = true
                 }
             ],
             Page = 1,
@@ -968,7 +970,8 @@ public class RefactoringExecutorTests : IDisposable
                     new IssueSummary
                     {
                         Identifier = "7", Title = "Remove dead helper", Labels = ["agent:generated", "agent:done"],
-                        Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
+                        Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*",
+                        IsAuthorVerified = true
                     }
                 ],
                 Page = 1,
@@ -2343,10 +2346,10 @@ public class RefactoringExecutorTests : IDisposable
     // ── CollectScanIssueReferencesAsync tests ────────────────────────────────────────────────
 
     private static IssueSummary MakeScanIssue(string identifier, string title = "Refactor X") =>
-        new() { Identifier = identifier, Title = title, Labels = ["agent:generated"], Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*" };
+        new() { Identifier = identifier, Title = title, Labels = ["agent:generated"], Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*", IsAuthorVerified = true };
 
     private static IssueSummary MakeNonScanIssue(string identifier, string title = "Other issue") =>
-        new() { Identifier = identifier, Title = title, Labels = [], Description = "Some other description." };
+        new() { Identifier = identifier, Title = title, Labels = [], Description = "Some other description.", IsAuthorVerified = true };
 
     [Fact]
     public async Task CollectScanIssueReferences_HasMoreOnPage1_RequestsPage2()

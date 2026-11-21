@@ -114,6 +114,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 
         PipelineSignalRReporter? reporter = null;
         ConsolidationProgress? progress = null;
+        IDisposable? rateLimitRelay = null;
         Action<string> emitOutputLine;
 
         if (outputBatcher is not null)
@@ -122,6 +123,9 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
             reporter = _reporterFactory.Create(connection, outputBatcher, job.JobId, run, onStepChanged);
             progress = new ConsolidationProgress(run, step => reporter.TransitionTo(step, ct));
             emitOutputLine = line => reporter.EmitOutputLine(line, null, ct);
+            // Each agent call's subscription usage goes to the API right away (usage thresholds), as for a pipeline run.
+            rateLimitRelay = _failureRecorder?.RelayRateLimits(readings => reporter.ReportPipelineRunEvent(
+                new PipelineRunEventReport { Kind = PipelineRunEventKind.RateLimitReading, RateLimits = readings }, ct));
         }
         else
         {
@@ -180,6 +184,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
         }
         finally
         {
+            rateLimitRelay?.Dispose();
             if (reporter is not null)
             {
                 try { await reporter.DisposeAsync(); }

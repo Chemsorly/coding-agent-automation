@@ -302,6 +302,112 @@ public class OrchestratorProxySingleFlightTests
         OrchestratorProxy.ResolveTokenVendRetryDelay(attempt, testOverride).Should().Be(testOverride);
     }
 
+    // ── Waiting out a hub reconnect ───────────────────────────────────────
+
+    private static readonly TimeSpan ReconnectPollInterval = TimeSpan.FromMilliseconds(1);
+
+    [Fact]
+    public async Task WaitWhileHubReconnecting_ReturnsOnceConnected()
+    {
+        var states = new Queue<HubConnectionState>(
+            [HubConnectionState.Reconnecting, HubConnectionState.Reconnecting, HubConnectionState.Connected]);
+        var reads = 0;
+
+        await OrchestratorProxy.WaitWhileHubReconnectingAsync(
+            () =>
+            {
+                reads++;
+                return states.Dequeue();
+            },
+            ReconnectPollInterval, "job", CancellationToken.None);
+
+        reads.Should().Be(3, "the state is read once per poll: two Reconnecting reads, then Connected");
+    }
+
+    [Fact]
+    public async Task WaitWhileHubReconnecting_Connecting_WaitsUntilConnected()
+    {
+        var states = new Queue<HubConnectionState>([HubConnectionState.Connecting, HubConnectionState.Connected]);
+        var reads = 0;
+
+        await OrchestratorProxy.WaitWhileHubReconnectingAsync(
+            () =>
+            {
+                reads++;
+                return states.Dequeue();
+            },
+            ReconnectPollInterval, "job", CancellationToken.None);
+
+        reads.Should().Be(2, "a Connecting hub is waited on until it reports Connected");
+    }
+
+    [Fact]
+    public async Task WaitWhileHubReconnecting_Connected_ReturnsImmediately()
+    {
+        var reads = 0;
+
+        await OrchestratorProxy.WaitWhileHubReconnectingAsync(
+            () =>
+            {
+                reads++;
+                return HubConnectionState.Connected;
+            },
+            ReconnectPollInterval, "job", CancellationToken.None);
+
+        reads.Should().Be(1, "a connected hub needs no wait");
+    }
+
+    [Fact]
+    public async Task WaitWhileHubReconnecting_Disconnected_ReturnsImmediately()
+    {
+        // A Disconnected connection is closed and never comes back, so waiting on it would hang the run.
+        var reads = 0;
+
+        await OrchestratorProxy.WaitWhileHubReconnectingAsync(
+            () =>
+            {
+                reads++;
+                return HubConnectionState.Disconnected;
+            },
+            ReconnectPollInterval, "job", CancellationToken.None);
+
+        reads.Should().Be(1, "a disconnected hub must not be waited on");
+    }
+
+    [Fact]
+    public async Task WaitWhileHubReconnecting_CancelledWhileWaiting_Throws()
+    {
+        using var cts = new CancellationTokenSource();
+        var reads = 0;
+
+        var act = async () => await OrchestratorProxy.WaitWhileHubReconnectingAsync(
+            () =>
+            {
+                // Cancel on the second read, so the token is cancelled while the helper is already waiting.
+                if (++reads == 2)
+                    cts.Cancel();
+                return HubConnectionState.Reconnecting;
+            },
+            ReconnectPollInterval, "job", cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "cancelling the token (SIGTERM, operator cancel) must end the wait");
+    }
+
+    [Fact]
+    public async Task RequestTokenRefreshAsync_NoDelegate_DisconnectedHub_FailsInsteadOfWaiting()
+    {
+        // An unstarted connection reads Disconnected. It never comes back, so the token request must
+        // fail through the real call path as it did before the reconnect wait was added, not hang.
+        var proxy = new OrchestratorProxy(BuildDummyConnection(), "job");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+        var act = async () => await proxy.RequestTokenRefreshAsync(ProviderKind.Repository, cts.Token);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        cts.IsCancellationRequested.Should().BeFalse("a disconnected hub must fail fast, not wait for cancellation");
+    }
+
     // ── Cache key isolation: same kind, different includeIssuePermission ──
 
     [Fact]
