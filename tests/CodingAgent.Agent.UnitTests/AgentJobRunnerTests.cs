@@ -217,4 +217,31 @@ public class AgentJobRunnerTests
 
         result.FinalStep.Should().Be(PipelineStep.Completed);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_SigtermWithNonTerminalPayload_ReturnsThePayload()
+    {
+        // Documents the guard that stays as it is: only a Cancelled payload is rethrown on SIGTERM.
+        // An executor that returns a non-terminal step while the SIGTERM token is cancelled gets
+        // its payload returned as is. QualityGateExecutor therefore rethrows the cancellation so
+        // that the run reaches CancelledOutcome instead of ending on RunningQualityGates.
+        var nonTerminalPayload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.RunningQualityGates,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        _mockExecutor.Setup(e => e.ExecuteAsync(
+            It.IsAny<JobAssignmentMessage>(), It.IsAny<HubConnection>(),
+            It.IsAny<OutputBatcher>(), It.IsAny<Action<PipelineStep?>>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(nonTerminalPayload);
+
+        using var sigtermCts = new CancellationTokenSource();
+        await sigtermCts.CancelAsync(); // already cancelled when executor returns
+        var result = await AgentJobRunner.ExecuteAsync(
+            _mockExecutor.Object, _assignment, null!,
+            _ => { }, rethrowOnSigterm: sigtermCts.Token);
+
+        result.FinalStep.Should().Be(PipelineStep.RunningQualityGates);
+    }
 }
