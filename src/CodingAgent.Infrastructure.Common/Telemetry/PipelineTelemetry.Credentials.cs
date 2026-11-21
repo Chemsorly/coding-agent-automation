@@ -8,7 +8,7 @@ public static partial class PipelineTelemetry
 
     /// <summary>
     /// Counter: agent credentials that changed from available to paused (spec 056 req 8.1), recorded by the API's
-    /// pause store. Tags: <c>credential</c>, <c>reason</c> (<c>quota_exhausted</c>, <c>auth_failed</c>, <c>manual</c>),
+    /// pause store. Tags: <c>credential</c>, <c>reason</c> (<c>quota_exhausted</c>, <c>auth_failed</c>, <c>usage_threshold</c>, <c>manual</c>),
     /// <c>source</c> (<c>auto</c>, <c>manual</c>).
     /// </summary>
     public static readonly Counter<long> AgentCredentialPauses;

@@ -559,6 +559,10 @@ public static class ConfigEndpoints
             AgentCapacity = await db.KeyValueStore.AsNoTracking()
                 .Where(kv => kv.Key == AgentCapacityLimits.StorageKey)
                 .Select(kv => kv.Value)
+                .FirstOrDefaultAsync(ct),
+            UsageThresholds = await db.KeyValueStore.AsNoTracking()
+                .Where(kv => kv.Key == CredentialUsageThresholds.StorageKey)
+                .Select(kv => kv.Value)
                 .FirstOrDefaultAsync(ct)
         };
 
@@ -695,7 +699,24 @@ public static class ConfigEndpoints
         if (capacityErrors.Count > 0)
             return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid agent capacity: {string.Join(" ", capacityErrors)}" }));
 
+        var thresholdErrors = ValidateImportedUsageThresholds(bundle);
+        if (thresholdErrors.Count > 0)
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid usage thresholds: {string.Join(" ", thresholdErrors)}" }));
+
         return (bundle, null);
+    }
+
+    /// <summary>The problems with the bundle's usage thresholds of the Claude subscription; none when it has none.</summary>
+    private static IReadOnlyList<string> ValidateImportedUsageThresholds(ConfigBundle bundle)
+    {
+        try
+        {
+            return CredentialUsageStore.ParseThresholds(bundle.UsageThresholds)?.Validate() ?? [];
+        }
+        catch (JsonException ex)
+        {
+            return [$"The usage thresholds cannot be read: {ex.Message}"];
+        }
     }
 
     /// <summary>
@@ -814,10 +835,11 @@ public static class ConfigEndpoints
         db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
         db.Projects.RemoveRange(db.Projects);
         db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
-        // Of the key-value rows only the routing table and the agent capacity limits are configuration; loop state and
-        // the rest stay.
+        // Of the key-value rows only the routing table, the agent capacity limits and the usage thresholds are
+        // configuration; loop state, credential pauses, usage readings and the rest stay.
         db.KeyValueStore.RemoveRange(db.KeyValueStore.Where(kv =>
-            kv.Key == AgentRouting.StorageKey || kv.Key == AgentCapacityLimits.StorageKey));
+            kv.Key == AgentRouting.StorageKey || kv.Key == AgentCapacityLimits.StorageKey
+            || kv.Key == CredentialUsageThresholds.StorageKey));
         await db.SaveChangesAsync(ct);
     }
 
@@ -911,6 +933,11 @@ public static class ConfigEndpoints
         // Validated before anything was cleared (ValidateImportedCapacity). Keys this cluster does not deploy are kept.
         if (AgentCapacityStore.Deserialize(bundle.AgentCapacity) is { } capacity)
             db.KeyValueStore.Add(new KeyValueEntity { Key = AgentCapacityLimits.StorageKey, Value = AgentCapacityStore.Serialize(capacity) });
+
+        // Validated before anything was cleared (ValidateImportedUsageThresholds). A bundle without them leaves the
+        // defaults in force.
+        if (CredentialUsageStore.ParseThresholds(bundle.UsageThresholds) is { } thresholds)
+            db.KeyValueStore.Add(new KeyValueEntity { Key = CredentialUsageThresholds.StorageKey, Value = CredentialUsageStore.SerializeThresholds(thresholds) });
 
         await db.SaveChangesAsync(ct);
     }
@@ -1040,6 +1067,9 @@ public sealed class ConfigBundle
 
     /// <summary>The UI agent capacity limits as their stored JSON (spec 057); absent in older bundles (no UI limits).</summary>
     public string? AgentCapacity { get; set; }
+
+    /// <summary>The usage thresholds of the Claude subscription as their stored JSON; absent in older bundles (defaults).</summary>
+    public string? UsageThresholds { get; set; }
 }
 
 /// <summary>Provider config row — Configuration is a serialized ProviderConfig JSON blob.</summary>

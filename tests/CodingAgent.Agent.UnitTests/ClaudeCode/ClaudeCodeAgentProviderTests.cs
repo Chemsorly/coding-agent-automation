@@ -294,6 +294,23 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_EachRateLimitEvent_IsPassedOnWhileTheCallRuns()
+    {
+        _launcher.Enqueue(
+            Init("s1"),
+            """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.3}}""",
+            """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.4}}""",
+            Result("s1", 1, 1, 0, 0.01m, 1));
+        var provider = CreateProvider();
+        var seen = new List<double?>();
+        provider.RateLimitsObserved = readings => seen.Add(readings.Single(r => r.Window == "five_hour").Utilization);
+
+        await provider.ExecuteAsync(Request(), CancellationToken.None);
+
+        seen.Should().Equal(0.3, 0.4);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_RateLimitWarning_IsShownAndReported()
     {
         _launcher.Enqueue(

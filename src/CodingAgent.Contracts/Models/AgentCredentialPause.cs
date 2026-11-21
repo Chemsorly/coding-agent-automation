@@ -43,11 +43,15 @@ public static class CredentialPauseReasons
     /// <summary>An operator paused it.</summary>
     public const string Manual = "manual";
 
+    /// <summary>A usage reading reached its threshold (<see cref="CredentialUsageThresholds"/>).</summary>
+    public const string UsageThreshold = "usage_threshold";
+
     /// <summary>How a reason reads in texts.</summary>
     public static string Text(string reason) => reason switch
     {
         QuotaExhausted => "quota used up",
         AuthFailed => "login rejected",
+        UsageThreshold => "usage threshold reached",
         Manual => "paused by an operator",
         _ => reason,
     };

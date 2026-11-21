@@ -83,6 +83,22 @@ public static class ApiDispatchServiceExtensions
             sp.GetRequiredService<IDistributedLockProvider>(),
             sp.GetService<TimeProvider>() ?? TimeProvider.System,
             Log.Logger));
+        // The usage thresholds of the Claude subscription and its last readings; a reading over a threshold pauses it.
+        services.AddSingleton(sp => new CredentialUsageStore(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IDistributedLockProvider>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System));
+        services.AddSingleton(sp => new CodingAgent.Api.Dispatch.CredentialUsageMonitor(
+            sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<CredentialUsageStore>(),
+            sp.GetRequiredService<CredentialPauseStore>(),
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            Log.Logger));
+        // The hub hands readings to a background queue, so the agent's connection never waits on the database.
+        services.AddSingleton(sp => new CodingAgent.Api.Dispatch.CredentialUsageQueue(
+            sp.GetRequiredService<CodingAgent.Api.Dispatch.CredentialUsageMonitor>(), Log.Logger));
+        services.AddSingleton<ICredentialUsageObserver>(sp => sp.GetRequiredService<CodingAgent.Api.Dispatch.CredentialUsageQueue>());
+        services.AddHostedService(sp => sp.GetRequiredService<CodingAgent.Api.Dispatch.CredentialUsageQueue>());
         services.AddSingleton(sp => new CodingAgent.Api.Dispatch.DispatchRouter(
             sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IAgentProfileStore>(),

@@ -116,6 +116,9 @@ internal sealed class ClaudeStreamState
     /// <summary>Latest rate-limit reading per window.</summary>
     public Dictionary<string, AgentRateLimitObservation> RateLimits { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Counts the rate-limit events that updated <see cref="RateLimits"/>, so a caller can tell a new one.</summary>
+    public int RateLimitVersion { get; set; }
+
     /// <summary>Counted MCP and web tool calls by <c>server/tool</c>.</summary>
     public Dictionary<string, McpCallCounts> ToolCalls { get; } = new(StringComparer.Ordinal);
 
@@ -499,6 +502,8 @@ internal static class ClaudeStreamJsonParser
             };
         }
 
+        if (status is not null || overageStatus is not null)
+            state.RateLimitVersion++;
         return lines;
     }
 

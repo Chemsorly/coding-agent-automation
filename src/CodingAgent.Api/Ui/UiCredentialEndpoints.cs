@@ -24,17 +24,47 @@ internal static class UiCredentialEndpoints
         group.MapGet("/agent-credentials", GetCredentials);
         group.MapPost("/agent-credentials/{credential}/pause", Pause).RequireAuthorization(UiPolicies.GlobalOperate);
         group.MapPost("/agent-credentials/{credential}/resume", Resume).RequireAuthorization(UiPolicies.GlobalOperate);
+        group.MapPut("/agent-credentials/usage-thresholds", SaveUsageThresholds).RequireAuthorization(UiPolicies.Admin);
         return group;
     }
 
     /// <summary>
     /// GET /api/ui/agent-credentials — every credential a profile uses, plus any paused one, with its pause, the items
-    /// held for it and the profiles that use it.
+    /// held for it, the profiles that use it and its last usage readings; plus the usage thresholds.
     /// </summary>
     internal static async Task<IResult> GetCredentials(
         CredentialPauseStore pauses, IAgentProfileStore profiles, JobTemplateStore templates,
-        IDbContextFactory<PipelineDbContext> dbFactory, CancellationToken ct) =>
-        TypedResults.Ok(await AgentCredentialViews.ReadPageAsync(pauses, profiles, templates, dbFactory, ct));
+        IDbContextFactory<PipelineDbContext> dbFactory, CredentialUsageStore usage, CancellationToken ct) =>
+        TypedResults.Ok(await AgentCredentialViews.ReadPageAsync(pauses, profiles, templates, dbFactory, ct, usage));
+
+    /// <summary>
+    /// PUT /api/ui/agent-credentials/usage-thresholds — replaces the usage thresholds of the Claude subscription (admin).
+    /// 400 with one line per problem; each changed value is logged with the user.
+    /// </summary>
+    internal static async Task<IResult> SaveUsageThresholds(
+        [FromBody] CredentialUsageThresholds? thresholds, CredentialUsageStore usage, Dispatch.CredentialUsageMonitor monitor,
+        IUserAccess access, CancellationToken ct)
+    {
+        if (thresholds is null)
+            return TypedResults.BadRequest("The usage thresholds are missing.");
+        var errors = thresholds.Validate();
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join("\n", errors));
+
+        var old = await usage.LoadThresholdsAsync(ct);
+        await usage.SaveThresholdsAsync(thresholds, ct);
+        foreach (var window in CredentialUsageWindows.All.Where(w => old.PercentOf(w) != thresholds.PercentOf(w)))
+        {
+            Serilog.Log.Information("Usage threshold of the {Window} changed from {Old} % to {New} % by {User}",
+                CredentialUsageWindows.Text(window), old.PercentOf(window), thresholds.PercentOf(window),
+                CodingAgent.Infrastructure.Common.LogSanitizer.SanitizeForLog(UserName(access)));
+        }
+
+        // The new thresholds apply to the last readings at once: a pause they no longer justify ends, a window now over
+        // its threshold pauses.
+        await monitor.ReevaluateAsync(UserName(access), ct);
+        return TypedResults.NoContent();
+    }
 
     /// <summary>
     /// POST /api/ui/agent-credentials/{credential}/pause — pauses it by hand (replaces any pause). 404 for an unknown
@@ -64,14 +94,18 @@ internal static class UiCredentialEndpoints
         return TypedResults.NoContent();
     }
 
-    /// <summary>POST /api/ui/agent-credentials/{credential}/resume — 204 also when it was not paused; 404 when unknown.</summary>
+    /// <summary>
+    /// POST /api/ui/agent-credentials/{credential}/resume — 204 also when it was not paused; 404 when unknown. The windows
+    /// of the Claude subscription at or over their usage threshold are let through until they reset, so the resume
+    /// sticks.
+    /// </summary>
     internal static async Task<IResult> Resume(
-        string credential, CredentialPauseStore pauses, IUserAccess access, CancellationToken ct)
+        string credential, Dispatch.CredentialUsageMonitor monitor, IUserAccess access, CancellationToken ct)
     {
         if (!AgentCredentials.IsKnown(credential))
             return UnknownCredential(credential);
 
-        await pauses.ResumeAsync(credential, UserName(access), ct);
+        await monitor.ResumeAsync(credential, UserName(access), ct);
         return TypedResults.NoContent();
     }
 
@@ -87,20 +121,34 @@ internal static class AgentCredentialViews
     /// <summary>The credentials page: every credential in use plus any paused one, in the order of <see cref="AgentCredentials.All"/>.</summary>
     internal static async Task<UiAgentCredentialsPage> ReadPageAsync(
         CredentialPauseStore pauses, IAgentProfileStore profileStore, JobTemplateStore templates,
-        IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct)
+        IDbContextFactory<PipelineDbContext>? dbFactory, CancellationToken ct, CredentialUsageStore? usage = null)
     {
         var profiles = await profileStore.LoadAgentProfilesAsync(ct);
         var (heldByCredential, heldByReason) = await HeldCountsAsync(dbFactory, ct);
         var tools = templates.ToolsByKey();
         var active = (await pauses.LoadAllAsync(ct)).ToDictionary(p => p.Credential, StringComparer.Ordinal);
         var inUse = AgentCredentials.InUse(profiles, tools);
+        var thresholds = usage is null ? null : await usage.LoadThresholdsAsync(ct);
+        var readings = usage is null ? null : await usage.LoadAsync(AgentCredentials.ClaudeSubscription, ct);
 
         var rows = AgentCredentials.All
             .Where(c => inUse.Contains(c) || active.ContainsKey(c))
-            .Select(c => ToRow(c, active.GetValueOrDefault(c), profiles, tools, heldByCredential.GetValueOrDefault(c)))
+            .Select(c => ToRow(c, active.GetValueOrDefault(c), profiles, tools, heldByCredential.GetValueOrDefault(c))
+                with { Usage = c == AgentCredentials.ClaudeSubscription ? UsageRows(readings, thresholds) : null })
             .ToList();
-        return new UiAgentCredentialsPage(rows, heldByReason);
+        return new UiAgentCredentialsPage(rows, heldByReason, thresholds);
     }
+
+    private static IReadOnlyList<UiCredentialUsage>? UsageRows(CredentialUsageState? state, CredentialUsageThresholds? thresholds) =>
+        state is null || thresholds is null
+            ? null
+            : state.Windows
+                // A reading whose window has reset since says nothing about now.
+                .Where(w => w.Value.ResetsAt is not { } resets || resets > DateTimeOffset.UtcNow)
+                .OrderBy(w => CredentialUsageWindows.Order(w.Key)).ThenBy(w => w.Key, StringComparer.Ordinal)
+                .Select(w => new UiCredentialUsage(w.Key, CredentialUsageWindows.Text(w.Key), w.Value.Utilization,
+                    w.Value.ResetsAt, w.Value.SeenAt, thresholds.PercentOf(w.Key)))
+                .ToList();
 
     /// <summary>The paused state of every credential in use plus any paused one (<c>GET /api/agents/credentials</c>).</summary>
     internal static async Task<IReadOnlyList<AgentCredentialStatus>> ReadStatusAsync(
