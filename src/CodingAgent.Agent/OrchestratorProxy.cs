@@ -245,10 +245,29 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     // a transient blip that exhausts _signalRPipeline retries would otherwise fail the whole run.
     private const int TokenVendMaxRetries = 2;
 
+    private static readonly TimeSpan TokenVendReconnectPollInterval = TimeSpan.FromSeconds(2);
+
     // The override parameter keeps the production backoff testable: the test assembly sets the
     // override for every test, so a test cannot reach the null case through the static.
     internal static TimeSpan ResolveTokenVendRetryDelay(int attempt, TimeSpan? testOverride)
         => testOverride ?? TimeSpan.FromMilliseconds(500 * (1 << attempt));
+
+    // The hub reconnects forever, so a reconnect is an outage to wait out, not a failed attempt. SIGTERM and the Job's
+    // activeDeadlineSeconds bound the wait through ct.
+    internal static async Task WaitWhileHubReconnectingAsync(
+        Func<HubConnectionState> getState, TimeSpan pollInterval, string jobId, CancellationToken ct)
+    {
+        var logged = false;
+        while (getState() is HubConnectionState.Reconnecting or HubConnectionState.Connecting)
+        {
+            if (!logged)
+            {
+                Log.Information("Token request for job {JobId} is waiting for the hub to reconnect", jobId);
+                logged = true;
+            }
+            await Task.Delay(pollInterval, ct);
+        }
+    }
 
     private async Task<TokenRefreshResponse> FetchTokenFromHubAsync(ProviderKind kind, bool includeIssuePermission, CancellationToken ct)
     {
@@ -259,6 +278,8 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
             {
                 if (_tokenRefreshDelegate is not null)
                     return await _tokenRefreshDelegate(kind, includeIssuePermission, ct);
+
+                await WaitWhileHubReconnectingAsync(() => _connection.State, TokenVendReconnectPollInterval, _jobId, ct);
 
                 return await _signalRPipeline.ExecuteAsync(async token =>
                     await _connection.InvokeAsync<TokenRefreshResponse>(

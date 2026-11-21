@@ -280,4 +280,359 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
         authHeaders[1].Should().Contain("token-second");
         callCount.Should().Be(2, "token provider is called per request (caching is upstream)");
     }
+
+    // --- Issue reads: mapping, paging and query ---
+
+    private static string IssuesPath => ApiPath($"/repos/{Owner}/{Repo}/issues");
+
+    /// <summary>A pull request as the Issues API lists it: an issue with a <c>pull_request</c> member.</summary>
+    private static object BuildPullRequestIssueJson(int number, string title) => new
+    {
+        id = number * 100,
+        number,
+        title,
+        state = "open",
+        user = new { login = "testuser", id = 1 },
+        author_association = "MEMBER",
+        labels = Array.Empty<object>(),
+        created_at = "2026-01-01T00:00:00Z",
+        updated_at = "2026-01-01T00:00:00Z",
+        pull_request = new { url = "https://example.test/pr" }
+    };
+
+    /// <summary>The decoded query of the one list request the provider sent to the issues path.</summary>
+    private Dictionary<string, string> ListRequestQuery()
+    {
+        var request = Server.LogEntries.Single(e => e.RequestMessage?.Path == IssuesPath).RequestMessage!;
+        return (request.RawQuery ?? string.Empty)
+            .TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .ToDictionary(
+                pair => Uri.UnescapeDataString(pair[0]),
+                pair => pair.Length > 1 ? Uri.UnescapeDataString(pair[1]) : string.Empty);
+    }
+
+    [Fact]
+    public async Task GetIssueAsync_WithMissingBody_ReturnsEmptyDescription()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/42"), BuildIssueJson(42, "Test Issue", null, []));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetIssueAsync("42", CancellationToken.None);
+
+        result.Description.Should().BeEmpty();
+        result.Title.Should().Be("Test Issue");
+        result.Identifier.Should().Be("42");
+    }
+
+    [Fact]
+    public async Task GetIssueAsync_MapsLabelsCorrectly()
+    {
+        var labels = new[] { "bug", "priority-high", "backend" };
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/10"), BuildIssueJson(10, "Bug Fix", "Fix the thing", labels));
+
+        await using var provider = CreateProvider();
+        var result = await provider.GetIssueAsync("10", CancellationToken.None);
+
+        result.Labels.Should().BeEquivalentTo(labels);
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_MapsIssuesToSummaries()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            BuildIssueJson(1, "First", "body1", ["feat"]),
+            BuildIssueJson(2, "Second", "body2", [])
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.Items[0].Identifier.Should().Be("1");
+        result.Items[0].Title.Should().Be("First");
+        result.Items[0].Labels.Should().BeEquivalentTo(["feat"]);
+        result.Items[1].Identifier.Should().Be("2");
+        result.Items[1].Labels.Should().BeEmpty();
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(25);
+        result.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_MapsDescriptionLabelColorsUrlAndCreatedAt()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            new
+            {
+                number = 7,
+                title = "Scan issue",
+                body = "## Problem\nBody text",
+                html_url = "https://example.test/issues/7",
+                author_association = "MEMBER",
+                user = new { login = "testuser", type = "User" },
+                labels = new[] { new { name = "feat", color = "a2eeef" } },
+                created_at = "2026-02-03T04:05:06Z"
+            }
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
+
+        var item = result.Items.Should().ContainSingle().Subject;
+        item.Description.Should().Be("## Problem\nBody text");
+        item.LabelColors.Should().ContainKey("feat").WhoseValue.Should().Be("a2eeef");
+        item.CreatedAt.Should().Be(new DateTime(2026, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+        item.Url.Should().Be("https://example.test/issues/7");
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_LabelWithNullName_MapsToEmptyStringWithoutThrowing()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            new
+            {
+                number = 1,
+                title = "Odd label",
+                body = "b",
+                author_association = "MEMBER",
+                user = new { login = "testuser", type = "User" },
+                labels = new[] { new { name = (string?)null, color = "ededed" } },
+                created_at = "2026-01-01T00:00:00Z"
+            }
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
+
+        var item = result.Items.Should().ContainSingle().Subject;
+        item.Labels.Should().Equal(string.Empty);
+        item.LabelColors.Should().ContainKey(string.Empty).WhoseValue.Should().Be("ededed");
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_IssueWithoutLabelsMember_MapsToNoLabels()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            new
+            {
+                number = 1,
+                title = "No labels",
+                body = "b",
+                author_association = "MEMBER",
+                user = new { login = "testuser", type = "User" },
+                created_at = "2026-01-01T00:00:00Z"
+            }
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 25, CancellationToken.None);
+
+        var item = result.Items.Should().ContainSingle().Subject;
+        item.Labels.Should().BeEmpty();
+        item.LabelColors.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetIssueAsync_LabelWithNullNameAndMissingLabelsMember_MapsWithoutThrowing()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/1"), new
+        {
+            number = 1,
+            title = "Odd label",
+            body = "b",
+            author_association = "MEMBER",
+            user = new { login = "testuser", type = "User" },
+            labels = new[] { new { name = (string?)null, color = "ededed" } },
+            created_at = "2026-01-01T00:00:00Z"
+        });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/2"), new
+        {
+            number = 2,
+            title = "No labels",
+            body = "b",
+            author_association = "MEMBER",
+            user = new { login = "testuser", type = "User" },
+            created_at = "2026-01-01T00:00:00Z"
+        });
+
+        await using var provider = CreateProvider();
+        var withNullName = await provider.GetIssueAsync("1", CancellationToken.None);
+        var withoutLabels = await provider.GetIssueAsync("2", CancellationToken.None);
+
+        withNullName.Labels.Should().Equal(string.Empty);
+        withoutLabels.Labels.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_HasMore_WhenExtraItemReturned()
+    {
+        // Request pageSize=2, return 3 items → HasMore=true, only 2 items returned
+        StubGet(IssuesPath, new[]
+        {
+            BuildIssueJson(1, "First", "b", []),
+            BuildIssueJson(2, "Second", "b", []),
+            BuildIssueJson(3, "Third", "b", [])
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 2, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.HasMore.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_PassesCorrectApiOptions()
+    {
+        StubGet(IssuesPath, Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        await provider.ListOpenIssuesAsync(3, 10, CancellationToken.None);
+
+        var query = ListRequestQuery();
+        query["page"].Should().Be("3");
+        query["per_page"].Should().Be("11", "one extra item is fetched to detect HasMore");
+        query["state"].Should().Be("open");
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_RateLimitException_WrapsAsCustomException()
+    {
+        // StubRateLimited answers 403 with a reset time one second in the past, so the resilience
+        // pipeline's retry delay falls through to the default backoff instead of waiting minutes.
+        var resetTime = DateTimeOffset.UtcNow.AddSeconds(-1);
+        StubRateLimited(IssuesPath);
+
+        await using var provider = CreateProvider();
+        var act = () => provider.ListOpenIssuesAsync(1, 10, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<CodingAgent.Pipeline.Models.RateLimitExceededException>();
+        ex.Which.ResetAt.Should().BeCloseTo(resetTime, TimeSpan.FromSeconds(3));
+        ex.Which.InnerException.Should().BeOfType<Octokit.RateLimitExceededException>();
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_MapsIssuesToSummaries()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            BuildIssueJson(10, "Closed One", "b", ["agent:generated", "agent:done"]),
+            BuildIssueJson(11, "Closed Two", "b", ["agent:generated", "agent:wont-do"])
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListClosedIssuesAsync(1, 25, null, null, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.Items[0].Identifier.Should().Be("10");
+        result.Items[0].Labels.Should().Contain("agent:done");
+        result.Items[1].Identifier.Should().Be("11");
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(25);
+        result.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_PassesClosedStateAndSince()
+    {
+        var since = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        StubGet(IssuesPath, Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListClosedIssuesAsync(1, 20, null, since, CancellationToken.None);
+
+        result.Items.Should().BeEmpty();
+        var query = ListRequestQuery();
+        query["state"].Should().Be("closed");
+        query["page"].Should().Be("1");
+        query["per_page"].Should().Be("21");
+        DateTimeOffset.Parse(query["since"], System.Globalization.CultureInfo.InvariantCulture)
+            .UtcDateTime.Should().Be(since);
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_PassesLabelsToRequest()
+    {
+        StubGet(IssuesPath, Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        await provider.ListClosedIssuesAsync(1, 20, new List<string> { "agent:generated" }.AsReadOnly(), null, CancellationToken.None);
+
+        ListRequestQuery()["labels"].Should().Be("agent:generated");
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_FiltersPullRequests()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            BuildPullRequestIssueJson(1, "PR"),
+            BuildIssueJson(2, "Real Issue", "b", ["agent:generated"])
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListClosedIssuesAsync(1, 25, null, null, CancellationToken.None);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Identifier.Should().Be("2");
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_HasMore_WhenExtraItemReturned()
+    {
+        StubGet(IssuesPath, new[]
+        {
+            BuildIssueJson(1, "A", "b", []),
+            BuildIssueJson(2, "B", "b", []),
+            BuildIssueJson(3, "C", "b", [])
+        });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListClosedIssuesAsync(1, 2, null, null, CancellationToken.None);
+
+        result.Items.Should().HaveCount(2);
+        result.HasMore.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_HasMore_TrueWhenRawCountExceedsPageSizeDespitePrFiltering()
+    {
+        // 11 raw results: 8 real issues + 3 PRs, pageSize=10
+        // Raw count 11 > 10 → HasMore=true even though filtered count (8) < pageSize
+        var raw = new List<object>();
+        for (var i = 1; i <= 8; i++)
+            raw.Add(BuildIssueJson(i, $"Issue {i}", "b", []));
+        for (var i = 9; i <= 11; i++)
+            raw.Add(BuildPullRequestIssueJson(i, $"PR {i}"));
+        StubGet(IssuesPath, raw);
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 10, CancellationToken.None);
+
+        result.HasMore.Should().BeTrue();
+        result.Items.Should().HaveCountLessThanOrEqualTo(10);
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_HasMore_FalseWhenRawCountDoesNotExceedPageSize()
+    {
+        // 5 raw results, 0 PRs, pageSize=10
+        // Raw count 5 ≤ 10 → HasMore=false
+        var raw = new List<object>();
+        for (var i = 1; i <= 5; i++)
+            raw.Add(BuildIssueJson(i, $"Issue {i}", "b", []));
+        StubGet(IssuesPath, raw);
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListOpenIssuesAsync(1, 10, CancellationToken.None);
+
+        result.HasMore.Should().BeFalse();
+        result.Items.Should().HaveCount(5);
+    }
 }
