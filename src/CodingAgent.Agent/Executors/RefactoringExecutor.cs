@@ -313,7 +313,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             {
                 var comments = await issueProvider.ListCommentsAsync(identifier, ct);
                 var latest = comments
-                    .Where(c => c.Body.Contains(CommentMarkers.IssueFeedback, StringComparison.Ordinal))
+                    .Where(c => c.HasVerifiedMarker(CommentMarkers.IssueFeedback))
                     .MaxBy(c => c.CreatedAt);
                 if (latest is not null && FeedbackCommentFormatter.ReadSummary(latest.Body) is { } summary)
                     feedback[identifier] = summary;

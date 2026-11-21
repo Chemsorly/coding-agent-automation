@@ -130,6 +130,8 @@ A comment's author is **verified** when the author is on the repository. On GitH
 
 If that lookup fails, reading the comments fails. A provider outage does not make a maintainer's comment count as outside text. A token that cannot push gets no answer from that call; then the association alone decides.
 
+Pipeline markers, such as the analysis header, the gate markers, the decomposition plan and triage markers, the issue feedback marker and the PR review marker, count only on text by a verified author. Comments from an API that predates this check count as before.
+
 An issue's author is verified by the same rule. An operator's own triage counts as verified.
 
 ## Issue Dependencies

@@ -693,10 +693,20 @@ public partial class GitLabRepositoryProvider
             },
             "DismissPreviousReview.GetDiscussions", ct);
 
-        var matchingThreads = discussions
-            .Where(d => d.Notes?.Any(n =>
-                n.Body?.Contains(marker, StringComparison.Ordinal) == true) == true)
-            .ToList();
+        var verifier = new AuthorVerifier(this);
+        var matchingThreads = new List<MergeRequestDiscussion>();
+        foreach (var d in discussions)
+        {
+            foreach (var n in d.Notes ?? [])
+            {
+                if (n.Body?.Contains(marker, StringComparison.Ordinal) == true
+                    && await verifier.VerifyAsync(n.Author?.Id, ct))
+                {
+                    matchingThreads.Add(d);
+                    break;
+                }
+            }
+        }
 
         if (matchingThreads.Count == 0)
         {
@@ -747,10 +757,14 @@ public partial class GitLabRepositoryProvider
             },
             "FindExistingReviewComment.GetNotes", ct);
 
-        var match = notes.FirstOrDefault(n =>
-            n.Body?.Contains(marker, StringComparison.Ordinal) == true);
+        var verifier = new AuthorVerifier(this);
+        foreach (var n in notes.Where(n => n.Body?.Contains(marker, StringComparison.Ordinal) == true))
+        {
+            if (await verifier.VerifyAsync(n.Author?.Id, ct))
+                return n.Id;
+        }
 
-        return match?.Id;
+        return null;
     }
 
     /// <inheritdoc />
