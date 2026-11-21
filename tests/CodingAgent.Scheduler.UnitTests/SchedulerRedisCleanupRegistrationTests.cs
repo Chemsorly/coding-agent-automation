@@ -4,6 +4,7 @@ using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Telemetry;
+using CodingAgent.Scheduler.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -19,12 +20,10 @@ namespace CodingAgent.Scheduler.UnitTests;
 ///
 /// <list type="bullet">
 ///   <item>
-///     <b>No Redis</b> — The concrete singleton resolves to <see langword="null"/> (the factory
-///     returns <c>null!</c>) and the hosted-service fallback (<c>??</c> branch) fires, constructing
-///     the service with a <c>NullRedisStore</c>. No <see cref="NullReferenceException"/> is thrown.
-///     (<c>NullRedisStore</c> is <c>internal sealed</c> in <c>CodingAgent.Orchestration</c> so the
-///     assertion is indirect: null singleton + service present in <see cref="IHostedService"/> list
-///     is the only code path that could have produced the instance via the fallback branch.)
+///     <b>No Redis</b> — The concrete singleton resolves to a no-op null object
+///     (<see cref="NullAgentRegistryCleanupService"/> / <see cref="NullRunServiceCleanupService"/>),
+///     so <c>GetRequiredService&lt;T&gt;()</c> is safe; the hosted-service entry forwards to the
+///     same singleton.
 ///   </item>
 ///   <item>
 ///     <b>With Redis</b> — A registered <see cref="IRedisStore"/> causes the singleton factory to
@@ -120,29 +119,33 @@ public sealed class SchedulerRedisCleanupRegistrationTests : IDisposable
     // ── AgentRegistryCleanupService — no Redis ────────────────────────────
 
     [Fact]
-    public async Task AgentRegistryCleanupService_WithoutRedis_ConcreteSingletonIsNull()
+    public async Task AgentRegistryCleanupService_WithoutRedis_GetRequiredServiceReturnsNonNullInstance()
     {
-        // Arrange / Act
+        // Arrange
         await using var provider = BuildNoRedisProvider();
 
-        // Assert — the singleton factory returns null! when IRedisStore is absent.
-        provider.GetService<AgentRegistryCleanupService>().Should().BeNull(
-            "the singleton factory returns null! when IRedisStore is not registered");
+        // Act
+        var act = () => provider.GetRequiredService<AgentRegistryCleanupService>();
+
+        // Assert — GetRequiredService must be safe in every configuration.
+        act.Should().NotThrow("GetRequiredService<T>() must be safe when IRedisStore is not registered")
+            .Which.Should().BeOfType<NullAgentRegistryCleanupService>(
+                "the no-op null object stands in for the real service when IRedisStore is not registered");
     }
 
     [Fact]
-    public async Task AgentRegistryCleanupService_WithoutRedis_RegisteredAsIHostedServiceViaFallback()
+    public async Task AgentRegistryCleanupService_WithoutRedis_HostedServiceIsSameNullObjectInstance()
     {
         // Arrange / Act
         await using var provider = BuildNoRedisProvider();
+        var singleton = provider.GetRequiredService<AgentRegistryCleanupService>();
 
-        // Assert — the hosted-service fallback (the ?? branch) fired and constructed the service
-        // with a NullRedisStore. This is the only code path that can produce an
-        // AgentRegistryCleanupService instance in IHostedService when the singleton is null,
-        // confirming the NullRedisStore fallback was used.
+        // Assert — the hosted-service entry forwards to the singleton, so the host starts the
+        // no-op null object and never a second instance.
         provider.GetServices<IHostedService>().Should().ContainSingle(
-            s => s is AgentRegistryCleanupService,
-            "the ?? fallback branch must register an AgentRegistryCleanupService even without Redis");
+            s => ReferenceEquals(s, singleton),
+            "IHostedService must resolve to the same null-object singleton when IRedisStore is absent");
+        singleton.Should().BeOfType<NullAgentRegistryCleanupService>();
     }
 
     // ── AgentRegistryCleanupService — with real store ─────────────────────
@@ -154,8 +157,8 @@ public sealed class SchedulerRedisCleanupRegistrationTests : IDisposable
         await using var provider = BuildWithFakeRedisProvider();
 
         // Assert — a registered IRedisStore causes the singleton factory to return a real instance.
-        provider.GetService<AgentRegistryCleanupService>().Should().NotBeNull(
-            "the singleton factory must return a real instance when IRedisStore is registered");
+        provider.GetService<AgentRegistryCleanupService>().Should().BeOfType<AgentRegistryCleanupService>(
+            "the singleton factory must return the real instance, not the null object, when IRedisStore is registered");
     }
 
     [Fact]
@@ -174,29 +177,33 @@ public sealed class SchedulerRedisCleanupRegistrationTests : IDisposable
     // ── RunServiceCleanupService — no Redis ───────────────────────────────
 
     [Fact]
-    public async Task RunServiceCleanupService_WithoutRedis_ConcreteSingletonIsNull()
+    public async Task RunServiceCleanupService_WithoutRedis_GetRequiredServiceReturnsNonNullInstance()
     {
-        // Arrange / Act
+        // Arrange
         await using var provider = BuildNoRedisProvider();
 
-        // Assert — the singleton factory returns null! when IRedisStore is absent.
-        provider.GetService<RunServiceCleanupService>().Should().BeNull(
-            "the singleton factory returns null! when IRedisStore is not registered");
+        // Act
+        var act = () => provider.GetRequiredService<RunServiceCleanupService>();
+
+        // Assert — GetRequiredService must be safe in every configuration.
+        act.Should().NotThrow("GetRequiredService<T>() must be safe when IRedisStore is not registered")
+            .Which.Should().BeOfType<NullRunServiceCleanupService>(
+                "the no-op null object stands in for the real service when IRedisStore is not registered");
     }
 
     [Fact]
-    public async Task RunServiceCleanupService_WithoutRedis_RegisteredAsIHostedServiceViaFallback()
+    public async Task RunServiceCleanupService_WithoutRedis_HostedServiceIsSameNullObjectInstance()
     {
         // Arrange / Act
         await using var provider = BuildNoRedisProvider();
+        var singleton = provider.GetRequiredService<RunServiceCleanupService>();
 
-        // Assert — the hosted-service fallback (the ?? branch) fired and constructed the service
-        // with a NullRedisStore. This is the only code path that can produce a
-        // RunServiceCleanupService instance in IHostedService when the singleton is null,
-        // confirming the NullRedisStore fallback was used.
+        // Assert — the hosted-service entry forwards to the singleton, so the host starts the
+        // no-op null object and never a second instance.
         provider.GetServices<IHostedService>().Should().ContainSingle(
-            s => s is RunServiceCleanupService,
-            "the ?? fallback branch must register a RunServiceCleanupService even without Redis");
+            s => ReferenceEquals(s, singleton),
+            "IHostedService must resolve to the same null-object singleton when IRedisStore is absent");
+        singleton.Should().BeOfType<NullRunServiceCleanupService>();
     }
 
     // ── RunServiceCleanupService — with real store ────────────────────────
@@ -208,8 +215,8 @@ public sealed class SchedulerRedisCleanupRegistrationTests : IDisposable
         await using var provider = BuildWithFakeRedisProvider();
 
         // Assert — a registered IRedisStore causes the singleton factory to return a real instance.
-        provider.GetService<RunServiceCleanupService>().Should().NotBeNull(
-            "the singleton factory must return a real instance when IRedisStore is registered");
+        provider.GetService<RunServiceCleanupService>().Should().BeOfType<RunServiceCleanupService>(
+            "the singleton factory must return the real instance, not the null object, when IRedisStore is registered");
     }
 
     [Fact]

@@ -293,7 +293,7 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
         return capturedRequests;
     }
 
-    private PipelineStepContext BuildContext(int maxSubIssues, int maxFiles = 12)
+    private PipelineStepContext BuildContext(int maxSubIssues, int maxFiles = 12, TimeSpan? transientRetryDelay = null)
     {
         var run = new PipelineRun
         {
@@ -307,16 +307,20 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
             WorkspacePath = _workspacePath
         };
 
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            MaxDecompositionSubIssues = maxSubIssues,
+            MaxDecompositionSubIssueFiles = maxFiles,
+            AgentTimeout = TimeSpan.FromMinutes(5)
+        };
+        if (transientRetryDelay is { } retryDelay)
+            config = config with { TransientRetryDelay = retryDelay };
+
         return new PipelineStepContext
         {
             Run = run,
-            Config = new PipelineConfiguration
-            {
-                WorkspaceBaseDirectory = "/tmp",
-                MaxDecompositionSubIssues = maxSubIssues,
-                MaxDecompositionSubIssueFiles = maxFiles,
-                AgentTimeout = TimeSpan.FromMinutes(5)
-            },
+            Config = config,
             RepoProvider = Mock.Of<IRepositoryProvider>(),
             AgentProvider = _agentProvider.Object,
             BrainProvider = null,
@@ -377,6 +381,88 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
         // review both run with the AgentTimeout that applies to every agent call.
         capturedRequests.Should().HaveCountGreaterThanOrEqualTo(2);
         capturedRequests.Should().AllSatisfy(r => r.Timeout.Should().Be(context.Config.AgentTimeout));
+    }
+
+    [Fact]
+    public async Task ReviewHitByProviderRateLimit_IsRetried()
+    {
+        var planPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionPlanFilePath);
+        var reviewPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionReviewFilePath);
+        var callIndex = 0;
+
+        _agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((_, _, _) =>
+            {
+                switch (++callIndex)
+                {
+                    case 1: // the analysis writes the plan
+                        File.WriteAllText(planPath, "# Plan\n\nSome plan content.\n\n| # | Title | Scope |\n|---|-------|-------|\n| 1 | Sub-issue 1 | Scope |");
+                        return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = [] });
+                    case 2: // the review is rate-limited by the model provider
+                        return Task.FromResult(new AgentResult
+                        {
+                            ExitCode = 1,
+                            OutputLines = [],
+                            ErrorCategory = AgentErrorCategory.ProviderRateLimit
+                        });
+                    default: // the review, sent again, finds nothing to refine
+                        File.WriteAllText(reviewPath, "No findings.");
+                        return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = [] });
+                }
+            });
+
+        var context = BuildContext(maxSubIssues: 10, transientRetryDelay: TimeSpan.Zero);
+
+        var result = await new DecompositionAnalysisStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        _agentProvider.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(3));
+        context.Run.Metrics.PhaseBreakdown["decomposition_review"].SessionCount.Should().Be(2,
+            "each attempt of the review is one monitored session");
+        _callbacks.Verify(
+            c => c.EmitOutputLine("⏳ Model provider busy (ProviderRateLimit), retrying in 0 s (1/10)"),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ReviewFindingsTriggerRefinement_ReviewAndRefinementAreMonitoredUnderTheirOwnPhaseKeys()
+    {
+        var planPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionPlanFilePath);
+        var reviewPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionReviewFilePath);
+        var callIndex = 0;
+
+        _agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((_, _, _) =>
+            {
+                switch (++callIndex)
+                {
+                    case 1: // the analysis writes the plan
+                        File.WriteAllText(planPath, "# Plan\n\nSome plan content.\n\n| # | Title | Scope |\n|---|-------|-------|\n| 1 | Sub-issue 1 | Scope |");
+                        break;
+                    case 2: // the review finds a critical issue, so the refinement runs
+                        File.WriteAllText(reviewPath, "# Review\n\n[CRITICAL] Missing acceptance criteria in sub-issue 1.");
+                        break;
+                }
+
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = [] });
+            });
+
+        var context = BuildContext(maxSubIssues: 10);
+
+        var result = await new DecompositionAnalysisStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        _agentProvider.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(3));
+        context.Run.Metrics.PhaseBreakdown["decomposition_review"].SessionCount.Should().Be(1,
+            "the review is one monitored session under its own phase key");
+        context.Run.Metrics.PhaseBreakdown["decomposition_refinement"].SessionCount.Should().Be(1,
+            "the refinement is one monitored session under its own phase key");
     }
 
     [Theory]

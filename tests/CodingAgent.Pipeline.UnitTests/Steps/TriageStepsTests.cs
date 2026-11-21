@@ -256,6 +256,37 @@ public sealed class TriageStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task Investigation_ReviewHitByProviderRateLimit_IsRetriedAndStillRefines()
+    {
+        var context = Context(config: Config(review: true) with { TransientRetryDelay = TimeSpan.Zero });
+        var reviewPath = Path.Combine(_workspace, AgentWorkspacePaths.TriageReviewFilePath);
+        var call = 0;
+        _agent.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                switch (call++)
+                {
+                    case 0: File.WriteAllText(ResultPath, ValidResult); return Ok();                  // investigation
+                    case 1: return new AgentResult                                                    // review, rate-limited
+                    {
+                        ExitCode = 1,
+                        OutputLines = [],
+                        ErrorCategory = AgentErrorCategory.ProviderRateLimit
+                    };
+                    case 2: File.WriteAllText(reviewPath, "[CRITICAL] E1 has no source"); return Ok(); // review, sent again
+                    default: File.WriteAllText(ResultPath, ValidResult); return Ok();                 // refinement
+                }
+            });
+
+        var result = await new TriageInvestigationStep(false).ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        call.Should().Be(4, "the rate-limited review is sent again, and its findings still trigger the refinement");
+        context.Run.Metrics.PhaseBreakdown["triage_review"].SessionCount.Should().Be(2);
+        context.Run.Metrics.PhaseBreakdown["triage_refinement"].SessionCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task Investigation_AgentExitsNonZero_FailsTheRun()
     {
         var context = Context(config: Config(review: false));

@@ -327,27 +327,34 @@ public class RedisHashReaderTests
         r.Json<List<string>>("labels").Should().BeNull("malformed JSON must return null, not throw");
     }
 
-    // ── JsonEnumOrNull<T> ─────────────────────────────────────────────
+    // ── EnumOrNull<T> — additional scenarios ──────────────────────────
 
+    // TODO [WARNING] The three retargeted tests below (EnumOrNull_ValidEnumName_ReturnsParsedValue,
+    // EnumOrNull_MissingKey_ReturnsNull, EnumOrNull_CorruptStoredValue_ReturnsNull) are line-for-line
+    // duplicates of EnumOrNull_ValidString_ReturnsParsedValue, EnumOrNull_AbsentKey_ReturnsNull and
+    // EnumOrNull_InvalidString_ReturnsNull (same inputs "Ready", empty hash, "bogus"; same assertions).
+    // They add no coverage and double the maintenance cost. Delete them, or change their inputs to cover
+    // something new (e.g. an empty-string value). Kept for now because issue #4255 requires the three
+    // former JsonEnumOrNull tests to be retargeted to EnumOrNull and keep passing.
     [Fact]
-    public void JsonEnumOrNull_ValidEnumName_ReturnsParsedValue()
+    public void EnumOrNull_ValidEnumName_ReturnsParsedValue()
     {
         var r = new RedisHashReader(H(("rec", "Ready")));
-        r.JsonEnumOrNull<AnalysisGateResult>("rec").Should().Be(AnalysisGateResult.Ready);
+        r.EnumOrNull<AnalysisGateResult>("rec").Should().Be(AnalysisGateResult.Ready);
     }
 
     [Fact]
-    public void JsonEnumOrNull_AbsentKey_ReturnsNull()
+    public void EnumOrNull_MissingKey_ReturnsNull()
     {
         var r = new RedisHashReader(Array.Empty<HashEntry>());
-        r.JsonEnumOrNull<AnalysisGateResult>("rec").Should().BeNull();
+        r.EnumOrNull<AnalysisGateResult>("rec").Should().BeNull();
     }
 
     [Fact]
-    public void JsonEnumOrNull_InvalidString_ReturnsNull()
+    public void EnumOrNull_CorruptStoredValue_ReturnsNull()
     {
-        // A corrupt stored value must return null, not throw — consistent with EnumOrNull.
+        // A corrupt stored value must return null, not throw.
         var r = new RedisHashReader(H(("rec", "bogus")));
-        r.JsonEnumOrNull<AnalysisGateResult>("rec").Should().BeNull();
+        r.EnumOrNull<AnalysisGateResult>("rec").Should().BeNull();
     }
 }
