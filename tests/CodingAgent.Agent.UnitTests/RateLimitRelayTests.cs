@@ -17,7 +17,7 @@ public class RateLimitRelayTests
         new() { Provider = "claude", Window = "seven_day", Status = "allowed", Utilization = 0.17 },
     ];
 
-    private static IAgentProvider Decorated(ProviderFailureRecorder recorder, AgentUsageDetails? usage)
+    private static ProviderFailureRecordingAgentProvider Decorated(ProviderFailureRecorder recorder, AgentUsageDetails? usage)
     {
         var inner = new Mock<IAgentProvider>();
         inner.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))

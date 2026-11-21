@@ -58,7 +58,7 @@ public sealed class UsageThresholdImportTests : IClassFixture<UsageThresholdImpo
         await Store.SaveThresholdsAsync(Custom, CancellationToken.None);
 
         var exported = await _operator.GetStringAsync("/api/config/export");
-        JsonDocument.Parse(exported).RootElement.GetProperty("usageThresholds").GetString().Should().NotBeNullOrEmpty();
+        JsonElement.Parse(exported).GetProperty("usageThresholds").GetString().Should().NotBeNullOrEmpty();
         await Store.SaveThresholdsAsync(CredentialUsageThresholds.Default, CancellationToken.None);
 
         (await ImportAsync(exported)).StatusCode.Should().Be(HttpStatusCode.OK);

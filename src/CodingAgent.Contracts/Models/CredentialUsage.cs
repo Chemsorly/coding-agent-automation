@@ -32,10 +32,12 @@ public sealed record CredentialUsageThresholds
     /// The threshold of <paramref name="window"/> in percent; 0 for a window without one. A per-model weekly window
     /// (<c>seven_day_opus</c>) uses the 7-day threshold.
     /// </summary>
-    public int PercentOf(string window) =>
-        window == CredentialUsageWindows.FiveHour ? FiveHourPercent
-        : CredentialUsageWindows.IsWeekly(window) ? SevenDayPercent
-        : 0;
+    public int PercentOf(string window)
+    {
+        if (window == CredentialUsageWindows.FiveHour)
+            return FiveHourPercent;
+        return CredentialUsageWindows.IsWeekly(window) ? SevenDayPercent : 0;
+    }
 
     /// <summary>Every problem with these thresholds; empty when valid.</summary>
     public IReadOnlyList<string> Validate()
@@ -69,7 +71,12 @@ public static class CredentialUsageWindows
     public static bool IsTracked(string window) => window == FiveHour || IsWeekly(window);
 
     /// <summary>The order the UI lists <paramref name="window"/> in: 5-hour, 7-day, then the per-model weekly ones.</summary>
-    public static int Order(string window) => window == FiveHour ? 0 : window == SevenDay ? 1 : 2;
+    public static int Order(string window) => window switch
+    {
+        FiveHour => 0,
+        SevenDay => 1,
+        _ => 2,
+    };
 
     /// <summary>How <paramref name="window"/> reads in texts, e.g. "7-day window (opus)".</summary>
     public static string Text(string window) => window switch

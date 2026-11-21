@@ -139,7 +139,7 @@ internal static class AgentCredentialViews
         return new UiAgentCredentialsPage(rows, heldByReason, thresholds);
     }
 
-    private static IReadOnlyList<UiCredentialUsage>? UsageRows(CredentialUsageState? state, CredentialUsageThresholds? thresholds) =>
+    private static List<UiCredentialUsage>? UsageRows(CredentialUsageState? state, CredentialUsageThresholds? thresholds) =>
         state is null || thresholds is null
             ? null
             : state.Windows
