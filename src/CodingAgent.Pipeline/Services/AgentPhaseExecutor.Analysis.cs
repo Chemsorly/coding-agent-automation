@@ -371,7 +371,16 @@ public partial class AgentPhaseExecutor
             reviewConfig,
             line => context.Callbacks.EmitOutputLine(line),
             _logger,
-            ct);
+            ct,
+            (request, call, callToken) => AgentStallMonitor.ExecuteWithMonitoringAsync(
+                new AgentMonitorContext(context.AgentProvider, run, config,
+                    call == AdversarialReviewCall.Review ? "Analysis review agent" : "Analysis refinement agent",
+                    context.Callbacks.NotifyChange, _logger),
+                request,
+                callToken,
+                line => context.Callbacks.EmitOutputLine(line),
+                reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
+                phase: AnalysisPhase));
 
         // The reviewer and the refinement are agent calls of their own; count their tokens too.
         // TODO: [WARNING] No test covers this call site: every AgentPhaseExecutor test config sets

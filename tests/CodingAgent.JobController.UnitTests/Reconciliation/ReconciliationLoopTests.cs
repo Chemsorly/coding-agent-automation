@@ -9,6 +9,7 @@ using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Reflection;
 
 namespace CodingAgent.JobController.UnitTests.Reconciliation;
 
@@ -876,6 +877,246 @@ public sealed class ReconciliationLoopTests : IDisposable
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ─── Failed pods without a readable agent termination (Issue #4253) ───────
+
+    private const string PodShapeStatusNull = "StatusNull";
+    private const string PodShapeContainerStatusesNull = "ContainerStatusesNull";
+    private const string PodShapeNoAgentContainer = "NoAgentContainer";
+    private const string PodShapeStateNull = "StateNull";
+    private const string PodShapeNotTerminated = "NotTerminated";
+
+    private static readonly string[] PodShapesWithoutAgentTermination =
+    [
+        PodShapeStatusNull, PodShapeContainerStatusesNull, PodShapeNoAgentContainer,
+        PodShapeStateNull, PodShapeNotTerminated
+    ];
+
+    /// <summary>
+    /// A pod from which no agent-container termination can be read, in one of the shapes the
+    /// null-conditional chain in <c>AgentTermination</c> has to survive.
+    /// </summary>
+    private static V1Pod MakePodWithoutAgentTermination(string shape) => shape switch
+    {
+        PodShapeStatusNull => new V1Pod { Metadata = new V1ObjectMeta { Name = "pod-x" }, Status = null },
+        PodShapeContainerStatusesNull => new V1Pod
+        {
+            Metadata = new V1ObjectMeta { Name = "pod-x" },
+            Status = new V1PodStatus { ContainerStatuses = null }
+        },
+        // A different container that DID fail: if the name filter were dropped, this pod would be
+        // reported as the failed agent pod.
+        PodShapeNoAgentContainer => new V1Pod
+        {
+            Metadata = new V1ObjectMeta { Name = "pod-x" },
+            Status = new V1PodStatus
+            {
+                ContainerStatuses =
+                [
+                    new V1ContainerStatus
+                    {
+                        Name = "sidecar",
+                        State = new V1ContainerState
+                        {
+                            Terminated = new V1ContainerStateTerminated { ExitCode = 1, Reason = "Error", FinishedAt = DateTime.UtcNow }
+                        }
+                    }
+                ]
+            }
+        },
+        PodShapeStateNull => new V1Pod
+        {
+            Metadata = new V1ObjectMeta { Name = "pod-x" },
+            Status = new V1PodStatus
+            {
+                ContainerStatuses = [new V1ContainerStatus { Name = JobSpecBuilder.AgentContainerName, State = null }]
+            }
+        },
+        PodShapeNotTerminated => new V1Pod
+        {
+            Metadata = new V1ObjectMeta { Name = "pod-x" },
+            Status = new V1PodStatus
+            {
+                ContainerStatuses =
+                [
+                    new V1ContainerStatus { Name = JobSpecBuilder.AgentContainerName, State = new V1ContainerState() }
+                ]
+            }
+        },
+        _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown pod shape")
+    };
+
+    private static V1Pod MakeFailedAgentPod(string name, int exitCode, string reason, DateTime? finishedAt = null) => new()
+    {
+        Metadata = new V1ObjectMeta { Name = name },
+        Status = new V1PodStatus
+        {
+            ContainerStatuses =
+            [
+                new V1ContainerStatus
+                {
+                    Name = JobSpecBuilder.AgentContainerName,
+                    State = new V1ContainerState
+                    {
+                        Terminated = new V1ContainerStateTerminated { ExitCode = exitCode, Reason = reason, FinishedAt = finishedAt ?? DateTime.UtcNow }
+                    }
+                }
+            ]
+        }
+    };
+
+    private ReconciliationLoop CreateLoopWithMockLogger(Mock<Serilog.ILogger> mockLogger)
+    {
+        // ForContext<T>() is called in the constructor — return the mock itself so every log call
+        // lands on the one instance that is verified.
+        mockLogger.Setup(l => l.ForContext<ReconciliationLoop>()).Returns(mockLogger.Object);
+        return new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options, logger: mockLogger.Object);
+    }
+
+    /// <summary>
+    /// Issue #4253: a failed Job whose only pod has no readable agent termination (no Status, no
+    /// container statuses, no container named after the agent, or an agent container that has no
+    /// state / is not terminated) yields no "Last pod" detail and no pod log read, and — crucially —
+    /// without logging the "Failed to list the pods" warning, which is what a swallowed
+    /// NullReferenceException inside the pod scan would produce.
+    /// </summary>
+    [Theory]
+    [InlineData(PodShapeStatusNull)]
+    [InlineData(PodShapeContainerStatusesNull)]
+    [InlineData(PodShapeNoAgentContainer)]
+    [InlineData(PodShapeStateNull)]
+    [InlineData(PodShapeNotTerminated)]
+    public async Task WhenJobFails_AndAgentContainerTerminationIsMissing_PostsConditionMessageOnly(string podShape)
+    {
+        const string conditionMessage = "Job has reached the specified backoff limit";
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+        job.Status!.Conditions![0].Message = conditionMessage;
+
+        _k8sClient.Setup(c => c.ListPodsAsync("test-ns", $"batch.kubernetes.io/job-name={jobName}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1PodList { Items = [MakePodWithoutAgentTermination(podShape)] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        // Running (not Dispatched): a Dispatched item is classified before the pods are ever read
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var loop = CreateLoopWithMockLogger(mockLogger);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"
+                && u.FailureReason == "ExitCodeFailure"
+                && u.ErrorMessage == conditionMessage
+                && u.PodLogTail == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.ReadPodLogTailAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        mockLogger.Verify(
+            l => l.Warning(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("Failed to list the pods")), It.IsAny<string>()),
+            Times.Never,
+            "a pod without an agent termination must be skipped, not fail the pod scan");
+    }
+
+    /// <summary>
+    /// Paired positive control for the test above: when listing the pods does throw, the
+    /// "Failed to list the pods" warning IS logged. Proves the Times.Never matcher above binds to
+    /// the overload the production code actually calls.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndPodListingThrows_LogsFailedToListPodsWarning()
+    {
+        var job = MakeJob(JobNameFor(ItemId), ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("forbidden"));
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var loop = CreateLoopWithMockLogger(mockLogger);
+        await loop.ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+
+        mockLogger.Verify(
+            l => l.Warning(It.IsAny<Exception>(), It.Is<string>(s => s.Contains("Failed to list the pods")), It.IsAny<string>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Issue #4253: pods without a readable agent termination are skipped while a healthy failed pod
+    /// in the same list is still found. Were any of the malformed pods to throw inside the scan, the
+    /// whole result would collapse to "no pod detail" and the pod log would not be read.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndSomePodsLackAgentTermination_ErrorMessageNamesTheHealthyFailedPod()
+    {
+        const string conditionMessage = "Job has reached the specified backoff limit";
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+        job.Status!.Conditions![0].Message = conditionMessage;
+
+        var pods = PodShapesWithoutAgentTermination.Select(MakePodWithoutAgentTermination).ToList();
+        // The sidecar pod finished (failed) at "now"; the healthy agent pod finished an hour before it.
+        // MaxBy(FinishedAt) therefore only picks pod-good if the sidecar's failure is ignored — i.e. if
+        // the container-name filter holds — and the outcome does not depend on two UtcNow reads.
+        pods.Add(MakeFailedAgentPod("pod-good", 137, "OOMKilled", finishedAt: DateTime.UtcNow.AddHours(-1)));
+
+        _k8sClient.Setup(c => c.ListPodsAsync("test-ns", $"batch.kubernetes.io/job-name={jobName}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1PodList { Items = pods });
+        _k8sClient.Setup(c => c.ReadPodLogTailAsync("pod-good", "test-ns", JobSpecBuilder.AgentContainerName, 100, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("boom\n");
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.FailureReason == "ExitCodeFailure"
+                && u.ErrorMessage == $"{conditionMessage} Last pod pod-good: OOMKilled (exit code 137)."
+                && u.PodLogTail != null && u.PodLogTail.Count == 1 && u.PodLogTail[0] == "boom"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.ReadPodLogTailAsync(
+            It.Is<string>(n => n != "pod-good"), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Issue #4253 (direct call): <c>AgentTermination</c> returns null — and does not throw — for
+    /// every pod shape that carries no termination of the agent container.
+    /// </summary>
+    [Theory]
+    [InlineData(PodShapeStatusNull)]
+    [InlineData(PodShapeContainerStatusesNull)]
+    [InlineData(PodShapeNoAgentContainer)]
+    [InlineData(PodShapeStateNull)]
+    [InlineData(PodShapeNotTerminated)]
+    public void AgentTermination_WhenAgentContainerTerminationIsMissing_ReturnsNull_DirectCall(string podShape)
+    {
+        var method = GetPrivateMethod("AgentTermination", BindingFlags.Static);
+
+        var result = method.Invoke(null, [MakePodWithoutAgentTermination(podShape)]);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void AgentTermination_WhenAgentContainerTerminated_ReturnsItsTermination_DirectCall()
+    {
+        // Positive control for the reflection plumbing above
+        var method = GetPrivateMethod("AgentTermination", BindingFlags.Static);
+
+        var result = method.Invoke(null, [MakeFailedAgentPod("pod-good", 137, "OOMKilled")]);
+
+        var terminated = result.Should().BeOfType<V1ContainerStateTerminated>().Subject;
+        terminated.ExitCode.Should().Be(137);
+        terminated.Reason.Should().Be("OOMKilled");
+    }
+
     // ─── Orphan cleanup ───────────────────────────────────────────────────────
 
     [Fact]
@@ -1425,6 +1666,175 @@ public sealed class ReconciliationLoopTests : IDisposable
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ─── Orphan retention window: timestamp fallback chain (Issue #4253) ──────
+
+    private static DateTime? SecondsAgo(int? seconds) =>
+        seconds is null ? null : DateTime.UtcNow.AddSeconds(-seconds.Value);
+
+    /// <summary>
+    /// Issue #4253: the retention anchor is <c>Status.CompletionTime ?? Status.StartTime ??
+    /// Metadata.CreationTimestamp</c>; a job with no anchor at all, or one whose anchor is older than
+    /// the 600s window, is deleted, and one whose anchor is younger is kept. Rows use "seconds ago"
+    /// because <c>InlineData</c> cannot hold clock-relative values; 5/100 are inside the window and
+    /// 700 is outside (never exactly 600, which would race the production clock read).
+    /// </summary>
+    [Theory]
+    // No anchor at all → nothing to protect the job → deleted immediately
+    [InlineData(false, null, null, null, true)]
+    // CompletionTime anchor
+    [InlineData(false, 700, null, null, true)]
+    [InlineData(false, 100, null, null, false)]
+    // StartTime fallback (no CompletionTime)
+    [InlineData(false, null, 700, null, true)]
+    [InlineData(false, null, 5, null, false)]
+    // CreationTimestamp fallback (no CompletionTime, no StartTime)
+    [InlineData(false, null, null, 700, true)]
+    [InlineData(false, null, null, 5, false)]
+    // Precedence: CompletionTime beats StartTime beats CreationTimestamp
+    [InlineData(false, 700, 5, 5, true)]
+    [InlineData(false, 5, 700, 700, false)]
+    [InlineData(false, null, 700, 5, true)]
+    [InlineData(false, null, 5, 700, false)]
+    // Status missing entirely (e.g. a hand-built object): only the CreationTimestamp can anchor
+    [InlineData(true, null, null, null, true)]
+    [InlineData(true, null, null, 5, false)]
+    [InlineData(true, null, null, 700, true)]
+    public async Task CleanupOrphans_OrphanRetentionWindow_UsesCompletionThenStartThenCreationTimestamp(
+        bool statusIsNull,
+        int? completionSecondsAgo,
+        int? startSecondsAgo,
+        int? createdSecondsAgo,
+        bool expectDeleted)
+    {
+        // job.Status = null below discards the Status timestamps, so such a row must not carry any
+        Assert.True(!statusIsNull || (completionSecondsAgo is null && startSecondsAgo is null),
+            "A row with a null Status cannot specify Status.CompletionTime or Status.StartTime");
+
+        var id = Guid.NewGuid();
+        var jobName = $"caa-{id:N}"[..12];
+        var job = MakeJob(jobName, id, active: false,
+            createdAt: SecondsAgo(createdSecondsAgo),
+            startTime: SecondsAgo(startSecondsAgo),
+            completionTime: SecondsAgo(completionSecondsAgo));
+        if (statusIsNull)
+            job.Status = null;
+
+        // The constructor's default GetActiveAsync → [] makes the job an orphan; only the
+        // retention window decides whether it is deleted.
+        await CreateLoop().CleanupOrphansAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, _options.Namespace, It.IsAny<CancellationToken>()),
+            expectDeleted ? Times.Once() : Times.Never());
+    }
+
+    // ─── Orphan sweep: jobs with missing metadata, labels or name (Issue #4253) ──
+
+    private const string OrphanJobShapeLabelsNull = "LabelsNull";
+    private const string OrphanJobShapeMetadataNull = "MetadataNull";
+    private const string OrphanJobShapeNameNull = "NameNull";
+    private const string OrphanJobShapeNameEmpty = "NameEmpty";
+
+    private static V1Job MakeOrphanJobWithMissingData(string shape)
+    {
+        var tooOld = DateTime.UtcNow.AddSeconds(-700); // outside the 600s retention window
+        return shape switch
+        {
+            OrphanJobShapeLabelsNull => new V1Job
+            {
+                Metadata = new V1ObjectMeta { Name = "caa-orphan-no-labels", Labels = null, CreationTimestamp = tooOld },
+                Status = new V1JobStatus()
+            },
+            OrphanJobShapeMetadataNull => new V1Job { Metadata = null, Status = new V1JobStatus() },
+            OrphanJobShapeNameNull => new V1Job
+            {
+                Metadata = new V1ObjectMeta { Name = null, Labels = null, CreationTimestamp = tooOld },
+                Status = new V1JobStatus()
+            },
+            OrphanJobShapeNameEmpty => new V1Job
+            {
+                Metadata = new V1ObjectMeta { Name = "", Labels = null, CreationTimestamp = tooOld },
+                Status = new V1JobStatus()
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown orphan job shape")
+        };
+    }
+
+    /// <summary>
+    /// Issue #4253: the chat-job guard is only a skip when the job really carries
+    /// <c>caa/chat-session-id</c>. A job without labels is not a chat job and is cleaned up like any
+    /// other orphan once past the retention window. A job without metadata, or without a name,
+    /// cannot be deleted by name at all and must be skipped without throwing.
+    /// </summary>
+    [Theory]
+    [InlineData(OrphanJobShapeLabelsNull, true)]
+    [InlineData(OrphanJobShapeMetadataNull, false)]
+    [InlineData(OrphanJobShapeNameNull, false)]
+    [InlineData(OrphanJobShapeNameEmpty, false)]
+    public async Task CleanupOrphans_JobWithMissingMetadataLabelsOrName_IsDeletedOnlyWhenItHasAName(
+        string jobShape, bool expectDeleted)
+    {
+        var job = MakeOrphanJobWithMissingData(jobShape);
+
+        await CreateLoop().CleanupOrphansAsync(new V1JobList { Items = [job] }, CancellationToken.None);
+
+        if (expectDeleted)
+        {
+            _k8sClient.Verify(c => c.DeleteJobAsync(
+                "caa-orphan-no-labels", _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+        }
+        else
+        {
+            _k8sClient.Verify(c => c.DeleteJobAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+    }
+
+    // ─── Direct calls to private members (Issue #4253) ────────────────────────
+    //
+    // The tests below call private members through reflection (precedent: ReconciliationServiceTests).
+    // They exist because the issue asks for the private methods' return values to be asserted and
+    // because IsWithinOrphanRetentionWindow's `job.Metadata == null` branch is unreachable through
+    // CleanupOrphansAsync (its caller skips jobs without a name first). The behavioural tests above
+    // and below remain the contract; these only add the direct assertions.
+
+    private static MethodInfo GetPrivateMethod(string name, BindingFlags instanceOrStatic)
+    {
+        var method = typeof(ReconciliationLoop).GetMethod(name, BindingFlags.NonPublic | instanceOrStatic);
+        method.Should().NotBeNull($"ReconciliationLoop.{name} was renamed or removed; update this direct-call test");
+        return method!;
+    }
+
+    [Theory]
+    [InlineData(false)] // Status present but every timestamp is null
+    [InlineData(true)]  // Status missing as well
+    public void IsWithinOrphanRetentionWindow_WhenMetadataIsNull_ReturnsFalse_DirectCall(bool statusIsNull)
+    {
+        var job = new V1Job { Metadata = null, Status = statusIsNull ? null : new V1JobStatus() };
+        var method = GetPrivateMethod("IsWithinOrphanRetentionWindow", BindingFlags.Instance);
+
+        var result = (bool)method.Invoke(CreateLoop(), [job, "orphan-job"])!;
+
+        result.Should().BeFalse("a job with no timestamp anchor at all is not inside the retention window");
+    }
+
+    [Fact]
+    public void IsWithinOrphanRetentionWindow_WhenStatusIsNullAndCreatedRecently_ReturnsTrue_DirectCall()
+    {
+        // Positive control for the reflection plumbing above: the same entry point answers true
+        // when the CreationTimestamp (the only anchor left without a Status) is fresh.
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta { Name = "orphan-job", CreationTimestamp = DateTime.UtcNow.AddSeconds(-5) },
+            Status = null
+        };
+        var method = GetPrivateMethod("IsWithinOrphanRetentionWindow", BindingFlags.Instance);
+
+        var result = (bool)method.Invoke(CreateLoop(), [job, "orphan-job"])!;
+
+        result.Should().BeTrue();
+    }
+
     /// <summary>
     /// AC: the dispatched-timeout path posts FailureReason = "Timeout" (not "DispatchTimeout"),
     /// matching the sibling timeout path and how it is persisted in WorkItemTransitionService.
@@ -1720,6 +2130,92 @@ public sealed class ReconciliationLoopTests : IDisposable
         await loop.EnforceDispatchedTimeoutAsync(new V1JobList { Items = [] }, CancellationToken.None);
 
         // Item is genuinely orphaned — must be marked Failed/Timeout
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─── Label lookup for legacy items: live jobs that must NOT be matched (Issue #4253) ──
+
+    private const string LiveJobShapeMetadataNull = "MetadataNull";
+    private const string LiveJobShapeLabelsNull = "LabelsNull";
+    private const string LiveJobShapeKeyAbsent = "KeyAbsent";
+    private const string LiveJobShapeIdMismatch = "IdMismatch";
+
+    /// <summary>
+    /// A live job that exists in the cluster but cannot be tied to a work item through the
+    /// <c>caa/work-item-id</c> label because the label data is missing or points elsewhere.
+    /// </summary>
+    private static V1Job MakeLiveJobWithoutMatchingLabel(string shape) => shape switch
+    {
+        LiveJobShapeMetadataNull => new V1Job { Metadata = null, Status = new V1JobStatus { Active = 1 } },
+        LiveJobShapeLabelsNull => new V1Job
+        {
+            Metadata = new V1ObjectMeta { Name = "caa-live-no-labels", Labels = null },
+            Status = new V1JobStatus { Active = 1 }
+        },
+        LiveJobShapeKeyAbsent => new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = "caa-live-no-key",
+                Labels = new Dictionary<string, string> { ["app.kubernetes.io/managed-by"] = "caa-orchestrator" }
+            },
+            Status = new V1JobStatus { Active = 1 }
+        },
+        LiveJobShapeIdMismatch => new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = "caa-live-other-item",
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = Guid.NewGuid().ToString()
+                }
+            },
+            Status = new V1JobStatus { Active = 1 }
+        },
+        _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown live job shape")
+    };
+
+    /// <summary>
+    /// Issue #4253: with <c>K8sJobName == null</c> the item is only "live" when some job carries
+    /// <c>caa/work-item-id</c> equal to the item's id. A job without metadata, without labels,
+    /// without that label key, or labelled for a different work item must not count, so the
+    /// Dispatched item is timed out.
+    /// </summary>
+    [Theory]
+    [InlineData(LiveJobShapeMetadataNull)]
+    [InlineData(LiveJobShapeLabelsNull)]
+    [InlineData(LiveJobShapeKeyAbsent)]
+    [InlineData(LiveJobShapeIdMismatch)]
+    public async Task EnforceDispatchedTimeout_WhenK8sJobNameIsNull_AndLiveJobDoesNotMatchByLabel_TimesOutItem(string liveJobShape)
+    {
+        var id = Guid.NewGuid();
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = null // legacy row — forces the caa/work-item-id label lookup
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(
+            new V1JobList { Items = [MakeLiveJobWithoutMatchingLabel(liveJobShape)] }, CancellationToken.None);
+
+        // The only live job is not this item's job — it is genuinely orphaned
         _workItemClient.Verify(c => c.PostStatusAsync(
             id,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
