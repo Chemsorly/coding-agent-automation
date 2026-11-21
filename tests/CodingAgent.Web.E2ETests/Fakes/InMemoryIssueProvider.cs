@@ -95,7 +95,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         var paged = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         return Task.FromResult(new PagedResult<IssueSummary>
         {
-            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description, CreatedAt = i.CreatedAt }).ToList(),
+            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description, CreatedAt = i.CreatedAt, IsAuthorVerified = true }).ToList(),
             Page = page,
             PageSize = pageSize,
             HasMore = filtered.Count > page * pageSize
