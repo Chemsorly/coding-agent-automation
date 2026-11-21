@@ -71,6 +71,41 @@ public class PullRequestFinalizationServiceTests
         run.TotalTokens.Should().Be(0);
     }
 
+    [Fact]
+    public async Task RunReflectionAsync_ProviderRateLimit_IsRetried()
+    {
+        using var tmpDir = new TempDirectory();
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        var agentProvider = new Mock<IAgentProvider>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5), TransientRetryDelay = TimeSpan.Zero };
+        var candidatesPath = Path.Combine(tmpDir.Path, AgentWorkspacePaths.BrainCandidatesFilePath);
+        const string candidatesText = "- a lesson the agent wrote on the second attempt\n";
+        var sentRequests = new List<AgentRequest>();
+
+        agentProvider.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((request, _, _) =>
+            {
+                sentRequests.Add(request);
+                if (sentRequests.Count == 1)
+                    return Task.FromResult(new AgentResult { ExitCode = 1, OutputLines = ["provider is busy"], ErrorCategory = AgentErrorCategory.ProviderRateLimit });
+
+                Directory.CreateDirectory(Path.GetDirectoryName(candidatesPath)!);
+                File.WriteAllText(candidatesPath, candidatesText);
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = [] });
+            });
+
+        var result = await _sut.RunReflectionAsync(run, agentProvider.Object, config, _ => { }, CancellationToken.None);
+
+        agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Exactly(2));
+        result.Should().Be(candidatesText);
+        sentRequests[0].Prompt.Should().NotStartWith(AgentStallMonitor.ProviderRetryNote);
+        sentRequests[1].Prompt.Should().StartWith(AgentStallMonitor.ProviderRetryNote);
+        run.Metrics.PhaseBreakdown["reflection"].SessionCount.Should().Be(2);
+    }
+
     // ── CollectFeedbackAsync ──
 
     [Fact]
