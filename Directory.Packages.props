@@ -49,11 +49,11 @@
     <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />
     <!-- EF Core stays on 10.x, which runs on .NET 11: the provider's major version must match EF Core's,
          and Npgsql.EntityFrameworkCore.PostgreSQL 11.0.0 is not released yet (rc.3 on 2026-11-15). -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.14" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="11.0.0" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageVersion Include="KubernetesClient" Version="21.0.8" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0" />
@@ -86,7 +86,7 @@
          severity denial of service in 2.3.0 to 2.3.13, fixed in 2.3.14). It is a transitive
          dependency of WireMock.Net (via Microsoft.AspNetCore.Http 2.3.9); pinning via
          CentralPackageTransitivePinningEnabled. -->
-    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="2.3.14" />
+    <PackageVersion Include="Microsoft.AspNetCore.WebUtilities" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="11.0.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
