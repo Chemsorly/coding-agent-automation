@@ -161,7 +161,7 @@ Each agent writes findings to a separate file: `.agent/review-findings-{agent-na
 
 ### Failure Isolation
 
-Individual agent failures are contained — if one agent crashes or times out, the remaining agents continue executing. Failed agents are logged and their findings are omitted from the review.
+Individual agent failures are contained — if one agent crashes or times out, the remaining agents continue executing. Failed agents are logged and their findings are omitted from the review. When every agent fails, no review is posted and the run ends Failed with agent:error on the pull request. An implementation run in the same situation logs a warning and continues to its quality gates.
 
 ## Reviewer Configurations
 

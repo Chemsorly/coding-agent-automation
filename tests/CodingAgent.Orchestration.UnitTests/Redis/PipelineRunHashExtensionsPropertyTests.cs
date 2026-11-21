@@ -605,6 +605,7 @@ public class PipelineRunHashExtensionsPropertyTests
         ["PodLogTail"] = "set by RunLifecycleManager.FailRunAsync after RemoveRun",
         ["AnalysisContent"] = "set only in the agent process",
         ["CodeReviewSkipReason"] = "set only in the agent process",
+        ["CodeReviewAllAgentsFailed"] = "set only in the agent process",
         ["DroppedIdentifiersByFile"] = "set only in the agent process",
         ["NotReappliedIdentifiersByFile"] = "set only in the agent process",
         ["LinkedIssueContexts"] = "set only in the agent process",
