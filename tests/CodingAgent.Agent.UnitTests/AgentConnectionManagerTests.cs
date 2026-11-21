@@ -142,6 +142,74 @@ public class AgentConnectionManagerTests
         act.Should().NotThrow();
     }
 
+    // Re-registration is what restores a run the API lost (Redis wipe), and the API takes the run's
+    // step from the message — so the message must carry the step the agent is in now, not the one it
+    // registered with at startup. The tests read it off the wire, as the server would.
+
+    [Fact]
+    public async Task UpdateCurrentStep_AfterRegistration_ReRegistrationCarriesTheCurrentStep()
+    {
+        var recording = new RecordingHubConnection();
+        var fakeHub = new FakeHubConnectionManager(recording);
+        var manager = CreateManagerOver(fakeHub);
+        manager.UpdateRegistration(CreateRegistrationWithActiveJob(PipelineStep.Created));
+
+        manager.UpdateCurrentStep(PipelineStep.RunningQualityGates);
+        await fakeHub.SimulateReconnectedAsync("c2");
+
+        var sent = SentRegistration(recording);
+        sent.ActiveJob!.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
+        sent.ActiveJob.RunId.Should().Be("run-1");
+        sent.Hostname.Should().Be("host-1");
+    }
+
+    [Fact]
+    public async Task UpdateCurrentStep_AfterRegistration_TerminalCloseReRegistrationCarriesTheCurrentStep()
+    {
+        // A server-side abort of the connection ends in the terminal-close path, which sends the
+        // registration through the coordinator's own callback rather than the reconnect handler.
+        var newRecording = new RecordingHubConnection();
+        var factory = new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager(newRecording));
+        var manager = new AgentConnectionManager(
+            new FakeHubConnectionManager(), factory, new AgentId("agent-1"), Mock.Of<Serilog.ILogger>());
+        manager.UpdateRegistration(CreateRegistrationWithActiveJob(PipelineStep.Created));
+
+        manager.UpdateCurrentStep(PipelineStep.RunningQualityGates);
+        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
+
+        SentRegistration(newRecording).ActiveJob!.CurrentStep.Should().Be(PipelineStep.RunningQualityGates);
+        await manager.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UpdateCurrentStep_Null_ReRegistrationKeepsTheLastReportedStep()
+    {
+        var recording = new RecordingHubConnection();
+        var fakeHub = new FakeHubConnectionManager(recording);
+        var manager = CreateManagerOver(fakeHub);
+        manager.UpdateRegistration(CreateRegistrationWithActiveJob(PipelineStep.Created));
+        manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
+
+        manager.UpdateCurrentStep(null);
+        await fakeHub.SimulateReconnectedAsync("c2");
+
+        SentRegistration(recording).ActiveJob!.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
+    }
+
+    [Fact]
+    public async Task UpdateCurrentStep_RegistrationWithoutActiveJob_ReRegistrationStaysWithoutActiveJob()
+    {
+        var recording = new RecordingHubConnection();
+        var fakeHub = new FakeHubConnectionManager(recording);
+        var manager = CreateManagerOver(fakeHub);
+        manager.UpdateRegistration(DefaultRegistration);
+
+        manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
+        await fakeHub.SimulateReconnectedAsync("c2");
+
+        SentRegistration(recording).ActiveJob.Should().BeNull("an idle agent has no run to report");
+    }
+
     // ── UpdateRegistration ───────────────────────────────────────────────
 
     [Fact]
@@ -587,6 +655,36 @@ public class AgentConnectionManagerTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static AgentConnectionManager CreateManagerOver(FakeHubConnectionManager hub)
+        => new(
+            hub,
+            new FakeHubConnectionManagerFactory(() => new FakeHubConnectionManager()),
+            new AgentId("agent-1"),
+            Mock.Of<Serilog.ILogger>());
+
+    private static AgentRegistrationMessage CreateRegistrationWithActiveJob(PipelineStep step) => new()
+    {
+        AgentId = "agent-1",
+        Hostname = "host-1",
+        Labels = [],
+        ActiveJob = new ActiveJobState
+        {
+            RunId = "run-1",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            AgentProviderConfigId = "agent-cfg-1",
+            InitiatedBy = "tester",
+            CurrentStep = step,
+            StartedAt = DateTimeOffset.UtcNow
+        }
+    };
+
+    private static AgentRegistrationMessage SentRegistration(RecordingHubConnection recording)
+        => (AgentRegistrationMessage)recording.Invocations
+            .Single(i => i.MethodName == HubMethodNames.RegisterAgent).Args[0]!;
 
     private static AgentConnectionManager CreateManager()
     {
