@@ -162,6 +162,10 @@ public partial class AgentPhaseExecutor
 
         run.CodeReviewIterationInProgress = 0;
 
+        // A review run with no reviewer left has nothing to summarize; ReviewCodeStep fails it.
+        if (run.RunType == PipelineRunType.Review && run.CodeReviewAllAgentsFailed)
+            return;
+
         // Generate review summary (non-fatal — failures are logged and skipped)
         await GenerateReviewSummarySafeAsync(context, ct);
     }
