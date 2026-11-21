@@ -58,22 +58,10 @@ public partial class QualityGateExecutor
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information(ex, "Pipeline {RunId} was cancelled during quality gates", run.RunId);
-                // NOTE (issue #3243): Lambda parameter `ct` shadows the method-level `ct` parameter of
-                // ProceedToQualityGatesAsync. This is intentional — the outer token may already be
-                // cancelled and CancellationToken.None is passed as the argument — but the shadowing
-                // is a latent maintenance hazard. Consider renaming the lambda parameter (e.g., `token`)
-                // to make the shadowing explicit and self-documenting.
-                // NOTE (issue #3243): Partial-finalization risk: if SwapAgentLabel throws (e.g., transient
-                // HttpRequestException), run.MarkCompleted() will already have set CompletedAt, but
-                // TransitionTo and AddRunToHistoryAsync will not have been called, leaving the run
-                // half-finalized with the exception swallowed by the finally block. Consider wrapping
-                // swapLabel in a try/catch inside FinalizeRunAsync to ensure TransitionTo and
-                // AddRunToHistoryAsync still execute even when the label swap fails.
-                await FinalizeRunAsync(context, run,
-                    ct => callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, ct),
-                    "🚫 Pipeline cancelled",
-                    PipelineStep.Cancelled,
-                    CancellationToken.None);
+                // Not finalized here: the token is already cancelled, so a transition sent now would be dropped
+                // and the run would report a non-terminal step. PipelineRunExecutionHost handles the rethrow, and
+                // AgentJobRunner decides between a retry (SIGTERM) and a Cancelled outcome (operator cancel).
+                throw;
             }
         }
         catch (Exception ex)
@@ -91,10 +79,14 @@ public partial class QualityGateExecutor
                 run.RunId, run.IssueIdentifier);
             var failureOutputLine = $"❌ Pipeline failed: {run.FailureReason}";
             // NOTE (issue #3243): Lambda parameter `ct` shadows the method-level `ct` parameter of
-            // ProceedToQualityGatesAsync. See the same note on the cancellation arm above.
+            // ProceedToQualityGatesAsync. This is intentional — the outer token may already be
+            // cancelled and CancellationToken.None is passed as the argument — but the shadowing
+            // is a latent maintenance hazard. Consider renaming the lambda parameter (e.g., `token`)
+            // to make the shadowing explicit and self-documenting.
             // NOTE (issue #3243): Partial-finalization risk: if SwapLabelAsync throws, MarkCompleted()
             // will already have been called but TransitionTo and AddRunToHistoryAsync will not run.
-            // See the note on the cancellation arm above for the suggested mitigation.
+            // Consider wrapping swapLabel in a try/catch inside FinalizeRunAsync to ensure TransitionTo
+            // and AddRunToHistoryAsync still execute even when the label swap fails.
             await FinalizeRunAsync(context, run,
                 ct => context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, ct),
                 failureOutputLine,
@@ -104,7 +96,7 @@ public partial class QualityGateExecutor
     }
 
     /// <summary>
-    /// Shared terminal sequence for both <see cref="ProceedToQualityGatesAsync"/> catch arms:
+    /// Terminal sequence for the failure catch arm of <see cref="ProceedToQualityGatesAsync"/>:
     /// marks the run completed, swaps the issue label, emits a UI output line, transitions the
     /// pipeline step, and records the run in history.
     /// <para>
