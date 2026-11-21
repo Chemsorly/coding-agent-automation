@@ -55,6 +55,11 @@ public sealed record AdversarialReviewResult
 }
 
 /// <summary>
+/// Which call of the adversarial review a delegate passed to <see cref="AdversarialReviewHelper.ExecuteReviewAsync"/> runs.
+/// </summary>
+public enum AdversarialReviewCall { Review, Refinement }
+
+/// <summary>
 /// Shared helper that encapsulates the adversarial review-and-refine pattern
 /// used across all consolidation phases.
 /// </summary>
@@ -77,6 +82,11 @@ public static class AdversarialReviewHelper
     /// All failures are caught (except OperationCanceledException) and logged.
     /// On failure, returns a result indicating review did not complete.
     /// </summary>
+    /// <param name="executeAgent">
+    /// Runs each agent call of the review. Null calls <c>agentProvider.ExecuteAsync</c> directly.
+    /// Pipeline callers pass a delegate that goes through <c>AgentStallMonitor.ExecuteWithMonitoringAsync</c>,
+    /// so the calls get the provider retry and stall monitoring.
+    /// </param>
     public static async Task<AdversarialReviewResult> ExecuteReviewAsync(
         IAgentProvider agentProvider,
         string workspacePath,
@@ -84,7 +94,8 @@ public static class AdversarialReviewHelper
         AdversarialReviewConfig config,
         Action<string>? onOutputLine,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<AgentRequest, AdversarialReviewCall, CancellationToken, Task<AgentResult>>? executeAgent = null)
     {
         ArgumentNullException.ThrowIfNull(agentProvider);
         ArgumentNullException.ThrowIfNull(workspacePath);
@@ -118,15 +129,16 @@ public static class AdversarialReviewHelper
             // 2. Dispatch discriminator (isolated session)
             onOutputLine?.Invoke("🔍 Dispatching adversarial reviewer...");
 
-            var reviewResult = await agentProvider.ExecuteAsync(
-                new AgentRequest
-                {
-                    Prompt = reviewPrompt,
-                    WorkspacePath = workspacePath,
-                    Timeout = config.AgentTimeout,
-                    UseResume = false // Isolated — no shared context
-                },
-                ct);
+            var reviewRequest = new AgentRequest
+            {
+                Prompt = reviewPrompt,
+                WorkspacePath = workspacePath,
+                Timeout = config.AgentTimeout,
+                UseResume = false // Isolated — no shared context
+            };
+            var reviewResult = executeAgent is null
+                ? await agentProvider.ExecuteAsync(reviewRequest, ct)
+                : await executeAgent(reviewRequest, AdversarialReviewCall.Review, ct);
 
             // 2a. Check discriminator exit code — non-zero means agent crashed/failed
             if (!reviewResult.Success)
@@ -180,16 +192,17 @@ public static class AdversarialReviewHelper
             // CRITICAL 2: Inner try-catch around refinement to preserve review usage on failure
             try
             {
-                var refinementResult = await agentProvider.ExecuteAsync(
-                    new AgentRequest
-                    {
-                        Prompt = refinementPrompt,
-                        WorkspacePath = workspacePath,
-                        Timeout = config.AgentTimeout,
-                        UseResume = true,
-                        ResumeSessionId = generatorSessionId // Explicitly target generator's session
-                    },
-                    ct);
+                var refinementRequest = new AgentRequest
+                {
+                    Prompt = refinementPrompt,
+                    WorkspacePath = workspacePath,
+                    Timeout = config.AgentTimeout,
+                    UseResume = true,
+                    ResumeSessionId = generatorSessionId // Explicitly target generator's session
+                };
+                var refinementResult = executeAgent is null
+                    ? await agentProvider.ExecuteAsync(refinementRequest, ct)
+                    : await executeAgent(refinementRequest, AdversarialReviewCall.Refinement, ct);
 
                 // 5a. Check refinement exit code — non-zero means refinement failed
                 if (!refinementResult.Success)
