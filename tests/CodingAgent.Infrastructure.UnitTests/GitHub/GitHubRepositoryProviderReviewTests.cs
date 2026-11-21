@@ -763,6 +763,39 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
         CountPermissionLookups().Should().Be(0, "a Bot account is verified without a permission lookup");
     }
 
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_PrivateMemberComment_ReturnsItsId()
+    {
+        // A private organization member is reported as CONTRIBUTOR, so only the permission lookup shows write access
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/38/comments"), new[]
+        {
+            BuildAuthoredCommentJson(1001, $"Review {PrReviewMarker}", "private-member", "User", "CONTRIBUTOR")
+        });
+        StubPermission("private-member", "write");
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(38, PrReviewMarker, CancellationToken.None);
+
+        id.Should().Be(1001);
+        CountPermissionLookups().Should().Be(1, "the comment's author login is checked by permission");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_LookupFails_Throws()
+    {
+        // A failed lookup never reads as "not verified": the call fails instead of returning null
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/39/comments"), new[]
+        {
+            BuildAuthoredCommentJson(1101, $"Review {PrReviewMarker}", "alice", "User", "NONE")
+        });
+        StubError(ApiPath($"/repos/{Owner}/{Repo}/collaborators/alice/permission"), 500,
+            new { message = "Internal Server Error" });
+
+        await using var provider = CreateProvider();
+        await provider.Invoking(p => p.FindExistingReviewCommentAsync(39, PrReviewMarker, CancellationToken.None))
+            .Should().ThrowAsync<Octokit.ApiException>();
+    }
+
     #endregion
 
     #region UpdateReviewCommentAsync
