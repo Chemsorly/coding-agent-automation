@@ -101,7 +101,16 @@ public sealed class TriageInvestigationStep : IPipelineStep
                 new AdversarialReviewConfig { Enabled = true, AgentTimeout = config.AgentTimeout },
                 line => context.Callbacks.EmitOutputLine(line),
                 logger,
-                ct);
+                ct,
+                (request, call, callToken) => AgentStallMonitor.ExecuteWithMonitoringAsync(
+                    new AgentMonitorContext(context.AgentProvider, run, config,
+                        call == AdversarialReviewCall.Review ? "Triage review agent" : "Triage refinement agent",
+                        context.Callbacks.NotifyChange, logger),
+                    request,
+                    callToken,
+                    line => context.Callbacks.EmitOutputLine(line),
+                    reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
+                    phase: call == AdversarialReviewCall.Review ? "triage_review" : "triage_refinement"));
 
             run.AccumulateTokenUsage(review.ReviewAgentResult, phase: "triage_review");
             run.AccumulateTokenUsage(review.RefinementAgentResult, phase: "triage_refinement");
