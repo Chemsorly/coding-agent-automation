@@ -1511,6 +1511,75 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
+    [Fact]
+    public async Task ExecuteCodeReview_ReviewRunAllAgentsCrash_SetsFlagAndSkipsSummary()
+    {
+        // Arrange: a PR review run whose two reviewers both throw
+        var reviewRun = CreateReviewRun();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("crashed"));
+        var context = BuildContext() with { Run = reviewRun };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        // Assert: the step can tell that nothing was reviewed, and the review run makes no summary call
+        reviewRun.CodeReviewAllAgentsFailed.Should().BeTrue();
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ExecuteCodeReview_ImplementationRunAllAgentsCrash_SetsFlagAndStillSummarizes()
+    {
+        // Arrange: an implementation run whose two reviewers both throw
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("crashed"));
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "fix" } };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        // Assert: the quality gates still decide the outcome, so the summary agent still runs after the two reviewers
+        _run.CodeReviewAllAgentsFailed.Should().BeTrue();
+        _mockAgent.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task ExecuteCodeReview_OneAgentCrashes_DoesNotSetFlag()
+    {
+        // Arrange: AgentA throws, AgentB exits cleanly
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                if (Interlocked.Increment(ref callCount) == 1)
+                    throw new InvalidOperationException("AgentA crashed");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+            });
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "fix" } };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("AgentA", "AgentB"));
+
+        // Assert: one reviewer still reviewed, so the run is not an all-crash run
+        _run.CodeReviewAllAgentsFailed.Should().BeFalse();
+    }
+
+    private PipelineRun CreateReviewRun() => new()
+    {
+        RunId = "test-run-pr-review",
+        IssueIdentifier = "42",
+        IssueTitle = "Test PR",
+        IssueProviderConfigId = "rp-1",
+        RepoProviderConfigId = "rp-1",
+        WorkspacePath = _workspacePath,
+        RunType = PipelineRunType.Review,
+    };
+
     #endregion
 
     #region DetermineFixPromptAction tests

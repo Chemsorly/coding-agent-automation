@@ -3,11 +3,13 @@ using CodingAgent.Api;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Orchestration;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
+using StackExchange.Redis;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Web.UnitTests;
@@ -172,6 +174,100 @@ public sealed class GetActiveWorkItemsStepEnrichmentTests : IDisposable
         var item = ok.Value.Should().ContainSingle().Subject;
         item.Id.Should().Be(workItemId);
         item.CurrentStep.Should().BeNull();
+    }
+
+    /// <summary>
+    /// The Redis failures <c>GetRun</c> throws when Redis is down: a refused connection, and a timeout on a
+    /// connection that is still open. <see cref="RedisTimeoutException"/> derives from
+    /// <see cref="TimeoutException"/>, not from <see cref="RedisException"/>.
+    /// </summary>
+    public static TheoryData<Exception> RedisFailures() => new()
+    {
+        new RedisConnectionException(ConnectionFailureType.SocketClosed, "test"),
+        new RedisTimeoutException("test", CommandStatus.Unknown),
+    };
+
+    /// <summary>
+    /// The rows come from Postgres and the live step is optional, so a Redis failure
+    /// while enriching must not fail the read: the rows are returned without a step.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RedisFailures))]
+    public async Task GetActiveWorkItems_RedisUnavailable_ReturnsRowsWithoutLiveStep(Exception redisFailure)
+    {
+        // Arrange — GetRun throws a Redis failure, as DistributedRunService does when Redis is down
+        var workItemId = await SeedRunningWorkItemAsync();
+        var runService = new Mock<IOrchestratorRunService>();
+        runService.Setup(r => r.GetRun(It.IsAny<RunId>()))
+            .Throws(redisFailure);
+
+        // Act
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
+            olderThanSeconds: -3600,
+            dbFactory: _dbFactory,
+            runService: runService.Object,
+            projectId: null,
+            ct: CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<Ok<IReadOnlyList<ActiveWorkItemDto>>>().Subject;
+        var item = ok.Value.Should().ContainSingle().Subject;
+        item.Id.Should().Be(workItemId);
+        item.CurrentStep.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Every remaining <c>GetRun</c> call would wait for the same Redis timeout, so the enrichment
+    /// stops at the first failure. All rows are still returned.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RedisFailures))]
+    public async Task GetActiveWorkItems_RedisUnavailable_StopsAfterFirstFailure(Exception redisFailure)
+    {
+        // Arrange — two rows, GetRun always fails
+        await SeedRunningWorkItemAsync();
+        await SeedRunningWorkItemAsync();
+        var runService = new Mock<IOrchestratorRunService>();
+        runService.Setup(r => r.GetRun(It.IsAny<RunId>()))
+            .Throws(redisFailure);
+
+        // Act
+        var result = await WorkItemQueryEndpoints.GetActiveWorkItems(
+            olderThanSeconds: -3600,
+            dbFactory: _dbFactory,
+            runService: runService.Object,
+            projectId: null,
+            ct: CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<Ok<IReadOnlyList<ActiveWorkItemDto>>>().Subject;
+        ok.Value.Should().HaveCount(2);
+        ok.Value.Should().OnlyContain(i => i.CurrentStep == null);
+        runService.Verify(r => r.GetRun(It.IsAny<RunId>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Only Redis failures are tolerated: any other exception from <c>GetRun</c> still propagates.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveWorkItems_NonRedisException_StillPropagates()
+    {
+        // Arrange
+        await SeedRunningWorkItemAsync();
+        var runService = new Mock<IOrchestratorRunService>();
+        runService.Setup(r => r.GetRun(It.IsAny<RunId>()))
+            .Throws(new InvalidOperationException("not a Redis failure"));
+
+        // Act
+        Func<Task> act = () => WorkItemQueryEndpoints.GetActiveWorkItems(
+            olderThanSeconds: -3600,
+            dbFactory: _dbFactory,
+            runService: runService.Object,
+            projectId: null,
+            ct: CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>();
     }
 
     // ── Inner helpers — shared InMemory EF infrastructure ─────────────────
