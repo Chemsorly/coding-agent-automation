@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline.Models;
+
 namespace CodingAgent.Contracts.Ui;
 
 /// <summary>
@@ -7,7 +9,7 @@ namespace CodingAgent.Contracts.Ui;
 /// <param name="Credential">One of <c>AgentCredentials.All</c>.</param>
 /// <param name="DisplayName">Its name in the UI.</param>
 /// <param name="Paused">True while a pause applies.</param>
-/// <param name="Reason">The pause reason (<c>quota_exhausted</c>, <c>auth_failed</c>, <c>manual</c>); null when available.</param>
+/// <param name="Reason">The pause reason (<c>quota_exhausted</c>, <c>auth_failed</c>, <c>usage_threshold</c>, <c>manual</c>); null when available.</param>
 /// <param name="Source">Who paused it (<c>auto</c>, <c>manual</c>); null when available.</param>
 /// <param name="Since">When the pause began.</param>
 /// <param name="Until">When the pause ends by itself; null = until resumed.</param>
@@ -16,6 +18,7 @@ namespace CodingAgent.Contracts.Ui;
 /// <param name="Text">The pause text the holds show; null when available.</param>
 /// <param name="HeldItems">Pending items held because this credential is paused.</param>
 /// <param name="Profiles">The display names of the profiles that use it.</param>
+/// <param name="Usage">The last usage reading per window (Claude subscription only); null or empty without readings.</param>
 public sealed record UiAgentCredential(
     string Credential,
     string DisplayName,
@@ -28,14 +31,32 @@ public sealed record UiAgentCredential(
     string? PausedBy,
     string? Text,
     int HeldItems,
-    IReadOnlyList<string> Profiles);
+    IReadOnlyList<string> Profiles,
+    IReadOnlyList<UiCredentialUsage>? Usage = null);
+
+/// <summary>The last usage reading of one subscription window and its threshold.</summary>
+/// <param name="Window">The window key (<c>five_hour</c>, <c>seven_day</c>).</param>
+/// <param name="Label">How the window reads, e.g. "5-hour window".</param>
+/// <param name="Utilization">Fraction used (0.0–1.0).</param>
+/// <param name="ResetsAt">When the window resets; null when not reported.</param>
+/// <param name="SeenAt">When the reading arrived.</param>
+/// <param name="ThresholdPercent">The window's threshold; 0 = off.</param>
+public sealed record UiCredentialUsage(
+    string Window,
+    string Label,
+    double Utilization,
+    DateTimeOffset? ResetsAt,
+    DateTimeOffset SeenAt,
+    int ThresholdPercent);
 
 /// <summary>Spec 056: the credentials page and banners (<c>GET /api/ui/agent-credentials</c>).</summary>
 /// <param name="Credentials">Every credential at least one profile uses, plus any paused one.</param>
 /// <param name="HeldByReason">Pending items with a stored hold, per hold reason.</param>
+/// <param name="UsageThresholds">The usage thresholds of the Claude subscription.</param>
 public sealed record UiAgentCredentialsPage(
     IReadOnlyList<UiAgentCredential> Credentials,
-    IReadOnlyDictionary<string, int> HeldByReason);
+    IReadOnlyDictionary<string, int> HeldByReason,
+    CredentialUsageThresholds? UsageThresholds = null);
 
 /// <summary>
 /// Spec 056: body of <c>POST /api/ui/agent-credentials/{credential}/pause</c>. <paramref name="Until"/> null pauses until

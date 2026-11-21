@@ -41,6 +41,61 @@ public sealed class ProviderFailureRecorder
     /// <summary>Forgets the recorded failure (a new job starts).</summary>
     public void Reset() => Volatile.Write(ref _failure, null);
 
+    private Action<IReadOnlyList<AgentRateLimitObservation>>? _rateLimitSink;
+
+    // The readings last relayed per window: an unchanged reading is not sent again (Claude Code reports one per request).
+    private readonly Dictionary<string, AgentRateLimitObservation> _lastRelayed = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Sends the subscription usage readings of every agent call of the job to <paramref name="sink"/> (the job's
+    /// reporter) until the returned handle is disposed, so the API can pause the credential at its usage threshold while
+    /// the run goes on.
+    /// </summary>
+    public IDisposable RelayRateLimits(Action<IReadOnlyList<AgentRateLimitObservation>> sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        lock (_lastRelayed)
+            _lastRelayed.Clear();
+        Volatile.Write(ref _rateLimitSink, sink);
+        return new RelayHandle(this, sink);
+    }
+
+    /// <summary>
+    /// Passes usage readings to the relay, if one is set and any window changed since the last relayed reading — during
+    /// a call (<see cref="IReportsRateLimits"/>) and with its result. Never throws.
+    /// </summary>
+    public void ReportRateLimits(IReadOnlyList<AgentRateLimitObservation> readings)
+    {
+        if (readings.Count == 0 || Volatile.Read(ref _rateLimitSink) is not { } sink)
+            return;
+        lock (_lastRelayed)
+        {
+            var changed = false;
+            foreach (var reading in readings)
+            {
+                if (_lastRelayed.TryGetValue(reading.Window, out var last) && last == reading)
+                    continue;
+                _lastRelayed[reading.Window] = reading;
+                changed = true;
+            }
+            if (!changed)
+                return;
+        }
+        try
+        {
+            sink(readings);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Relaying {Count} usage readings failed", readings.Count);
+        }
+    }
+
+    private sealed class RelayHandle(ProviderFailureRecorder recorder, Action<IReadOnlyList<AgentRateLimitObservation>> sink) : IDisposable
+    {
+        public void Dispose() => Interlocked.CompareExchange(ref recorder._rateLimitSink, null, sink);
+    }
+
     /// <summary>
     /// <paramref name="payload"/> with the recorded failure when it ended Failed; unchanged otherwise (a run that
     /// recovered and succeeded, or was cancelled, reports none).
@@ -74,8 +129,18 @@ public sealed class ProviderFailureRecorder
 /// </summary>
 public sealed class ProviderFailureRecordingAgentProvider(IAgentProvider inner, ProviderFailureRecorder recorder) : IAgentProvider
 {
-    private readonly IAgentProvider _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+    private readonly IAgentProvider _inner = WithRateLimitRelay(inner, recorder);
     private readonly ProviderFailureRecorder _recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
+
+    // A provider that reports usage while a call runs relays each new reading at once.
+    private static IAgentProvider WithRateLimitRelay(IAgentProvider inner, ProviderFailureRecorder recorder)
+    {
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(recorder);
+        if (inner is IReportsRateLimits reporting)
+            reporting.RateLimitsObserved = recorder.ReportRateLimits;
+        return inner;
+    }
 
     /// <summary>The wrapped provider.</summary>
     public IAgentProvider Inner => _inner;
@@ -94,6 +159,8 @@ public sealed class ProviderFailureRecordingAgentProvider(IAgentProvider inner, 
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         var result = await _inner.ExecuteAsync(request, ct, onOutputLine);
+        if (result.UsageDetails is { RateLimits.Count: > 0 } usage)
+            _recorder.ReportRateLimits(usage.RateLimits);
         if (result.ErrorCategory is AgentErrorCategory.ProviderQuotaExhausted or AgentErrorCategory.PermanentAuthFailure)
         {
             var failure = result.ProviderFailure ?? new AgentProviderFailure(

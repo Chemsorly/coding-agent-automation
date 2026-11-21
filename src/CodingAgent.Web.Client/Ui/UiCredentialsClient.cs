@@ -1,3 +1,4 @@
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Contracts.Ui;
 
 namespace CodingAgent.Web.Ui;
@@ -14,6 +15,9 @@ public interface IUiCredentialsClient
     Task PauseAsync(string credential, DateTimeOffset? until, string? note, CancellationToken ct = default);
 
     Task ResumeAsync(string credential, CancellationToken ct = default);
+
+    /// <summary>Replaces the usage thresholds of the Claude subscription (admin).</summary>
+    Task SaveUsageThresholdsAsync(CredentialUsageThresholds thresholds, CancellationToken ct = default);
 }
 
 public sealed class UiCredentialsClient(HttpClient http, IUiAccessTokenSource tokens) : UiApiClient(http, tokens), IUiCredentialsClient
@@ -29,4 +33,8 @@ public sealed class UiCredentialsClient(HttpClient http, IUiAccessTokenSource to
 
     public Task ResumeAsync(string credential, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"{Credentials}/{Uri.EscapeDataString(credential)}/resume", ct);
+
+    public Task SaveUsageThresholdsAsync(CredentialUsageThresholds thresholds, CancellationToken ct = default) =>
+        SendJsonAsync(HttpMethod.Put, $"{Credentials}/usage-thresholds", thresholds,
+            UiJsonContext.Default.CredentialUsageThresholds, ct);
 }

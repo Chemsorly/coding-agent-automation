@@ -52,9 +52,12 @@ internal sealed record ClaudeExitTimings(TimeSpan ResultExitGrace, TimeSpan Stop
 /// (<c>~/.claude/rules/</c>), which the CLI loads in every project, outside the workspace.</item>
 /// </list>
 /// </remarks>
-public sealed class ClaudeCodeAgentProvider : IAgentProvider
+public sealed class ClaudeCodeAgentProvider : IAgentProvider, IReportsRateLimits
 {
     internal const string ProviderTag = "claude";
+
+    /// <inheritdoc />
+    public Action<IReadOnlyList<AgentRateLimitObservation>>? RateLimitsObserved { get; set; }
 
     private const string ImagesNote = "Images attached to this task (open them with the Read tool):";
     private static readonly TimeSpan ValidateTimeout = TimeSpan.FromSeconds(30);
@@ -443,6 +446,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     {
         IClaudeProcess process;
         var firstResult = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rateLimitVersion = state.RateLimitVersion;
         try
         {
             process = _launcher.Start(
@@ -452,6 +456,12 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
                     var readable = ClaudeStreamJsonParser.ProcessLine(line, state);
                     if (state.ResultCount > 0)
                         firstResult.TrySetResult();
+                    // A new usage reading leaves at once (usage thresholds), not only with the call's result.
+                    if (state.RateLimitVersion != rateLimitVersion)
+                    {
+                        rateLimitVersion = state.RateLimitVersion;
+                        ReportRateLimits(state);
+                    }
                     foreach (var text in readable)
                         emit(text);
                 },
@@ -759,6 +769,21 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             _logger.Information(
                 "Claude Code rate limit: window={Window}, status={Status}, utilization={Utilization}, resets_at={ResetsAt}",
                 rateLimit.Window, rateLimit.Status, rateLimit.Utilization, rateLimit.ResetsAt);
+        }
+    }
+
+    /// <summary>Passes every window's latest reading to <see cref="RateLimitsObserved"/>; never throws into the stream reader.</summary>
+    private void ReportRateLimits(ClaudeStreamState state)
+    {
+        if (RateLimitsObserved is not { } observed)
+            return;
+        try
+        {
+            observed(state.RateLimits.Values.ToList());
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Passing on the Claude Code rate-limit readings failed");
         }
     }
 

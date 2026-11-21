@@ -119,6 +119,26 @@ waits. Global operators resume a credential or pause it until a time (with a not
 Credentials card on Fleet, or in Settings → Agents → Credentials, which also lists the profiles per credential. A pause
 whose end time passed ends by itself at the next dispatch. An automatic pause never replaces an operator's pause.
 
+### Usage thresholds (Claude subscription)
+
+After every agent call, Claude Code reports how much of the subscription's 5-hour and 7-day windows is used. The API
+keeps the last reading per window and pauses the Claude subscription as soon as a reading reaches its threshold, until
+that window resets. Unlike a used-up quota, the run that reached it carries on and finishes; only new work waits. That
+leaves room for the runs still going and for using the subscription by hand.
+
+| Window | Default | Why |
+|---|---|---|
+| 5-hour | 75 % | a run uses about 5–15 % of the window; 25 points leave room for 3–4 runs still going |
+| 7-day | 90 % | a run uses 1–2 %; a pause lasts until the weekly reset. Also applies to the per-model weekly windows (`seven_day_opus`) |
+
+Admins set the thresholds in Settings → Agents → Credentials (0 switches one off); the card shows the last reading per
+window. Saving applies the new thresholds to the last readings at once: a `usage_threshold` pause they no longer
+justify ends, and a window now over its threshold pauses. Claude Code reports a reading with each model request, so a
+long agent call that crosses a threshold is seen while it runs. Resuming the credential while a window is over its threshold lets that window through until it resets, so the
+resume sticks; the threshold applies again from the next window. Pipeline runs, consolidation runs and chats all
+report; a reading arrives only while Claude work runs, so use of the subscription by hand in between shows up with the
+next agent call. The thresholds are part of the config export; a bundle without them leaves the defaults.
+
 ## Agent Images
 
 Each agent tool has one image, built from `dockerfiles/agent.Dockerfile` with `--target`. Every image carries every supported tech stack: .NET 11 and .NET 10 SDKs (the worker runs on 11; repositories on `net10.0` test against the 10 runtime), JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js and npm. The base is Ubuntu 26.04, that of the .NET 11 SDK image; Python 3.12 comes from uv because Ubuntu 26.04 ships 3.14.

@@ -167,21 +167,4 @@ internal readonly struct RedisHashReader
         try { return JsonSerializer.Deserialize<T>(json, JsonOpts); }
         catch { return null; }
     }
-
-    /// <summary>
-    /// Reads a raw string value for <paramref name="key"/> and parses it as an enum.
-    /// Returns <c>null</c> when the key is absent, the value is empty, or parsing fails.
-    /// Used for nullable enum fields that are serialised as a plain enum-name string (not wrapped in JSON).
-    /// </summary>
-    // TODO: JsonEnumOrNull has no callers in src/ — only called from RedisHashReaderTests.cs.
-    // Its behaviour is identical to EnumOrNull<T>. Either remove this method (and update the three
-    // tests to call EnumOrNull instead) or add a production caller to justify its existence.
-    // Keeping two methods with the same semantics creates a maintenance hazard: if enum-parse
-    // behaviour changes, both must be kept in sync.
-    // Tracked: DotNetSpecialist review warning — RedisHashReader.cs:170
-    public T? JsonEnumOrNull<T>(string key) where T : struct, System.Enum
-    {
-        if (!_d.TryGetValue(key, out var val) || string.IsNullOrEmpty(val)) return null;
-        return System.Enum.TryParse<T>(val, out var result) ? result : null;
-    }
 }

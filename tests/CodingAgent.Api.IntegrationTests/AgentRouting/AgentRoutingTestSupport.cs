@@ -74,15 +74,19 @@ internal static class AgentRoutingTestSupport
         }
     }
 
-    /// <summary>One named lock at a time, like the Postgres advisory lock (not reentrant).</summary>
+    /// <summary>
+    /// One holder per lock name, like the Postgres advisory lock (not reentrant); different names do not block each
+    /// other, so code that takes one lock inside another works as in production.
+    /// </summary>
     public sealed class SemaphoreLockProvider : IDistributedLockProvider
     {
-        private readonly SemaphoreSlim _gate = new(1, 1);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
 
         public async Task<IAsyncDisposable> AcquireAsync(string lockName, CancellationToken ct = default)
         {
-            await _gate.WaitAsync(ct);
-            return new Release(_gate);
+            var gate = _gates.GetOrAdd(lockName, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
+            return new Release(gate);
         }
 
         private sealed class Release(SemaphoreSlim gate) : IAsyncDisposable

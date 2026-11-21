@@ -18,14 +18,14 @@
         }
         <span class="cockpit-chip" style="margin: 0;">@(Result.Reproduced ? "Reproduced ✓" : "Not reproduced")</span>
     </div>
-    <p class="triage-cause">@Result.Summary</p>
+    <p class="triage-cause"><InlineText Text="@Result.Summary" /></p>
     @if (!string.IsNullOrWhiteSpace(Result.Impact))
     {
-        <p class="triage-text triage-muted">Impact: @Result.Impact</p>
+        <p class="triage-text triage-muted">Impact: <InlineText Text="@Result.Impact" /></p>
     }
     @if (Result.Reproduced && !string.IsNullOrWhiteSpace(Result.Reproduction))
     {
-        <p class="triage-text triage-muted">Reproduction: @Result.Reproduction</p>
+        <p class="triage-text triage-muted">Reproduction: <InlineText Text="@Result.Reproduction" /></p>
     }
     @if (Result.Verdict == TriageVerdict.Duplicate && !string.IsNullOrWhiteSpace(Result.DuplicateOf))
     {
@@ -79,7 +79,7 @@
                         {
                             <span class="triage-tag">@tag</span>
                         }
-                        @step.Text
+                        <InlineText Text="@step.Text" />
                         @foreach (var id in step.EvidenceIds)
                         {
                             <span class="triage-eid">@id</span>
@@ -104,7 +104,7 @@
                         <tr>
                             <td class="triage-eid">@e.Id</td>
                             <td style="overflow-wrap: anywhere;">
-                                @e.Claim
+                                <InlineText Text="@e.Claim" />
                                 @if (!string.IsNullOrWhiteSpace(e.Query))
                                 {
                                     <br /><span class="triage-q">@e.Query</span>
@@ -157,7 +157,7 @@
                             <td style="overflow-wrap: anywhere;">@c.Where</td>
                             <td>@(string.IsNullOrWhiteSpace(c.For) ? "—" : c.For)</td>
                             <td style="overflow-wrap: anywhere;">
-                                @c.Result
+                                <InlineText Text="@c.Result" />
                                 @foreach (var id in c.EvidenceIds)
                                 {
                                     <span class="triage-eid">@id</span>
@@ -176,7 +176,7 @@
             <ul style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px;">
                 @foreach (var gap in Result.NotChecked)
                 {
-                    <li style="overflow-wrap: anywhere;"><strong>@gap.What</strong>: @gap.Why</li>
+                    <li style="overflow-wrap: anywhere;"><strong>@gap.What</strong>: <InlineText Text="@gap.Why" /></li>
                 }
             </ul>
         </div>

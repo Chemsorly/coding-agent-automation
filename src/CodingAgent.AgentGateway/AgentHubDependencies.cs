@@ -23,4 +23,5 @@ public sealed record AgentHubDependencies(
     ILogger Logger,
     IAgentOrphanRecoveryService OrphanRecoveryService,
     IHubContext<UiHub> UiContext,
-    IHubTriageOperations? TriageOps = null);
+    IHubTriageOperations? TriageOps = null,
+    ICredentialUsageObserver? UsageObserver = null);

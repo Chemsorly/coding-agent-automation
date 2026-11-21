@@ -666,9 +666,10 @@ The pause of each agent credential (`kiro`, `claude-subscription`, `claude-api-k
 
 | Path | Does |
 |---|---|
-| `GET /api/ui/agent-credentials` | Any role. `{ credentials, heldByReason }`: every credential a profile uses, plus any paused one, as `{ credential, displayName, paused, reason, source, since, until, detail, pausedBy, text, heldItems, profiles }`. `reason` is `quota_exhausted`, `auth_failed` or `manual`; `source` is `auto` (an agent's report) or `manual`; `until` is null for a pause until resumed; `detail` is the provider's masked line or the operator's note; `text` is the pause text the waiting work shows; `heldItems` counts the queued items waiting for it. `heldByReason` counts the queued items with a stored hold per hold reason. |
+| `GET /api/ui/agent-credentials` | Any role. `{ credentials, heldByReason, usageThresholds }`: every credential a profile uses, plus any paused one, as `{ credential, displayName, paused, reason, source, since, until, detail, pausedBy, text, heldItems, profiles, usage }`. `usage` (Claude subscription only) lists the last reading per window as `{ window, label, utilization, resetsAt, seenAt, thresholdPercent }`; `usageThresholds` is `{ fiveHourPercent, sevenDayPercent }`. `reason` is `quota_exhausted`, `auth_failed`, `usage_threshold` or `manual`; `source` is `auto` (an agent's report) or `manual`; `until` is null for a pause until resumed; `detail` is the provider's masked line or the operator's note; `text` is the pause text the waiting work shows; `heldItems` counts the queued items waiting for it. `heldByReason` counts the queued items with a stored hold per hold reason. |
 | `POST /api/ui/agent-credentials/{credential}/pause` | Global operator. Pauses the credential from `{ until, note }` (`until` null: until resumed; `note` at most 200 characters), replacing any pause. `204`. `400` for an end time in the past or a longer note, `404` for an unknown credential. Logged with the user. |
-| `POST /api/ui/agent-credentials/{credential}/resume` | Global operator. Ends the pause; the work waiting for it becomes eligible at once. `204`, also when it was not paused; `404` for an unknown credential. Logged with the user. |
+| `POST /api/ui/agent-credentials/{credential}/resume` | Global operator. Ends the pause; the work waiting for it becomes eligible at once. For the Claude subscription, windows at or over their usage threshold are let through until they reset. `204`, also when it was not paused; `404` for an unknown credential. Logged with the user. |
+| `PUT /api/ui/agent-credentials/usage-thresholds` | Global admin. Replaces the usage thresholds of the Claude subscription from `{ fiveHourPercent, sevenDayPercent }` (0–100, 0 = off). `204`; `400` with one line per problem. Each change is logged with the user. |
 
 The Scheduler reads `GET /api/agents/credentials` (operator key): `[{ credential, paused }]` for the `pipeline.agent_credential.paused` gauge.
 
@@ -844,6 +845,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/ui/agents/credential-pool` | User token, global read | Kiro credential pool usage |
 | GET | `/api/ui/agent-credentials` | User token, any role | Agent credentials and their pauses |
 | POST | `/api/ui/agent-credentials/{credential}/pause`, `/resume` | User token, global operator | Pause or resume an agent credential |
+| PUT | `/api/ui/agent-credentials/usage-thresholds` | User token, global admin | Usage thresholds of the Claude subscription |
 | GET | `/api/agents/capacity` | OperatorApiKey | Running agents and the limits that apply, in total and per job template; the Scheduler's agent gauges read it |
 | GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
 | POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
