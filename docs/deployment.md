@@ -396,13 +396,13 @@ The Scheduler only needs leader-election Lease access; it reaches everything els
 
 ### Health Probe Endpoints
 
-All deployments expose `/healthz` (liveness) and `/readyz` (readiness) endpoints on port 8080. No authentication required.
+All deployments expose `/healthz` (liveness) and `/readyz` (readiness) endpoints on port 8080. No authentication required. Liveness does not check dependencies; a Redis or database outage takes the API out of rotation through /readyz without restarting it.
 
 > **Note:** The Scheduler Dockerfile uses `/health` in its `HEALTHCHECK` instruction rather than `/healthz`. Both paths return the same response — the difference only affects the Docker-level health check, not Kubernetes probes (which read from `values.yaml`).
 
 | Process | `/healthz` behavior | `/readyz` behavior |
 |---------|--------------------|--------------------|
-| Pipeline API | `200 ok` unless Redis ping fails (when Redis is configured, returns `503 redis_ping_failed`) | `503` when DB is unreachable or Redis backplane is configured and disconnected |
+| Pipeline API | `200 ok` | `503` when DB is unreachable or Redis backplane is configured and disconnected |
 | Web | `200 ok` | `503` during graceful drain (`readinessDrainDelaySeconds` window); the web host has no database to check |
 | Job Controller | `200 ok` | `200 ok` (non-leader is considered ready; availability is controlled by leader election) |
 | Scheduler | `200 ok` | `200 ok` (same rationale as Job Controller) |

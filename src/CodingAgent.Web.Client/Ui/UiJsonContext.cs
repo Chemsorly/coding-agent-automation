@@ -28,6 +28,7 @@ namespace CodingAgent.Web.Ui;
 [JsonSerializable(typeof(AgentCapacityLimits))]
 [JsonSerializable(typeof(UiAgentCredentialsPage))]
 [JsonSerializable(typeof(UiCredentialPauseRequest))]
+[JsonSerializable(typeof(CredentialUsageThresholds))]
 [JsonSerializable(typeof(QualityGateConfiguration))]
 [JsonSerializable(typeof(IReadOnlyList<QualityGateConfiguration>))]
 [JsonSerializable(typeof(ReviewerConfiguration))]

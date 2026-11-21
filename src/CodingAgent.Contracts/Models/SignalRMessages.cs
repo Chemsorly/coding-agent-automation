@@ -607,6 +607,17 @@ public sealed record ChatCompletedMessage
 
     [Key(2)]
     public string? Error { get; init; }
+
+    /// <summary>
+    /// The credential the prompt was billed to (<see cref="AgentCredentials"/>), for <see cref="RateLimits"/>.
+    /// Wire-compat: additive field — older agents never send it.
+    /// </summary>
+    [Key(3)]
+    public string? Credential { get; init; }
+
+    /// <summary>The subscription usage the prompt's agent call reported (usage thresholds); null when none.</summary>
+    [Key(4)]
+    public IReadOnlyList<AgentRateLimitObservation>? RateLimits { get; init; }
 }
 
 /// <summary>
@@ -777,6 +788,13 @@ public sealed record PipelineRunEventReport
     /// </summary>
     [Key(3)]
     public string? Result { get; init; }
+
+    /// <summary>
+    /// For <see cref="PipelineRunEventKind.RateLimitReading"/>: the subscription usage readings of one agent call.
+    /// Wire-compat: additive field — older agents never send it.
+    /// </summary>
+    [Key(4)]
+    public IReadOnlyList<AgentRateLimitObservation>? RateLimits { get; init; }
 }
 
 /// <summary>
@@ -792,4 +810,10 @@ public enum PipelineRunEventKind
 
     /// <summary>Agent stall event (stall_kill, process_death, or process_timeout).</summary>
     AgentStall = 2,
+
+    /// <summary>
+    /// The subscription usage an agent call reported (<see cref="PipelineRunEventReport.RateLimits"/>): the API stores
+    /// it and pauses the credential when a window reaches its usage threshold, while the run carries on.
+    /// </summary>
+    RateLimitReading = 3,
 }

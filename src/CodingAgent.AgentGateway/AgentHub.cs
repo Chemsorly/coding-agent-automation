@@ -29,6 +29,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ILogger _logger;
     private readonly IHubContext<UiHub> _uiContext;
     private readonly IHubTriageOperations? _triageOps;
+    private readonly ICredentialUsageObserver? _usageObserver;
 
     /// <summary>
     /// Primary constructor used by SignalR's hub activator (ActivatorUtilities).
@@ -49,6 +50,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _logger = deps.Logger;
         _uiContext = deps.UiContext;
         _triageOps = deps.TriageOps;
+        _usageObserver = deps.UsageObserver;
     }
 
     /// <summary>

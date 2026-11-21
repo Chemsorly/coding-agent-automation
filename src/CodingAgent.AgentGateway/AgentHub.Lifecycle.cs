@@ -245,6 +245,10 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(report);
 
+        // Usage readings need the work item, not this replica's run tracking.
+        if (report.Kind == PipelineRunEventKind.RateLimitReading)
+            return ObserveRateLimitsAsync(jobId, report.RateLimits);
+
         var run = _facade.GetRun(jobId);
         if (run is null)
         {
@@ -318,5 +322,24 @@ public sealed partial class AgentHub
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Hands an agent call's usage readings to the usage threshold (<see cref="ICredentialUsageObserver"/>). Best effort:
+    /// a failure is logged and the run goes on; the next call reports again.
+    /// </summary>
+    private async Task ObserveRateLimitsAsync(JobId jobId, IReadOnlyList<AgentRateLimitObservation>? readings)
+    {
+        if (_usageObserver is null || readings is not { Count: > 0 } || !Guid.TryParse(jobId.Value, out var workItemId))
+            return;
+
+        try
+        {
+            await _usageObserver.ObserveAsync(workItemId, readings, Context?.ConnectionAborted ?? CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Job {JobId} usage readings could not be checked against the usage thresholds", jobId.Value);
+        }
     }
 }
