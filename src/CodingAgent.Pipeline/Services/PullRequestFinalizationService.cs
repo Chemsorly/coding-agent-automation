@@ -586,7 +586,8 @@ public sealed class PullRequestFinalizationService
                 run, evidenceMd, run.StackLabels, DateOnly.FromDateTime(DateTime.UtcNow), run.IssueTitle);
             _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
-            var reflectionResult = await agentProvider.ExecuteAsync(
+            var reflectionResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                new AgentMonitorContext(agentProvider, run, config, "Reflection agent", null, _logger),
                 new AgentRequest
                 {
                     Prompt = reflectionPrompt,
@@ -595,7 +596,8 @@ public sealed class PullRequestFinalizationService
                     UseResume = true
                 },
                 ct,
-                line => emitOutputLine(line));
+                line => emitOutputLine(line),
+                phase: "reflection");
 
             run.AccumulateTokenUsage(reflectionResult, phase: "reflection");
 
