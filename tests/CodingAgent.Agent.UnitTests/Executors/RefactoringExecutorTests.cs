@@ -916,7 +916,8 @@ public class RefactoringExecutorTests : IDisposable
                     new IssueSummary
                     {
                         Identifier = "3236", Title = "Stop swallowing cancellation", Labels = ["agent:generated", "agent:done"],
-                        Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*"
+                        Description = $"*{RefactoringIssueBodyFormatter.GeneratedIssueFooter}.*",
+                        IsAuthorVerified = true
                     }
                 ],
                 Page = 1,
