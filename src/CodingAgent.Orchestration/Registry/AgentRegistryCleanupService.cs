@@ -18,8 +18,13 @@ namespace CodingAgent.Orchestration.Registry;
 /// NOTE: Even when the sweep is leader-gated, <see cref="DistributedAgentRegistryService.GetIdleAgents"/>
 /// gracefully skips stale set members (<c>HGETALL</c> returns empty → continue), so stale entries
 /// are invisible to the dispatcher regardless of whether a cleanup sweep has run.
+///
+/// <para>
+/// Deliberately not <see langword="sealed"/>: the Scheduler derives a no-op null object from this type
+/// so that resolving it from DI is safe when Redis is not configured.
+/// </para>
 /// </summary>
-public sealed class AgentRegistryCleanupService : RedisSetCleanupService
+public class AgentRegistryCleanupService : RedisSetCleanupService
 {
     private static readonly string[] AgentSetKeys = ["agents:all", "agents:idle"];
     private readonly TimeSpan _sweepInterval;

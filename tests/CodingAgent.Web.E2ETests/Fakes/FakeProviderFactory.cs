@@ -42,6 +42,13 @@ public sealed class FakeProviderFactory : IProviderFactory
     public InMemoryIssueProvider SecondaryIssueProvider { get; } = new();
 
     public InMemoryRepositoryProvider RepositoryProvider { get; } = new();
+
+    /// <summary>When set, returned for every repository config not listed in RepositoryProvidersByConfigId.</summary>
+    public IRepositoryProvider? RepositoryProviderOverride { get; set; }
+
+    /// <summary>Per-config providers, for a brain repository next to the work repository.</summary>
+    public Dictionary<string, IRepositoryProvider> RepositoryProvidersByConfigId { get; } = [];
+
     public ScriptedAgentProvider AgentProvider { get; } = new();
     public InMemoryPipelineProvider PipelineProvider { get; } = new();
 
@@ -50,6 +57,8 @@ public sealed class FakeProviderFactory : IProviderFactory
         IssueProvider.Reset();
         SecondaryIssueProvider.Reset();
         RepositoryProvider.Reset();
+        RepositoryProviderOverride = null;
+        RepositoryProvidersByConfigId.Clear();
         AgentProvider.Reset();
         PipelineProvider.Reset();
     }
@@ -57,7 +66,10 @@ public sealed class FakeProviderFactory : IProviderFactory
     public IIssueProvider CreateIssueProvider(ProviderConfig config) =>
         config.Id == SecondaryIssueProviderConfigId ? SecondaryIssueProvider : IssueProvider;
 
-    public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config) => RepositoryProvider;
+    public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config) =>
+        RepositoryProvidersByConfigId.TryGetValue(config.Id, out var provider)
+            ? provider
+            : RepositoryProviderOverride ?? RepositoryProvider;
     public IAgentProvider CreateAgentProvider(ProviderConfig config) => AgentProvider;
     public Task<IPipelineProvider> CreatePipelineProviderAsync(ProviderConfig config, CancellationToken ct) => Task.FromResult<IPipelineProvider>(PipelineProvider);
 }
