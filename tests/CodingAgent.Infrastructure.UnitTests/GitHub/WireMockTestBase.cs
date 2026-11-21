@@ -176,6 +176,7 @@ public abstract class WireMockTestBase : IAsyncDisposable
         body,
         state = "open",
         user = new { login = "testuser", id = 1 },
+        author_association = "MEMBER",
         labels = labels.Select(l => new { id = 1, name = l, color = "ededed" }).ToArray(),
         created_at = "2026-01-01T00:00:00Z",
         updated_at = "2026-01-01T00:00:00Z"

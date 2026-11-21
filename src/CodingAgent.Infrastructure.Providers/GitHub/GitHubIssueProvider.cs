@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Octokit;
 using Serilog;
 using CodingAgent.Infrastructure.Git;
@@ -41,9 +42,14 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         var issueNumber = ParseIdentifier(identifier);
 
         var issue = await ExecuteWithResilienceAsync(
-            client => client.Issue.Get(Owner, Repo, issueNumber),
+            async client =>
+            {
+                var uri = new Uri(client.Connection.BaseAddress, $"repos/{Owner}/{Repo}/issues/{issueNumber}");
+                var response = await client.Connection.Get<GitHubIssueDto>(uri, null, "application/vnd.github+json", ct);
+                return response.Body;
+            },
             "GetIssue", ct);
-        return MapToIssueDetail(issue);
+        return MapToIssueDetail(issue, await IsAuthorVerifiedAsync(issue, ct));
     }
 
     public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize,
@@ -79,17 +85,17 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         return await EnumerateIssuesAsync(request, page, pageSize, "ListClosedIssues", ct);
     }
 
-    private static IssueDetail MapToIssueDetail(Issue issue)
+    private static IssueDetail MapToIssueDetail(GitHubIssueDto issue, bool isAuthorVerified)
     {
         return new IssueDetail
         {
             Identifier = issue.Number.ToString(),
             Title = issue.Title ?? string.Empty,
             Description = issue.Body ?? string.Empty,
-            Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
+            Labels = issue.Labels?.Select(l => l.Name ?? string.Empty).ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
             Url = issue.HtmlUrl,
-            IsAuthorVerified = false
+            IsAuthorVerified = isAuthorVerified
         };
     }
 
@@ -318,24 +324,24 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     private async Task<PagedResult<IssueSummary>> EnumerateIssuesAsync(
         RepositoryIssueRequest request, int page, int pageSize, string resilienceLabel, CancellationToken ct)
     {
-        var apiOptions = new ApiOptions
-        {
-            PageSize = pageSize + 1, // fetch one extra to detect HasMore
-            StartPage = page,
-            PageCount = 1
-        };
+        var parameters = request.ToParametersDictionary();
+        parameters["per_page"] = (pageSize + 1).ToString(); // fetch one extra to detect HasMore
+        parameters["page"] = page.ToString();
 
         var issues = await ExecuteWithResilienceAsync(
-            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            async client =>
+            {
+                var uri = new Uri(client.Connection.BaseAddress, $"repos/{Owner}/{Repo}/issues");
+                var response = await client.Connection.Get<List<GitHubIssueDto>>(uri, parameters, "application/vnd.github+json", ct);
+                return response.Body;
+            },
             resilienceLabel, ct);
 
         var hasMore = issues.Count > pageSize;
 
-        var items = issues
-            .Where(i => i.PullRequest == null)
-            .Select(MapToIssueSummary)
-            .Take(pageSize)
-            .ToList();
+        var items = new List<IssueSummary>();
+        foreach (var issue in issues.Where(i => i.PullRequest == null).Take(pageSize))
+            items.Add(MapToIssueSummary(issue, await IsAuthorVerifiedAsync(issue, ct)));
 
         return new PagedResult<IssueSummary>
         {
@@ -346,7 +352,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         };
     }
 
-    private static IssueSummary MapToIssueSummary(Issue issue)
+    private static IssueSummary MapToIssueSummary(GitHubIssueDto issue, bool isAuthorVerified)
     {
         var labels = issue.Labels?.ToList() ?? [];
         return new IssueSummary
@@ -354,22 +360,55 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             Identifier = issue.Number.ToString(),
             Title = issue.Title ?? string.Empty,
             Description = issue.Body,
-            // TODO: [WARNING] Label.Name is typed as string? in Octokit. A null name would produce a null entry
-            // in the Labels list and throw ArgumentNullException as a dictionary key in LabelColors below.
-            // Fix: add a null guard, e.g. labels.Select(l => l.Name ?? string.Empty).
-            Labels = labels.Select(l => l.Name).ToList().AsReadOnly(),
+            Labels = labels.Select(l => l.Name ?? string.Empty).ToList().AsReadOnly(),
             LabelColors = labels.Count > 0
                 ? labels
-                    // TODO: [WARNING] The Where predicate filters on Color but not on Name. A label with a
-                    // null Name would pass this filter and throw ArgumentNullException in ToDictionary.
-                    // Fix: add "&& l.Name != null" (or "!string.IsNullOrEmpty(l.Name)") to the predicate.
                     .Where(l => !string.IsNullOrEmpty(l.Color))
-                    .ToDictionary(l => l.Name, l => l.Color, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(l => l.Name ?? string.Empty, l => l.Color!, StringComparer.OrdinalIgnoreCase)
                 : null,
             CreatedAt = issue.CreatedAt.UtcDateTime,
-            Url = issue.HtmlUrl
+            Url = issue.HtmlUrl,
+            IsAuthorVerified = isAuthorVerified
         };
     }
 
+    private Task<bool> IsAuthorVerifiedAsync(GitHubIssueDto issue, CancellationToken ct) =>
+        IsVerifiedAuthorAsync(
+            issue.AuthorAssociation,
+            string.Equals(issue.User?.Type, "Bot", StringComparison.OrdinalIgnoreCase),
+            issue.User?.Login,
+            ct);
+
     #endregion
+
+#pragma warning disable S1144 // Setters are called by Octokit's SimpleJsonSerializer via reflection; Sonar's S1144 ignores [DynamicallyAccessedMembers].
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+    private sealed class GitHubIssueDto
+    {
+        public int Number { get; set; }
+        public string? Title { get; set; }
+        public string? Body { get; set; }
+        public string? HtmlUrl { get; set; }
+        public DateTimeOffset CreatedAt { get; set; }
+        public string? AuthorAssociation { get; set; }
+        /// <summary>Non-null when the Issues API returned a pull request.</summary>
+        public object? PullRequest { get; set; }
+        public GitHubIssueUserDto? User { get; set; }
+        public GitHubIssueLabelDto[]? Labels { get; set; }
+    }
+
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+    private sealed class GitHubIssueUserDto
+    {
+        public string? Login { get; set; }
+        public string? Type { get; set; }
+    }
+
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+    private sealed class GitHubIssueLabelDto
+    {
+        public string? Name { get; set; }
+        public string? Color { get; set; }
+    }
+#pragma warning restore S1144
 }

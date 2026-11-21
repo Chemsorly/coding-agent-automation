@@ -198,6 +198,30 @@ public sealed class ConsolidationStalenessServiceTests
             "fallback window is 30 days before now");
     }
 
+    // ── CountOpenScanIssuesAsync ───────────────────────────────────────────
+
+    [Fact]
+    public async Task CountOpenScanIssues_UnverifiedIssueWithFooter_IsNotCounted()
+    {
+        var template = MakeTemplate();
+
+        SetupProviderConfig(template.IssueProviderId);
+
+        var byTheScan = MakeIssueSummary(description: "Prefix\n\n" + RefactoringScanIssues.Footer);
+        var byAnOutsider = MakeIssueSummary(
+            description: "Prefix\n\n" + RefactoringScanIssues.Footer, isAuthorVerified: false);
+
+        var mockProvider = SetupIssueProvider();
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(1, 100, (IReadOnlyList<string>?)null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IssuePageOf([byTheScan, byAnOutsider]));
+
+        var sut = CreateSut();
+        var count = await sut.CountOpenScanIssuesAsync(template, CancellationToken.None);
+
+        count.Should().Be(1, "an issue that carries the footer but was filed by an outsider is not a scan issue");
+    }
+
     // ── IsPausedAsync ──────────────────────────────────────────────────────
 
     [Fact]
@@ -297,12 +321,13 @@ public sealed class ConsolidationStalenessServiceTests
         Enabled = true,
     };
 
-    private static IssueSummary MakeIssueSummary(string? description = null) => new()
+    private static IssueSummary MakeIssueSummary(string? description = null, bool isAuthorVerified = true) => new()
     {
         Identifier = "42",
         Title = "Some Issue",
         Labels = [],
         Description = description,
+        IsAuthorVerified = isAuthorVerified,
     };
 
     private void SetupProviderConfig(string configId)

@@ -5,8 +5,9 @@ using FsCheck.Xunit;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure;
-using Moq;
-using Octokit;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
+using WireMock.Server;
 
 namespace CodingAgent.Infrastructure.UnitTests;
 
@@ -14,49 +15,48 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// Property-based tests for GitHubIssueProvider.
 /// Feature: provider-interface-gaps
 /// </summary>
+[Collection("GitHubTelemetry")]
 public class GitHubIssueProviderPropertyTests
 {
     /// <summary>
-    /// Feature: provider-interface-gaps, Property 5: Label Pass-Through to Octokit
+    /// Feature: provider-interface-gaps, Property 5: Label Pass-Through to the issues query
     /// For any non-null, non-empty list of label strings, calling ListOpenIssuesAsync
-    /// with that label list results in RepositoryIssueRequest.Labels containing exactly
-    /// those labels. When the label list is null or empty, no label filter is applied.
+    /// with that label list sends every one of those labels in the query of the list request.
+    /// When the label list is null or empty, no label filter is sent.
     /// **Validates: Requirements 3.4**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = [typeof(LabelListArbitrary)])]
     public void ListOpenIssuesAsync_Labels_PassedThrough_To_RepositoryIssueRequest(LabelInput input)
     {
-        // Arrange
-        var mockClient = new Mock<IGitHubClient>();
-        var mockIssues = new Mock<IIssuesClient>();
-        mockClient.Setup(c => c.Issue).Returns(mockIssues.Object);
+        // Arrange: Octokit prepends /api/v3 to the path of a client with a non-github.com URL (see WireMockTestBase.ApiPath)
+        using var server = WireMockServer.Start();
+        server.Given(Request.Create().WithPath("/api/v3/repos/owner/repo/issues").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("[]"));
 
-        RepositoryIssueRequest? capturedRequest = null;
-        mockIssues
-            .Setup(i => i.GetAllForRepository("owner", "repo",
-                It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
-            .Callback<string, string, RepositoryIssueRequest, ApiOptions>(
-                (_, _, req, _) => capturedRequest = req)
-            .ReturnsAsync(new List<Issue>().AsReadOnly());
-
-        var provider = new GitHubIssueProvider(new GitHubConnectionInfo("https://api.github.com", "owner", "repo"), mockClient.Object);
+        var provider = new GitHubIssueProvider(new GitHubConnectionInfo(server.Url!, "owner", "repo"), "fake-token");
 
         // Act
         provider.ListOpenIssuesAsync(1, 10, input.Labels, CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // Assert
-        capturedRequest.Should().NotBeNull();
+        var request = server.LogEntries.Should().ContainSingle().Subject.RequestMessage!;
+        var query = Uri.UnescapeDataString(request.RawQuery ?? string.Empty);
 
         if (input.Labels is { Count: > 0 })
         {
-            // Non-null, non-empty → labels must be passed through exactly
-            capturedRequest!.Labels.Should().BeEquivalentTo(input.Labels);
+            // Non-null, non-empty → every label must be sent
+            query.Should().Contain("labels=");
+            foreach (var label in input.Labels)
+                query.Should().Contain(label);
         }
         else
         {
             // Null or empty → no label filter applied
-            capturedRequest!.Labels.Should().BeEmpty();
+            query.Should().NotMatchRegex("(^|[?&])labels=[^&]");
         }
     }
 }

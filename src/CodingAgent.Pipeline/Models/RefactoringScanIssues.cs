@@ -12,9 +12,10 @@ public static class RefactoringScanIssues
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="issue"/> was created by the refactoring
-    /// detection scan (identified by the <see cref="Footer"/> in its description).
+    /// detection scan (identified by the <see cref="Footer"/> in its description, on an issue by a verified author).
     /// </summary>
-    public static bool IsScanIssue(IssueSummary issue) => IsScanDescription(issue.Description);
+    public static bool IsScanIssue(IssueSummary issue) =>
+        issue.IsAuthorVerified && IsScanDescription(issue.Description);
 
     /// <summary>Returns <see langword="true"/> when <paramref name="description"/> carries the <see cref="Footer"/>.</summary>
     public static bool IsScanDescription(string? description) =>

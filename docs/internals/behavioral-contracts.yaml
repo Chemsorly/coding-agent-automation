@@ -36,3 +36,9 @@
     - metric: "token_vending.scope_refused"
       increment: 1
   last_verified: "2026-10-31"
+
+- component: "RefactoringScanIssues.IsScanIssue"
+  scenario: "An issue by an author outside the repository carries the scan footer"
+  assertion: >
+    It is not a scan issue, so it does not count towards the scan's backpressure.
+  last_verified: "2026-10-31"
