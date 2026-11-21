@@ -18,7 +18,7 @@ public class ReviewCodeStepIsolatedTests
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
 
-    private PipelineStepContext BuildContext()
+    private PipelineStepContext BuildContext(PipelineRunType runType = PipelineRunType.Implementation)
     {
         var run = new PipelineRun
         {
@@ -29,7 +29,8 @@ public class ReviewCodeStepIsolatedTests
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
             CurrentStep = PipelineStep.ReviewingCode,
-            RepositoryName = "owner/repo"
+            RepositoryName = "owner/repo",
+            RunType = runType
         };
 
         return new PipelineStepContext
@@ -113,5 +114,59 @@ public class ReviewCodeStepIsolatedTests
         var result = await new ReviewCodeStep().ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReviewRunAllAgentsFailed_FailsRunAndStops()
+    {
+        var context = BuildAllAgentsFailedContext(PipelineRunType.Review);
+
+        var result = await new ReviewCodeStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop, "PostReviewFindingsStep must not post a review that never happened");
+        context.Run.FailureReason.Should().Be("All review agents failed; no review was posted.");
+        context.Run.FinalLabel.Should().Be(AgentLabels.Error);
+        _callbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReviewRunWithoutAllAgentsFailed_ContinuesAndDoesNotFailRun()
+    {
+        var context = BuildContext(PipelineRunType.Review);
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.PreResolvedReviewerConfigs = [];
+
+        var result = await new ReviewCodeStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue, "a review run whose reviewers did not all crash posts its review as before");
+        context.Run.FailureReason.Should().BeNull();
+        _callbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ImplementationRunAllAgentsFailed_Continues()
+    {
+        var context = BuildAllAgentsFailedContext(PipelineRunType.Implementation);
+
+        var result = await new ReviewCodeStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue, "the quality gates of an implementation run still decide the outcome");
+        context.Run.FailureReason.Should().BeNull();
+        _callbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
+    }
+
+    /// <summary>A context whose code review reports that every review agent failed.</summary>
+    private PipelineStepContext BuildAllAgentsFailedContext(PipelineRunType runType)
+    {
+        var context = BuildContext(runType);
+        context.Issue = new IssueDetail { IsAuthorVerified = true, Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        context.ParsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.PreResolvedReviewerConfigs = [];
+        _agentExecution
+            .Setup(x => x.ExecuteCodeReviewAsync(It.IsAny<AgentPhaseContext>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<ReviewerConfiguration>?>()))
+            .Callback<AgentPhaseContext, CancellationToken, IReadOnlyList<ReviewerConfiguration>?>((phase, _, _) => phase.Run.CodeReviewAllAgentsFailed = true)
+            .Returns(Task.CompletedTask);
+        return context;
     }
 }

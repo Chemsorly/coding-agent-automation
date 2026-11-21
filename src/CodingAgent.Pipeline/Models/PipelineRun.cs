@@ -253,6 +253,9 @@ public sealed partial class PipelineRun
     /// </summary>
     public string? CodeReviewSkipReason { get; set; }
 
+    /// <summary>True when every review agent of the last review iteration failed, so no review was produced.</summary>
+    public bool CodeReviewAllAgentsFailed { get; set; }
+
     /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if generation failed/skipped.</summary>
     public string? CodeReviewChangeSummary { get; set; }
 

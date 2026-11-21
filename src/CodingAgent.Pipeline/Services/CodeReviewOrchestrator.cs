@@ -98,6 +98,7 @@ internal class CodeReviewOrchestrator
                 // partial failures remains. Track as a separate improvement.
                 if (crashedCount == agentsRun.Count && agentsRun.Count > 0)
                 {
+                    run.CodeReviewAllAgentsFailed = true;
                     _logger.Warning(
                         "Pipeline {RunId} code review iteration {Iteration}: all {AgentCount} agents failed — findings unavailable",
                         run.RunId, i + 1, agentsRun.Count);

@@ -35,6 +35,14 @@ public sealed class ReviewCodeStep : IPipelineStep
         await context.AgentExecution.ExecuteCodeReviewAsync(
             phaseContext, ct, resolvedReviewers);
 
+        // An implementation run goes on to its quality gates. A review run has no other check, and posting
+        // "no issues found" for a review that never happened would read as a clean review.
+        if (context.Run.RunType == PipelineRunType.Review && context.Run.CodeReviewAllAgentsFailed)
+        {
+            await context.FailRunAsync("All review agents failed; no review was posted.", ct);
+            return StepResult.Stop;
+        }
+
         return StepResult.Continue;
     }
 }
