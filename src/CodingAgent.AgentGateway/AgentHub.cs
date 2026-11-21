@@ -217,6 +217,22 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (agent?.ActiveJobId is not null)
             {
                 var run = _facade.GetRun(agent.ActiveJobId);
+
+                // The agent is mid-run but the API has no run record for it — Redis lost its data while
+                // the agent stayed connected. Nothing rebuilds the run except the agent registering
+                // again with its active job, so close the connection to make it do so. A terminal step
+                // is left alone: a finishing agent must not get its run recreated.
+                if (run is null
+                    && !message.CurrentStep.Value.IsTerminal()
+                    && await IsRestorableRunAsync(agent, Context.ConnectionAborted))
+                {
+                    _logger.Warning(
+                        "Heartbeat from agent {AgentId}: active job {JobId} has no run record, closing the connection so the agent re-registers and the run is restored",
+                        message.AgentId.Value, agent.ActiveJobId);
+                    CloseConnectionSoAgentReRegisters();
+                    return;
+                }
+
                 if (run is not null && run.CurrentStep == message.CurrentStep)
                 {
                     // Clamp to server time to prevent a misbehaving agent from sending far-future timestamps
@@ -233,6 +249,30 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     }
 
     // ── Shared private helpers ──────────────────────────────────────────
+
+    /// <summary>
+    /// True when the agent re-registering would get the run it is working on rebuilt: the work item
+    /// exists, is the agent's own, and is not the consolidation task type (consolidation recovery
+    /// tracks the job without creating a run, so closing the connection would only repeat every
+    /// heartbeat). Mirrors the checks in <c>AgentOrphanRecoveryService.RestoreActiveJobAsync</c>.
+    /// Returns false, never throws, when the work item cannot be read — a heartbeat must not fail for this.
+    /// </summary>
+    private async Task<bool> IsRestorableRunAsync(AgentEntry agent, CancellationToken ct)
+    {
+        if (!_facade.CanVerifyWorkItems) return false;
+        try
+        {
+            var record = await _facade.GetWorkItemRunRecordAsync(agent.ActiveJobId!, ct);
+            return record is not null
+                && record.TaskType != WorkItemTaskType.Consolidation
+                && record.IsOwnedBy(agent.AgentId.Value);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Heartbeat: could not read the work item of job {JobId}", agent.ActiveJobId);
+            return false;
+        }
+    }
 
     /// <summary>
     /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.

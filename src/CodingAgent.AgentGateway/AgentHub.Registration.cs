@@ -167,6 +167,13 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
+    /// Closes the caller's connection from the server side. The agent's client sees the close and
+    /// reconnects, and its next <see cref="RegisterAgent"/> carries the active job, which is what
+    /// makes orphan recovery rebuild a run record the API has lost.
+    /// </summary>
+    private void CloseConnectionSoAgentReRegisters() => Context.Abort();
+
+    /// <summary>
     /// Deregisters an agent from the registry.
     /// Only allows the caller to deregister their own agent identity.
     /// </summary>
