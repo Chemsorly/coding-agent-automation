@@ -156,7 +156,7 @@ public class QualityGateExecutorRetryTests
     // ── Cancellation Between Retry Iterations ────────────────────────────────
 
     [Fact]
-    public async Task Cancellation_BetweenRetries_TransitionsToCancelled()
+    public async Task Cancellation_BetweenRetries_Rethrows()
     {
         var config = CreateConfig(maxRetries: 3);
         var callCount = 0;
@@ -174,13 +174,13 @@ public class QualityGateExecutorRetryTests
                 return Task.FromResult(FailingReport);
             });
 
-        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+        var act = () => _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
-        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Cancelled), Times.Once);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]
-    public async Task Cancellation_BetweenRetries_SwapsToAgentCancelledLabel()
+    public async Task Cancellation_BetweenRetries_DoesNotSwapLabel()
     {
         var config = CreateConfig(maxRetries: 3);
         var callCount = 0;
@@ -198,11 +198,12 @@ public class QualityGateExecutorRetryTests
                 return Task.FromResult(FailingReport);
             });
 
-        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+        var act = () => _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
+        await act.Should().ThrowAsync<OperationCanceledException>();
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(_run.IssueIdentifier, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
-            Times.Once);
+            c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── Prior Attempt History — Retry Prompt Content (issue #2364) ───────────
@@ -431,8 +432,9 @@ public class QualityGateExecutorRetryTests
             });
 
         // The Task.Delay(30s, ct) throws OperationCanceledException when ct is cancelled,
-        // unwinding the loop. ProceedToQualityGatesAsync catches it and transitions to Cancelled.
-        await _executor.ProceedToQualityGatesAsync(BuildContext(config), cts.Token);
+        // unwinding the loop. ProceedToQualityGatesAsync rethrows it for the host to handle.
+        var act = () => _executor.ProceedToQualityGatesAsync(BuildContext(config), cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
 
         // RetryCount must be 0: the loop incremented it, then decremented it on the rate-limit path
         // TODO: [WARNING] This assertion is only meaningful if the decrement executed before cancellation
@@ -475,7 +477,8 @@ public class QualityGateExecutorRetryTests
                 ErrorCategory = AgentErrorCategory.ProviderOverload
             });
 
-        await _executor.ProceedToQualityGatesAsync(BuildContext(config), cts.Token);
+        var act = () => _executor.ProceedToQualityGatesAsync(BuildContext(config), cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
 
         // TODO: [WARNING] Same fragility as RateLimitResult_DoesNotIncrementRetryCount: the assertion
         // RetryCount==0 does not prove the decrement fired — cancellation before the second increment

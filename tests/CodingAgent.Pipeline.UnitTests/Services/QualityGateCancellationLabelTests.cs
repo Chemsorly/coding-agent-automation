@@ -7,9 +7,11 @@ using CodingAgent.Pipeline.Services;
 namespace CodingAgent.Pipeline.UnitTests;
 
 /// <summary>
-/// Regression test for: cancellation during quality gates must set agent:cancelled label.
-/// Bug: QualityGateExecutor.RetryLoop previously called RemoveAllAgentLabels (which sends
-/// an empty string to GitHub → 422 error) instead of SwapAgentLabel with AgentLabels.Cancelled.
+/// Regression test for: cancellation during quality gates is rethrown without finalizing the run.
+/// The token is already cancelled by then, so a transition or label swap sent from the executor
+/// would be dropped or would mislabel a SIGTERM drain. The host and AgentJobRunner decide instead:
+/// a retry on SIGTERM, a Cancelled outcome on operator cancel. A run that is already Failed or
+/// Cancelled is left as it is.
 /// </summary>
 public class QualityGateCancellationLabelTests
 {
@@ -75,7 +77,7 @@ public class QualityGateCancellationLabelTests
     }
 
     [Fact]
-    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_SwapsToAgentCancelledLabel()
+    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_RethrowsWithoutSwappingLabels()
     {
         // Arrange: validator throws OperationCanceledException (simulating cancellation during quality gates)
         _mockValidator.Setup(v => v.ValidateAsync(
@@ -87,21 +89,22 @@ public class QualityGateCancellationLabelTests
         var context = BuildContext();
 
         // Act
-        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        var act = () => _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: SwapAgentLabel is called with agent:cancelled (NOT RemoveAllAgentLabels)
+        // Assert: the cancellation propagates to the host
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Assert: no label is swapped here; the label comes from the host's Cancelled outcome
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(_run.IssueIdentifier, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
-            Times.Once);
-
-        // Assert: RemoveAllAgentLabels is NOT called (this was the bug)
+            c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
         _mockCallbacks.Verify(
             c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     [Fact]
-    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_TransitionsToCancelled()
+    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_DoesNotTransitionToCancelled()
     {
         // Arrange
         _mockValidator.Setup(v => v.ValidateAsync(
@@ -113,17 +116,17 @@ public class QualityGateCancellationLabelTests
         var context = BuildContext();
 
         // Act
-        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        var act = () => _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
         // Assert
-        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Cancelled), Times.Once);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Cancelled), Times.Never);
     }
 
     [Fact]
-    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_SetsCompletedAt()
+    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_LeavesCompletedAtUnset()
     {
         // Arrange
-        var beforeTest = DateTime.UtcNow;
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
@@ -133,15 +136,15 @@ public class QualityGateCancellationLabelTests
         var context = BuildContext();
 
         // Act
-        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        var act = () => _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
         // Assert
-        _run.CompletedAt.Should().NotBeNull();
-        _run.CompletedAt!.Value.Should().BeOnOrAfter(beforeTest);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _run.CompletedAt.Should().BeNull();
     }
 
     [Fact]
-    public async Task ProceedToQualityGatesAsync_WhenCancelledViaLinkedCts_SwapsToAgentCancelledLabel()
+    public async Task ProceedToQualityGatesAsync_WhenCancelledViaLinkedCts_Rethrows()
     {
         // Arrange: simulate orchestrator-level cancellation via linked CTS
         using var orchestratorCts = new CancellationTokenSource();
@@ -166,16 +169,12 @@ public class QualityGateCancellationLabelTests
         var context = BuildContext(orchestratorCts);
 
         // Act
-        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        var act = () => _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: agent:cancelled label is set
+        // Assert: the cancellation propagates and no label is swapped here
+        await act.Should().ThrowAsync<OperationCanceledException>();
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(_run.IssueIdentifier, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
-            Times.Once);
-
-        // Assert: RemoveAllAgentLabels is NOT called
-        _mockCallbacks.Verify(
-            c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()),
+            c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -206,15 +205,11 @@ public class QualityGateCancellationLabelTests
     }
 
     [Fact]
-    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_CallsAddRunToHistoryAsync()
+    public async Task ProceedToQualityGatesAsync_WhenAlreadyFailed_DoesNotRethrowCancellation()
     {
-        // TODO: [WARNING] This test and the three other cancellation tests in this class each
-        // duplicate the identical four-line _mockValidator.Setup block inline. If ValidateAsync's
-        // signature changes again (as already happened once in this diff, requiring four independent
-        // updates), all tests must be updated separately rather than in one place. Consider extracting
-        // an ArrangeCancellationScenario() / SetUpCancellationPath() helper that centralises the
-        // validator setup for the cancellation scenario.
-        // Arrange: validator throws OperationCanceledException
+        // Arrange: run is already in Failed state (e.g., failed by a prior step)
+        _run.CurrentStep = PipelineStep.Failed;
+
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
@@ -224,14 +219,28 @@ public class QualityGateCancellationLabelTests
         var context = BuildContext();
 
         // Act
-        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        var act = () => _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: AddRunToHistoryAsync must be called exactly once on the cancellation path
-        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
+        // Assert: the guard returns normally and leaves the terminal step alone
+        await act.Should().NotThrowAsync();
+        _run.CurrentStep.Should().Be(PipelineStep.Failed);
+
+        // Assert: the validator threw, and nothing finalized the already-failed run.
+        // TransitionTo is a mock here, so it never changes CurrentStep: only the mock's calls prove it.
+        _mockValidator.Verify(v => v.ValidateAsync(
+            It.IsAny<WorkspacePath>(),
+            It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _run.CompletedAt.Should().BeNull();
+        _mockCallbacks.Verify(
+            c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
+        _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Cancelled), Times.Never);
     }
 
     [Fact]
-    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_EmitsCancelledOutputLine()
+    public async Task ProceedToQualityGatesAsync_WhenCancelledDuringValidation_DoesNotEmitCancelledOutputLine()
     {
         // Arrange
         _mockValidator.Setup(v => v.ValidateAsync(
@@ -247,11 +256,12 @@ public class QualityGateCancellationLabelTests
         var context = BuildContext();
 
         // Act
-        await _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        var act = () => _orchestrator.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
-        // Assert: the cancellation output line must have been emitted
-        emittedLines.Should().Contain("🚫 Pipeline cancelled",
-            "the cancellation arm must emit the pipeline cancelled output line");
+        // Assert: LocalPipelineExecutor emits the cancelled line after the host maps the exception
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        emittedLines.Should().NotContain("🚫 Pipeline cancelled",
+            "the executor rethrows and leaves the cancelled output line to LocalPipelineExecutor");
     }
 
     private QualityGateContext BuildContext(CancellationTokenSource? orchestratorCts = null)
