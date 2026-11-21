@@ -146,7 +146,16 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             },
             line => context.Callbacks.EmitOutputLine(line),
             logger,
-            ct);
+            ct,
+            (request, call, callToken) => AgentStallMonitor.ExecuteWithMonitoringAsync(
+                new AgentMonitorContext(context.AgentProvider, run, config,
+                    call == AdversarialReviewCall.Review ? "Decomposition review agent" : "Decomposition refinement agent",
+                    context.Callbacks.NotifyChange, logger),
+                request,
+                callToken,
+                line => context.Callbacks.EmitOutputLine(line),
+                reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
+                phase: call == AdversarialReviewCall.Review ? "decomposition_review" : "decomposition_refinement"));
 
         // Accumulate token usage from adversarial review and refinement before checking success.
         // Mirrors the pattern in AgentPhaseExecutor.Analysis.cs — tokens are always recorded

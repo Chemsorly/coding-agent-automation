@@ -489,4 +489,57 @@ public class AdversarialReviewHelperTests : IDisposable
         // Since CRITICAL is found, refinement should be triggered
         result.RefinementTriggered.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task ExecuteAgentDelegate_RunsReviewAndRefinement()
+    {
+        var calls = new List<(AdversarialReviewCall Call, AgentRequest Request)>();
+
+        var result = await AdversarialReviewHelper.ExecuteReviewAsync(
+            _mockAgent.Object,
+            _workspacePath,
+            new AdversarialReviewPrompts("review prompt", "refinement prompt", _reviewFilePath),
+            _enabledConfig,
+            CaptureOutput,
+            _mockLogger.Object,
+            CancellationToken.None,
+            (request, call, _) =>
+            {
+                calls.Add((call, request));
+                if (call == AdversarialReviewCall.Review)
+                    File.WriteAllText(AbsoluteReviewPath, "[CRITICAL] Major issue found");
+                return Task.FromResult(SuccessResult());
+            });
+
+        result.ReviewExecuted.Should().BeTrue();
+        result.RefinementTriggered.Should().BeTrue();
+        calls.Select(c => c.Call).Should().Equal(AdversarialReviewCall.Review, AdversarialReviewCall.Refinement);
+        calls[0].Request.Prompt.Should().Be("review prompt");
+        calls[0].Request.UseResume.Should().BeFalse();
+        calls[1].Request.Prompt.Should().Be("refinement prompt");
+        calls[1].Request.UseResume.Should().BeTrue();
+        calls[1].Request.ResumeSessionId.Should().Be("generator-session-default");
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task NoExecuteAgentDelegate_CallsTheProviderDirectly()
+    {
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(SuccessResult());
+
+        var result = await AdversarialReviewHelper.ExecuteReviewAsync(
+            _mockAgent.Object,
+            _workspacePath,
+            new AdversarialReviewPrompts("review prompt", "refinement prompt", _reviewFilePath),
+            _enabledConfig,
+            CaptureOutput,
+            _mockLogger.Object,
+            CancellationToken.None);
+
+        result.ReviewExecuted.Should().BeTrue();
+        _mockAgent.Verify(a => a.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.Prompt == "review prompt" && !r.UseResume),
+            It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+    }
 }

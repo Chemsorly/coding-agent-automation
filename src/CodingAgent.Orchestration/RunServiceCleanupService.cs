@@ -19,8 +19,13 @@ namespace CodingAgent.Orchestration;
 /// A repair path for orphaned run hashes (Lua script crash between SREM and EXPIREAT) is
 /// planned but not yet implemented. See issue for tracking.
 /// </para>
+///
+/// <para>
+/// Deliberately not <see langword="sealed"/>: the Scheduler derives a no-op null object from this type
+/// so that resolving it from DI is safe when Redis is not configured.
+/// </para>
 /// </summary>
-public sealed class RunServiceCleanupService : RedisSetCleanupService
+public class RunServiceCleanupService : RedisSetCleanupService
 {
     private static readonly string[] RunSetKeys = ["runs:active"];
     private readonly TimeSpan _sweepInterval;
