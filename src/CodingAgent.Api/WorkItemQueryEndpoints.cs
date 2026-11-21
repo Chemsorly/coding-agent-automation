@@ -6,6 +6,8 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
+using StackExchange.Redis;
 
 namespace CodingAgent.Api;
 
@@ -259,15 +261,28 @@ public static class WorkItemQueryEndpoints
         // runService may be null in test scenarios that construct the handler directly without DI.
         if (runService is not null)
         {
-            for (var i = 0; i < dtos.Count; i++)
+            try
             {
-                // TODO: The explicit cast (RunId) calls ArgumentException.ThrowIfNullOrEmpty internally.
-                // Guid.ToString() is always non-null/non-empty, so this is safe in practice, but if
-                // ActiveWorkItemDto.Id ever becomes nullable (Guid?) the cast would throw instead of
-                // skipping enrichment. Consider using new RunId(dtos[i].Id.ToString()) for clarity.
-                var liveRun = runService.GetRun((RunId)dtos[i].Id.ToString());
-                if (liveRun is not null)
-                    dtos[i] = dtos[i] with { CurrentStep = liveRun.CurrentStep };
+                for (var i = 0; i < dtos.Count; i++)
+                {
+                    // TODO: The explicit cast (RunId) calls ArgumentException.ThrowIfNullOrEmpty internally.
+                    // Guid.ToString() is always non-null/non-empty, so this is safe in practice, but if
+                    // ActiveWorkItemDto.Id ever becomes nullable (Guid?) the cast would throw instead of
+                    // skipping enrichment. Consider using new RunId(dtos[i].Id.ToString()) for clarity.
+                    var liveRun = runService.GetRun((RunId)dtos[i].Id.ToString());
+                    if (liveRun is not null)
+                        dtos[i] = dtos[i] with { CurrentStep = liveRun.CurrentStep };
+                }
+            }
+            catch (RedisException ex)
+            {
+                // The rows come from Postgres; the live step is optional, so Redis being down must not fail this read.
+                Log.Warning(ex, "GetActiveWorkItems: Redis unavailable, returning {Count} work items without the live step", dtos.Count);
+            }
+            catch (RedisTimeoutException ex)
+            {
+                // RedisTimeoutException derives from TimeoutException, not RedisException: a stalled Redis needs its own catch.
+                Log.Warning(ex, "GetActiveWorkItems: Redis timed out, returning {Count} work items without the live step", dtos.Count);
             }
         }
 
