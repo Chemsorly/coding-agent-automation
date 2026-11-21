@@ -235,6 +235,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         var run = buildResult.Run;
         var reporter = buildResult.Reporter;
 
+        // Each agent call's subscription usage goes to the API right away, which pauses the credential at its usage
+        // threshold while this run carries on.
+        using var rateLimitRelay = _failureRecorder?.RelayRateLimits(readings => reporter.ReportPipelineRunEvent(
+            new PipelineRunEventReport { Kind = PipelineRunEventKind.RateLimitReading, RateLimits = readings }, ct));
+
         using var _runIdCtx = LogContext.PushProperty("PipelineRunId", run.RunId);
         using var _issueCtx = LogContext.PushProperty("IssueIdentifier", run.IssueIdentifier);
 

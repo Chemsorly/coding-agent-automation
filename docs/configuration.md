@@ -200,6 +200,18 @@ How the limits work:
 - The page lists only the deployed job templates, and saving writes their values only. An imported limit for a template that is not deployed is kept and ignored.
 - Work that waits for a limit shows it on the Work page (Waiting column: "4 of 4 agents are running for dotnet,kiro …"). A template whose credential is paused is marked on the page; its work waits for the credential whatever the limit (see [Credentials and Pauses](agent-routing.md#credentials-and-pauses)).
 
+## Usage Thresholds
+
+Edited under Settings → Agents → Credentials (global admin). They pause the Claude subscription when its usage reaches
+them, until the window resets (see [Usage thresholds](agent-routing.md#usage-thresholds-claude-subscription)). Stored
+in one key-value entry, `agent-credential-usage-thresholds`, and part of the config export and import (bundle field
+`usageThresholds`); a bundle without them leaves the defaults.
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| `fiveHourPercent` | 75 | 0–100 | Percent of the 5-hour window at which new work waits; 0 = off |
+| `sevenDayPercent` | 90 | 0–100 | Percent of the 7-day window, and of the per-model weekly windows, at which new work waits; 0 = off |
+
 ## Chat Pod Lifecycle
 
 These settings control the lifetime of ephemeral chat session pods. Pod dispatch is handled by `ChatJobDispatcher`; the per-session idle-kill loop and K8s job polling run in `ChatSessionWatcher`; cross-replica heartbeat storage uses `ChatHeartbeatTracker` (only when Redis is configured). Settings map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
@@ -300,7 +312,7 @@ These environment variables are used by the Kubernetes deployment.
 
 Pipeline configuration is managed via **Settings → Data Management**:
 
-- **Export** — Downloads the full configuration as a single JSON bundle (providers, profiles, quality gates, reviewers, projects, templates, the agent routing table and the agent capacity limits)
+- **Export** — Downloads the full configuration as a single JSON bundle (providers, profiles, quality gates, reviewers, projects, templates, the agent routing table, the agent capacity limits and the usage thresholds)
 - **Import** — Uploads a JSON bundle, clears existing config, and inserts from the bundle. Cache is invalidated immediately; UI refreshes automatically.
 
 The bundle format is a flat JSON object with arrays for each entity type. Provider configurations include their inner `configuration` JSON (serialized `ProviderConfig` with full settings including credentials).

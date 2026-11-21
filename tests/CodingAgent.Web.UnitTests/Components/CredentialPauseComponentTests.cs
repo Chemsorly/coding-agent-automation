@@ -229,4 +229,86 @@ public sealed class CredentialPauseComponentTests : BunitContext
 
         cut.Markup.Should().Contain("No agent profile uses a credential yet.");
     }
+
+    // ── Usage thresholds ─────────────────────────────────────────────────────
+
+    private static UiAgentCredential Subscription() =>
+        new(AgentCredentials.ClaudeSubscription, "Claude subscription", false, null, null, null, null, null, null, null, 0,
+            ["Claude sub"],
+            [
+                new UiCredentialUsage(CredentialUsageWindows.FiveHour, "5-hour window", 0.42,
+                    new DateTimeOffset(2026, 11, 19, 20, 20, 0, TimeSpan.Zero), new DateTimeOffset(2026, 11, 19, 18, 33, 0, TimeSpan.Zero), 75),
+                new UiCredentialUsage(CredentialUsageWindows.SevenDay, "7-day window", 0.17, null,
+                    new DateTimeOffset(2026, 11, 19, 18, 33, 0, TimeSpan.Zero), 0),
+            ]);
+
+    private void ReturnsWithThresholds(params UiAgentCredential[] credentials) =>
+        _credentials.Setup(c => c.GetAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UiAgentCredentialsPage(credentials, new Dictionary<string, int>(), CredentialUsageThresholds.Default));
+
+    [Fact]
+    public void Card_ShowsTheLastUsageOfTheSubscription_AgainstItsThresholds()
+    {
+        AsReadOnly();
+        ReturnsWithThresholds(Subscription(), OpenCode());
+
+        var cut = Render<AgentCredentialsCard>();
+
+        cut.Find("[data-testid=credential-usage-claude-subscription]").TextContent
+            .Should().Contain("5-hour window 42 % (pause at 75 %)").And.Contain("7-day window 17 % (threshold off)");
+        cut.FindAll("[data-testid=usage-thresholds]").Should().BeEmpty("only admins in Settings set the thresholds");
+    }
+
+    [Fact]
+    public void Card_ForAnAdminInSettings_SavesTheThresholds()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        ReturnsWithThresholds(Subscription());
+
+        var cut = Render<AgentCredentialsCard>(p => p.Add(c => c.ShowProfiles, true));
+        cut.Find("[data-testid=usage-threshold-five-hour]").Change(70);
+        cut.Find("[data-testid=usage-threshold-seven-day]").Change(0);
+        cut.Find("[data-testid=usage-thresholds-save]").Click();
+
+        _credentials.Verify(c => c.SaveUsageThresholdsAsync(
+            new CredentialUsageThresholds { FiveHourPercent = 70, SevenDayPercent = 0 }, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void Card_ForAnAdmin_RefusesAThresholdOverAHundred_WithoutCallingTheApi()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        ReturnsWithThresholds(Subscription());
+
+        var cut = Render<AgentCredentialsCard>(p => p.Add(c => c.ShowProfiles, true));
+        cut.Find("[data-testid=usage-threshold-five-hour]").Change(120);
+        cut.Find("[data-testid=usage-thresholds-save]").Click();
+
+        cut.Markup.Should().Contain("The 5-hour threshold must be between 0 and 100 %.");
+        _credentials.Verify(c => c.SaveUsageThresholdsAsync(It.IsAny<CredentialUsageThresholds>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public void Card_AResumeInTheCard_KeepsAnUnsavedThresholdEdit()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Admin));
+        ReturnsWithThresholds(Subscription(), Kiro());
+
+        var cut = Render<AgentCredentialsCard>(p => p.Add(c => c.ShowProfiles, true));
+        cut.Find("[data-testid=usage-threshold-five-hour]").Change(60);
+        cut.Find("[data-testid=credential-card-resume-kiro]").Click();
+
+        cut.Find("[data-testid=usage-threshold-five-hour]").GetAttribute("value").Should().Be("60");
+    }
+
+    [Fact]
+    public void Card_ForAnOperatorInSettings_HasNoThresholdForm()
+    {
+        AsOperator();
+        ReturnsWithThresholds(Subscription());
+
+        var cut = Render<AgentCredentialsCard>(p => p.Add(c => c.ShowProfiles, true));
+
+        cut.FindAll("[data-testid=usage-thresholds]").Should().BeEmpty();
+    }
 }

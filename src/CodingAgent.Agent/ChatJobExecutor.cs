@@ -22,6 +22,9 @@ namespace CodingAgent.Agent;
 /// </remarks>
 public sealed class ChatJobExecutor : IAsyncDisposable
 {
+    // The usage readings of the running prompt's Claude Code call (one chat slot, so one prompt at a time).
+    private IReadOnlyList<AgentRateLimitObservation>? _lastChatRateLimits;
+
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly ChatSlotManager _slotManager;
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -112,11 +115,14 @@ public sealed class ChatJobExecutor : IAsyncDisposable
 
         // Dispose the batcher before reporting completion — flushes any remaining buffered lines
         // to the orchestrator BEFORE the completion message signals the session is done.
+        Volatile.Write(ref _lastChatRateLimits, null);
         (exitCode, error) = await ExecuteWithBatchedOutputAsync(message, chatToken);
 
         try
         {
-            await ReportChatCompletedAsync(message.SessionId, exitCode, error);
+            var readings = Volatile.Read(ref _lastChatRateLimits);
+            await ReportChatCompletedAsync(message.SessionId, exitCode, error,
+                readings is null ? null : ChatCredential(message), readings);
         }
         finally
         {
@@ -221,7 +227,17 @@ public sealed class ChatJobExecutor : IAsyncDisposable
         }
     }
 
-    public async Task ReportChatCompletedAsync(string sessionId, int exitCode, string? error)
+    /// <summary>
+    /// The credential a Claude Code chat prompt is billed to, from the profile's auth mode the prompt carries (the API
+    /// does not know a chat pod's auth mode).
+    /// </summary>
+    internal static string? ChatCredential(ChatPromptMessage message) =>
+        AgentCredentials.For(ProviderTypes.ClaudeCode,
+            new Dictionary<string, string> { [ProviderSettingKeys.AuthMode] = message.AgentAuthMode ?? string.Empty });
+
+    public async Task ReportChatCompletedAsync(
+        string sessionId, int exitCode, string? error,
+        string? credential = null, IReadOnlyList<AgentRateLimitObservation>? rateLimits = null)
     {
         try
         {
@@ -229,7 +245,9 @@ public sealed class ChatJobExecutor : IAsyncDisposable
             {
                 SessionId = sessionId,
                 ExitCode = exitCode,
-                Error = error
+                Error = error,
+                Credential = credential,
+                RateLimits = rateLimits,
             };
             await _connectionLifecycle.WaitForRegistrationAsync(CancellationToken.None);
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed,
@@ -304,6 +322,10 @@ public sealed class ChatJobExecutor : IAsyncDisposable
             },
             ct,
             onOutputLine: ForwardTo(outputBatcher, ct));
+
+        // Reported with the completion: a chat counts toward the subscription's usage thresholds.
+        if (result.UsageDetails is { RateLimits.Count: > 0 } usage)
+            Volatile.Write(ref _lastChatRateLimits, usage.RateLimits);
 
         string? error = result.ExitCode != ExitCodes.Success
             ? string.Join("\n", result.OutputLines.TakeLast(3))

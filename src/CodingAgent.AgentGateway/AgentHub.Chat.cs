@@ -70,6 +70,21 @@ public sealed partial class AgentHub
             .SendAsync(HubMethodNames.OnChatCompleted, message.SessionId, message.ExitCode, message.Error);
 
         _chatNotifier.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);
+
+        // A chat uses the subscription too: its usage counts toward the usage thresholds.
+        if (_usageObserver is not null && message.Credential is { Length: > 0 } credential
+            && message.RateLimits is { Count: > 0 } readings)
+        {
+            try
+            {
+                await _usageObserver.ObserveCredentialAsync(credential, readings, Context.ConnectionAborted);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Chat {SessionId} usage readings could not be checked against the usage thresholds",
+                    message.SessionId);
+            }
+        }
     }
 
     /// <summary>
