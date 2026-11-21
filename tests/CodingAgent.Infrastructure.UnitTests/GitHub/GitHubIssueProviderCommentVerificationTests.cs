@@ -26,10 +26,10 @@ public class GitHubIssueProviderCommentVerificationTests : WireMockTestBase
     private int CountPermissionLookups() =>
         Server.LogEntries.Count(e => e.RequestMessage?.Path?.Contains("/collaborators/") == true);
 
-    private static object CommentJson(long id, string login, string type, string? association) =>
+    private static object CommentJson(long id, string login, string type, string? association, string body = "x") =>
         association is not null
-            ? new { id, body = "x", user = new { login, id = 1, type }, author_association = association, created_at = "2026-01-15T10:30:00Z", updated_at = "2026-01-15T10:30:00Z" }
-            : (object)new { id, body = "x", user = new { login, id = 1, type }, author_association = (string?)null, created_at = "2026-01-15T10:30:00Z", updated_at = "2026-01-15T10:30:00Z" };
+            ? new { id, body, user = new { login, id = 1, type }, author_association = association, created_at = "2026-01-15T10:30:00Z", updated_at = "2026-01-15T10:30:00Z" }
+            : (object)new { id, body, user = new { login, id = 1, type }, author_association = (string?)null, created_at = "2026-01-15T10:30:00Z", updated_at = "2026-01-15T10:30:00Z" };
 
     private static object CommentJsonNoUser(long id) =>
         new { id, body = "x", user = (object?)null, author_association = "NONE", created_at = "2026-01-15T10:30:00Z", updated_at = "2026-01-15T10:30:00Z" };
@@ -305,5 +305,43 @@ public class GitHubIssueProviderCommentVerificationTests : WireMockTestBase
         var result = await provider.ListCommentsAsync("10", CancellationToken.None);
 
         result.Should().ContainSingle().Which.IsVerified.Should().BeTrue();
+    }
+
+    // ─── The pipeline's own plan comment keeps its marker in every credential setup ─────────
+
+    private const string PlanBody = $"{CodingAgent.Pipeline.CommentMarkers.DecompositionPlan}\n\nThe plan";
+
+    [Theory]
+    [InlineData("Bot", "NONE", null)] // GitHub App installation token: no lookup
+    [InlineData("Bot", "CONTRIBUTOR", null)] // comments written under a previous App stay Bot
+    [InlineData("User", "OWNER", null)] // PAT of the repository owner
+    [InlineData("User", "MEMBER", null)] // PAT of a public organization member
+    [InlineData("User", "COLLABORATOR", null)] // PAT of a direct collaborator
+    [InlineData("User", "CONTRIBUTOR", "write")] // PAT of a private organization member with write access
+    public async Task ListCommentsAsync_PipelinePlanCommentInEveryGitHubCredentialSetup_MarkerCounts(
+        string type, string association, string? permission)
+    {
+        StubComments([CommentJson(1, "pipeline-bot", type, association, PlanBody)]);
+        if (permission is not null)
+            StubPermission("pipeline-bot", permission);
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListCommentsAsync("10", CancellationToken.None);
+
+        result.Should().ContainSingle().Which.HasVerifiedMarker(CodingAgent.Pipeline.CommentMarkers.DecompositionPlan)
+            .Should().BeTrue("the pipeline must find its own plan comment again, whichever credential wrote it");
+    }
+
+    [Fact]
+    public async Task ListCommentsAsync_OutsidePlanComment_MarkerDoesNotCount()
+    {
+        StubComments([CommentJson(1, "outsider", "User", "NONE", PlanBody)]);
+        StubPermission("outsider", "read");
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListCommentsAsync("10", CancellationToken.None);
+
+        result.Should().ContainSingle().Which.HasVerifiedMarker(CodingAgent.Pipeline.CommentMarkers.DecompositionPlan)
+            .Should().BeFalse("a plan marker in a comment by someone outside the repository must not count");
     }
 }
