@@ -190,6 +190,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     public void UpdateCurrentStep(PipelineStep? step)
     {
         Volatile.Write(ref _currentStep, step.HasValue ? (int)step.Value : NullStep);
+
+        if (step.HasValue && _currentRegistration is { ActiveJob: { } activeJob } registration)
+            _currentRegistration = registration with { ActiveJob = activeJob with { CurrentStep = step.Value } };
     }
 
     /// <inheritdoc />

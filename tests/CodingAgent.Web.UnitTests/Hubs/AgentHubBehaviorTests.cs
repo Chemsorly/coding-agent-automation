@@ -37,7 +37,9 @@ public sealed class AgentHubBehaviorTests : IDisposable
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
-    private AgentHub CreateHub(string connectionId = "conn-1")
+    private AgentHub CreateHub(string connectionId = "conn-1") => CreateHub(out _, connectionId);
+
+    private AgentHub CreateHub(out Mock<HubCallerContext> mockContext, string connectionId = "conn-1")
     {
         var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
@@ -50,7 +52,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
-        var mockContext = new Mock<HubCallerContext>();
+        mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
         mockContext.Setup(c => c.ConnectionAborted).Returns(CancellationToken.None);
         hub.Context = mockContext.Object;
@@ -1658,6 +1660,155 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.LastStepChangeAt.Should().BeOnOrAfter(heartbeat.Timestamp,
             because: "LastStepChangeAt must be refreshed to the time of the heartbeat, not remain at -50min");
         run.LastStepChangeAt.Should().BeOnOrBefore(after.AddSeconds(10));
+    }
+
+    // A Redis wipe leaves a connected agent with an ActiveJobId but no run record. The only thing that
+    // rebuilds the run is the agent re-registering, so the hub closes the connection to make it do so.
+
+    private void ArrangeActiveJob(PipelineRun? run, bool canVerifyWorkItems = true)
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>())).ReturnsAsync(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.SetupGet(f => f.CanVerifyWorkItems).Returns(canVerifyWorkItems);
+    }
+
+    private void ArrangeWorkItemRecord(WorkItemRunRecord? record)
+        => _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync("job-1", It.IsAny<CancellationToken>())).ReturnsAsync(record);
+
+    private static WorkItemRunRecord CreateWorkItemRecord(WorkItemTaskType taskType = WorkItemTaskType.Implementation, string ownerAgentId = "agent-1") => new()
+    {
+        TaskType = taskType,
+        K8sJobName = ownerAgentId,
+        AssignedAgentId = ownerAgentId,
+        IssueIdentifier = "org/repo#42",
+        IssueProviderConfigId = "issue-cfg-1"
+    };
+
+    private Func<Task> HeartbeatWithStep(PipelineStep step, out Mock<HubCallerContext> context)
+    {
+        var hub = CreateHub(out context);
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = step,
+            MemoryUsageMb = 512
+        };
+        return () => hub.Heartbeat(heartbeat);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_ClosesConnectionSoAgentReRegisters()
+    {
+        ArrangeActiveJob(run: null);
+        ArrangeWorkItemRecord(CreateWorkItemRecord());
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Once);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_ConsolidationJob_KeepsConnection()
+    {
+        // Consolidation restore tracks the job without creating a run, so closing the connection
+        // would only repeat every heartbeat.
+        ArrangeActiveJob(run: null);
+        ArrangeWorkItemRecord(CreateWorkItemRecord(WorkItemTaskType.Consolidation));
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_NotOwnedByAgent_KeepsConnection()
+    {
+        // Restore refuses a work item the agent does not own, so a reconnect could not rebuild the run.
+        ArrangeActiveJob(run: null);
+        ArrangeWorkItemRecord(CreateWorkItemRecord(ownerAgentId: "someone-else"));
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_TerminalStep_KeepsConnection()
+    {
+        // A finishing agent must not get its run recreated.
+        ArrangeActiveJob(run: null);
+        ArrangeWorkItemRecord(CreateWorkItemRecord());
+
+        await HeartbeatWithStep(PipelineStep.Completed, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_WorkItemReadFails_KeepsConnectionAndDoesNotThrow()
+    {
+        ArrangeActiveJob(run: null);
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync("job-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated DB failure"));
+
+        var act = HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context);
+
+        await act.Should().NotThrowAsync();
+        context.Verify(c => c.Abort(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_WorkItemReadCancelled_PropagatesAndKeepsConnection()
+    {
+        ArrangeActiveJob(run: null);
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync("job-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var act = HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        context.Verify(c => c.Abort(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_WorkItemNotFound_KeepsConnection()
+    {
+        ArrangeActiveJob(run: null);
+        ArrangeWorkItemRecord(null);
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunRecordMissing_CannotVerifyWorkItems_KeepsConnection()
+    {
+        ArrangeActiveJob(run: null, canVerifyWorkItems: false);
+        ArrangeWorkItemRecord(CreateWorkItemRecord());
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Never);
+        _mockFacade.Verify(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunExists_KeepsConnection()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        ArrangeActiveJob(run);
+        ArrangeWorkItemRecord(CreateWorkItemRecord());
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out var context)();
+
+        context.Verify(c => c.Abort(), Times.Never);
+        _mockFacade.Verify(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
