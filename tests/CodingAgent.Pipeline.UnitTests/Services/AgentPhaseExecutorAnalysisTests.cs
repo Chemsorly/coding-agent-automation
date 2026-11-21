@@ -674,6 +674,47 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         context.DownloadedImages!.Should().Contain(testImage);
     }
 
+    [Fact]
+    public async Task Analysis_ReviewHitByProviderRateLimit_IsRetriedAndItsCostIsCounted()
+    {
+        var usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 };
+        var reviewFilePath = Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisReviewFilePath);
+        var call = 0;
+        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("generator-session");
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                switch (++call)
+                {
+                    case 1: // the analysis
+                        WriteValidAnalysisFiles();
+                        return new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 1.00m };
+                    case 2: // the review, rate-limited by the model provider
+                        return new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit };
+                    case 3: // the review, sent again
+                        File.WriteAllText(reviewFilePath, "[CRITICAL] The plan misses the migration");
+                        return new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.25m };
+                    default: // the refinement
+                        WriteValidAnalysisFiles();
+                        return new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.10m };
+                }
+            });
+        var context = BuildContext() with
+        {
+            Config = _config with { AnalysisReviewEnabled = true, TransientRetryDelay = TimeSpan.Zero }
+        };
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(context, Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        result.Should().BeTrue();
+        call.Should().Be(4, "the rate-limited review is sent again, and its findings still trigger the refinement");
+        _run.Metrics.PhaseBreakdown["analysis"].SessionCount.Should().Be(4,
+            "the analysis, both attempts of the review and the refinement are monitored sessions of the analysis phase");
+        _run.TotalCost.Should().Be(1.35m,
+            because: "the run cost is the analysis (1.00) plus the review (0.25) and the refinement (0.10)");
+    }
+
     private AgentPhaseContext BuildContext()
     {
         return new AgentPhaseContext
