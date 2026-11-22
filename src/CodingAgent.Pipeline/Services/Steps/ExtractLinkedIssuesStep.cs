@@ -104,7 +104,7 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
                 Title = prTitle,
                 Description = prDescription,
                 Labels = Array.Empty<string>(),
-                IsAuthorVerified = false
+                IsAuthorVerified = context.Run.ReviewPrAuthorVerified
             };
             context.ParsedIssue = _issueParser.Parse(prDescription);
         }

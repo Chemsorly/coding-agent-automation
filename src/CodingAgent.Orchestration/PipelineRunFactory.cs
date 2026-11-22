@@ -112,6 +112,7 @@ public static class PipelineRunFactory
             ReviewPrUrl = request.LinkedPullRequest?.Url,
             ReviewPrDescription = request.ReviewPrDescription,
             ReviewPrAuthor = request.ReviewPrAuthor,
+            ReviewPrAuthorVerified = request.ReviewPrAuthorVerified,
             AgentProviderConfigId = request.AgentProviderConfigId,
             BrainProviderConfigId = request.BrainProviderConfigId
         });

@@ -603,6 +603,7 @@ public sealed class GetAssignmentTests
             ReviewPrTargetBranch = "main",
             ReviewPrDescription = "Fix the bug",
             ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = true,
         };
         var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
 
@@ -611,10 +612,54 @@ public sealed class GetAssignmentTests
         minimal.ReviewPrTargetBranch.Should().Be("main");
         minimal.ReviewPrDescription.Should().Be("Fix the bug");
         minimal.ReviewPrAuthor.Should().Be("alice");
+        minimal.ReviewPrAuthorVerified.Should().BeTrue("BuildMinimalPayload is an allow-list: a member it does not name is lost");
         // TODO: [WARNING] No test verifies that consolidation identity fields are preserved:
         // ConsolidationRunType, ConsolidationTemplateId, AutoDispatch,
         // ProjectContext (decomposition), and LinkedIssueContexts (review). These are all listed
         // in the issue as non-reconstructable identity fields. Add a separate test method for them.
+    }
+
+    [Fact]
+    public void BuildMinimalPayload_ReviewPrAuthorVerified_SurvivesTheStoredJson()
+    {
+        // The default is false, so only a true value shows that the flag survives the builder and the stored JSON.
+        var full = MakeFullRequest() with
+        {
+            TaskType = WorkItemTaskType.Review,
+            RunType = PipelineRunType.Review,
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = true
+        };
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
+
+        var stored = JsonSerializer.Serialize(minimal, PipelineJsonOptions.Default);
+        var result = WorkItemPayload.TryDeserialize(stored, out var deserialized);
+
+        result.Should().BeTrue();
+        deserialized!.ReviewPrAuthorVerified.Should().BeTrue("the flag is written to WorkItems.Payload and read back");
+        deserialized.ReviewPrAuthor.Should().Be("alice");
+    }
+
+    [Fact]
+    public void TryDeserialize_ReviewPayloadStoredBeforeTheField_ReadsFalse()
+    {
+        // Starts from true: a payload stored before the field has no key, and a default false would pass either way.
+        var full = MakeFullRequest() with
+        {
+            TaskType = WorkItemTaskType.Review,
+            RunType = PipelineRunType.Review,
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = true
+        };
+        var minimal = WorkItemEntityBuilder.BuildMinimalPayload(full);
+        var stored = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(minimal, PipelineJsonOptions.Default))!;
+        stored.AsObject().Remove("reviewPrAuthorVerified").Should().BeTrue("the stored row must not have the new member");
+
+        var result = WorkItemPayload.TryDeserialize(stored.ToJsonString(), out var deserialized);
+
+        result.Should().BeTrue("a review queued before the field must still be readable");
+        deserialized!.ReviewPrAuthor.Should().Be("alice");
+        deserialized.ReviewPrAuthorVerified.Should().BeFalse("a missing flag reads as not verified");
     }
 
     [Fact]

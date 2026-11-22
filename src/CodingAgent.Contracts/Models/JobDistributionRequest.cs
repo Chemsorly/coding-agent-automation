@@ -141,6 +141,9 @@ public record JobDistributionRequest
     /// <summary>Author of the PR under review.</summary>
     public string? ReviewPrAuthor { get; init; }
 
+    /// <summary>Whether the author of the PR under review is on the repository. Missing in a work item stored before this field, it reads false.</summary>
+    public bool ReviewPrAuthorVerified { get; init; }
+
     // --- Decomposition-specific ---
 
     /// <summary>Project context for cross-repo decomposition.</summary>

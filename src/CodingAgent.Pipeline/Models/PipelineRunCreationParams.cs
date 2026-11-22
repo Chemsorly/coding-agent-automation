@@ -62,6 +62,9 @@ public sealed class PipelineRunCreationParams
     /// <summary>PR author username for review runs.</summary>
     public string? ReviewPrAuthor { get; init; }
 
+    /// <summary>Whether the PR's author is on the repository.</summary>
+    public bool ReviewPrAuthorVerified { get; init; }
+
     /// <summary>Pre-fetched linked issue details for review runs.</summary>
     public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 

@@ -344,6 +344,24 @@ public sealed class PipelineRunFactoryTests
         run.Should().BeEquivalentTo(new { AgentProfileId = (string?)null, AgentProfileName = (string?)null, AgentEffort = (string?)null });
     }
 
+    [Fact]
+    public void CreateFromRequest_CarriesReviewPrAuthorVerified()
+    {
+        // The default is false, so only a true value shows that the factory copies the flag.
+        var request = CreateMinimalRequest("run-review") with
+        {
+            TaskType = WorkItemTaskType.Review,
+            RunType = PipelineRunType.Review,
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = true
+        };
+
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        run.ReviewPrAuthorVerified.Should().BeTrue();
+        run.ReviewPrAuthor.Should().Be("alice");
+    }
+
     private static JobDistributionRequest CreateMinimalRequest(string runId) => new()
     {
         IssueIdentifier = "owner/repo#1",

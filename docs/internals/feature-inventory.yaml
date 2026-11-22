@@ -32,3 +32,13 @@ features:
       Whether an issue's author is on the repository. Required, so every rebuild decides; copied by
       IssueDetail.WithImages. JSON without the field reads false (PipelineJsonOptions.Resolver), and so
       does MessagePack. Operator triage sets true.
+
+  - id: F-024
+    name: ReviewPrAuthorVerified
+    field: JobDistributionRequest.ReviewPrAuthorVerified, JobAssignmentMessage.ReviewPrAuthorVerified, PipelineRun.ReviewPrAuthorVerified
+    propagation_risk: true
+    notes: >
+      Whether the author of the PR under review is on the repository. Copied by hand at each hop:
+      PullRequestSummary, ReviewDispatchRequest, JobDistributionRequest, WorkItemEntityBuilder.BuildMinimalPayload
+      (explicit allow-list), JobAssignmentMessageFactory, PipelineExecutionContextBuilder, PipelineRun and its
+      Redis hash. Missing reads false.

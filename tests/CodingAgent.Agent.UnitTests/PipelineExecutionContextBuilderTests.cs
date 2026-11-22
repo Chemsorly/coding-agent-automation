@@ -795,6 +795,39 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         await result.DisposeAsync();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Build_CarriesReviewPrAuthorVerifiedToTheRun(bool value)
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        // The subject's own flag is set to the opposite value, so a copy from the wrong source fails in both rows.
+        var job = CreateTestJob(PipelineRunType.Review) with
+        {
+            IssueDetail = new IssueDetail { IsAuthorVerified = !value, Identifier = "test/repo#42", Title = "Test Issue", Description = "", Labels = [] },
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = value
+        };
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.ReviewPrAuthorVerified.Should().Be(value);
+        result.Run.ReviewPrAuthor.Should().Be("alice");
+
+        await result.DisposeAsync();
+    }
+
     // ── Decomposition run type ────────────────────────────────────────────
 
     [Fact]

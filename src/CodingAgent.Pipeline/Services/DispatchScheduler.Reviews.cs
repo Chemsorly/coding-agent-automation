@@ -41,6 +41,7 @@ internal sealed partial class DispatchScheduler
                         PrTitle = pr.Title,
                         PrDescription = pr.Description,
                         PrAuthor = pr.Author,
+                        PrAuthorVerified = pr.IsAuthorVerified,
                         PrUrl = pr.Url,
                         PrTargetBranch = pr.TargetBranch,
                         IssueProviderId = template.IssueProviderId,

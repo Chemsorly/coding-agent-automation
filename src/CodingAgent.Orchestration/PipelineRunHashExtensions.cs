@@ -52,6 +52,7 @@ public static class PipelineRunHashExtensions
             F("reviewPrUrl",                run.ReviewPrUrl ?? ""),
             F("reviewPrDescription",        run.ReviewPrDescription ?? ""),
             F("reviewPrAuthor",             run.ReviewPrAuthor ?? ""),
+            F("reviewPrAuthorVerified",     run.ReviewPrAuthorVerified.ToString()),
             F("decompositionSource",        run.DecompositionSource ?? ""),
             F("initiatedBy",               run.InitiatedBy),
 
@@ -201,6 +202,7 @@ public static class PipelineRunHashExtensions
             ReviewPrUrl = r.OptionalString("reviewPrUrl"),
             ReviewPrDescription = r.OptionalString("reviewPrDescription"),
             ReviewPrAuthor = r.OptionalString("reviewPrAuthor"),
+            ReviewPrAuthorVerified = r.Bool("reviewPrAuthorVerified"),
             DecompositionSource = r.OptionalString("decompositionSource"),
             // InitiatedBy must never be null — used in routing/display logic without null guards
             InitiatedBy = r.OptionalString("initiatedBy") ?? InitiatedByConstants.Manual,

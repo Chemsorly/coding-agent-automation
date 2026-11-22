@@ -82,6 +82,27 @@ public sealed class JobAssignmentMessageFactoryTests
         message.InitiatedBy.Should().Be("pipeline-loop");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildJobAssignmentMessage_CarriesReviewPrAuthorVerified(bool value)
+    {
+        // The subject's own flag is set to the opposite value, so a copy from the wrong source fails in both rows.
+        var request = MinimalRequest() with
+        {
+            TaskType = WorkItemTaskType.Review,
+            RunType = PipelineRunType.Review,
+            IssueDetail = new IssueDetail { IsAuthorVerified = !value, Identifier = "GH-42", Title = "t", Description = "d", Labels = [] },
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = value
+        };
+
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), request);
+
+        message.ReviewPrAuthorVerified.Should().Be(value);
+        message.ReviewPrAuthor.Should().Be("alice");
+    }
+
     // ── Null defaults ─────────────────────────────────────────────────────
 
     [Fact]

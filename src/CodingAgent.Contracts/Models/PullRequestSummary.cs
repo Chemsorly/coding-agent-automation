@@ -19,6 +19,9 @@ public sealed class PullRequestSummary : IHasCreatedAt
     /// <summary>PR author username (e.g., GitHub login or GitLab username).</summary>
     public string? Author { get; init; }
 
+    /// <summary>Whether the PR's author is on the repository, by the same rule as <see cref="IssueComment.IsVerified"/>.</summary>
+    public bool IsAuthorVerified { get; init; }
+
     /// <summary>PR creation date, used for FIFO ordering in the pipeline loop.</summary>
     public DateTime? CreatedAt { get; init; }
 

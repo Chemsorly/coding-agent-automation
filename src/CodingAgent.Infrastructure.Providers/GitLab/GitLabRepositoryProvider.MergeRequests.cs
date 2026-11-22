@@ -350,7 +350,10 @@ public partial class GitLabRepositoryProvider
             "ListOpenMergeRequests", ct);
 
         var hasMore = mrs.Count > pageSize;
-        var mappedItems = mrs.Take(pageSize).Select(ToSummary).ToList();
+        var verifier = new AuthorVerifier(this);
+        var mappedItems = new List<PullRequestSummary>();
+        foreach (var mr in mrs.Take(pageSize))
+            mappedItems.Add(ToSummary(mr, await verifier.VerifyAsync(mr.Author?.Id, ct)));
 
         return SharedPrOperations.BuildPagedResult(mappedItems, page, pageSize, hasMore);
     }
@@ -367,7 +370,9 @@ public partial class GitLabRepositoryProvider
                     return Task.Run(() => mrClient[prNumber], ct);
                 },
                 "GetOpenMergeRequest", ct);
-            return mr.State == "opened" ? ToSummary(mr) : null;
+            return mr.State == "opened"
+                ? ToSummary(mr, await new AuthorVerifier(this).VerifyAsync(mr.Author?.Id, ct))
+                : null;
         }
         catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
@@ -407,7 +412,7 @@ public partial class GitLabRepositoryProvider
         return new PullRequestChangedFiles(paths, isComplete, mr.DiffRefs?.HeadSha ?? string.Empty);
     }
 
-    private static PullRequestSummary ToSummary(MergeRequest mr) => new()
+    private static PullRequestSummary ToSummary(MergeRequest mr, bool isAuthorVerified) => new()
     {
         Number = (int)mr.Iid,
         Identifier = mr.Iid.ToString(),
@@ -419,6 +424,7 @@ public partial class GitLabRepositoryProvider
         Url = mr.WebUrl,
         IsDraft = mr.Draft,
         Author = mr.Author?.Username,
+        IsAuthorVerified = isAuthorVerified,
         CreatedAt = mr.CreatedAt.ToUniversalTime(),
         HasAutoMerge = mr.MergeWhenPipelineSucceeds,
     };

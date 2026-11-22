@@ -1516,6 +1516,59 @@ public class DispatchSchedulerTests
         _prDispatchCount.Should().Be(0, "the review work item of pull request !5 is keyed by the repository");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DispatchReview_CarriesPrAuthorVerified(bool value)
+    {
+        ReviewDispatchRequest? captured = null;
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareReviewDistributionRequestAsync(
+                It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ReviewDispatchRequest req, PipelineProject _, CancellationToken _) =>
+            {
+                captured = req;
+                return CreateMinimalJobDistributionRequest(req.PrIdentifier);
+            });
+        var template = CreateTemplate("t1");
+        var (pollable, flattened) = BuildTemplateLists(template, CreateProject("p1"));
+        var pr = new PullRequestSummary
+        {
+            Identifier = "5",
+            Title = "Test PR 5",
+            Description = "",
+            Labels = new List<string>(),
+            BranchName = "feat/5",
+            TargetBranch = "main",
+            Url = "https://github.com/owner/repo/pull/5",
+            Number = 5,
+            IsDraft = false,
+            Author = "alice",
+            IsAuthorVerified = value
+        };
+
+        await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 0 },
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>> { [pollable[0].Id] = [pr] },
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        captured.Should().NotBeNull("the pull request is dispatched for review");
+        captured!.PrAuthor.Should().Be("alice");
+        captured.PrAuthorVerified.Should().Be(value);
+    }
+
     private static DispatchScheduler.DispatchRoundRobinRequest PrOnlyRequest(
         IReadOnlyList<PipelineJobTemplate> pollable,
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattened,

@@ -592,6 +592,53 @@ public class PipelineRunHashExtensionsPropertyTests
             "a hash without failureCategory must give null, not throw");
     }
 
+    // ── ReviewPrAuthorVerified ───────────────────────────────────────────────
+
+    private static PipelineRun MakeReviewRun(bool reviewPrAuthorVerified) =>
+        PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunId = "review-run-1",
+            IssueIdentifier = new IssueIdentifier("org/repo#42"),
+            IssueTitle = "Review of PR 42",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            RunType = PipelineRunType.Review,
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = reviewPrAuthorVerified,
+        });
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReviewPrAuthorVerified_RoundTrips(bool value)
+    {
+        var run = MakeReviewRun(value);
+
+        var restored = PipelineRunHashExtensions.FromHash(run.ToHashEntries())!;
+
+        restored.ReviewPrAuthorVerified.Should().Be(value,
+            "ReviewPrAuthorVerified must survive the Redis hash round-trip");
+        restored.ReviewPrAuthor.Should().Be("alice");
+    }
+
+    [Fact]
+    public void MissingReviewPrAuthorVerified_ReadsFalse()
+    {
+        // Starts from true: a run stored before the field has no entry, and a default false would pass either way.
+        var run = MakeReviewRun(true);
+
+        var hash = run.ToHashEntries()
+            .Where(e => (string)e.Name! != "reviewPrAuthorVerified")
+            .ToArray();
+
+        hash.Should().HaveCount(run.ToHashEntries().Length - 1, "the entry must have been present to be stripped");
+        var restored = PipelineRunHashExtensions.FromHash(hash)!;
+
+        restored.ReviewPrAuthorVerified.Should().BeFalse("a run stored before the field reads as not verified");
+        restored.ReviewPrAuthor.Should().Be("alice");
+    }
+
     // ── Guard: every writable PipelineRun property must be stored or explicitly excluded ──
 
     // Not in the hash on purpose. Add a property here only with a reason.

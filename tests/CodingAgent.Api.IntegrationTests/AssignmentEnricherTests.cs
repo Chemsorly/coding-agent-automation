@@ -485,6 +485,46 @@ public sealed class AssignmentEnricherTests
         pullRequest.Url.Should().Be("https://gitlab.example.com/group/repo/-/merge_requests/5");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Review_SubjectCarriesReviewPrAuthorVerified(bool value)
+    {
+        // The stored IssueDetail carries the opposite value, so a subject taken from it instead of from the
+        // review's own flag fails in both rows. The stub turns the subject into the issue context, as the real
+        // infrastructure does, so the enriched IssueDetail is what the enricher passed and not a fixture.
+        var identity = MakeIdentity() with
+        {
+            IssueIdentifier = new IssueIdentifier("5"),
+            IssueProviderConfigId = "repo-prov-1",
+            TaskType = WorkItemTaskType.Review,
+            RunType = PipelineRunType.Review,
+            IssueDetail = new IssueDetail { IsAuthorVerified = !value, Identifier = "5", Title = "Add pagination", Description = "", Labels = [] },
+            ReviewPrDescription = "Pages the API",
+            ReviewPrAuthor = "alice",
+            ReviewPrAuthorVerified = value,
+            LinkedPullRequest = new LinkedPullRequest
+            {
+                Url = "https://gitlab.example.com/group/repo/-/merge_requests/5",
+                BranchName = "feature/pages",
+                IsDraft = false,
+                Number = 5
+            }
+        };
+        var setup = new Setup
+        {
+            Infra = new((request, _) => Task.FromResult<CoreResult?>(MakeCoreResult(request) with
+            {
+                IssueContext = MakeIssueContext() with { IssueDetail = request.PullRequest! }
+            })),
+        };
+
+        var result = Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
+
+        setup.Infra.CapturedRequest!.PullRequest!.IsAuthorVerified.Should().Be(value, "the subject handed to the dispatch core carries the review's flag");
+        result.IssueDetail!.IsAuthorVerified.Should().Be(value, "the assignment's issue is that subject");
+    }
+
     [Fact]
     public async Task OperatorTriage_SubjectIsVerified()
     {

@@ -303,6 +303,10 @@ public sealed record JobAssignmentMessage
     /// <summary>Brain group for brain consolidation assignments (spec 054, req 10.2, task 3.6). Wire-compat: additive.</summary>
     [Key(46)]
     public IReadOnlyList<BrainGroupMember>? BrainGroup { get; init; }
+
+    /// <summary>Whether the author of the PR under review is on the repository. Wire-compat: additive; from an older API it reads false.</summary>
+    [Key(47)]
+    public bool ReviewPrAuthorVerified { get; init; }
 }
 
 /// <summary>
