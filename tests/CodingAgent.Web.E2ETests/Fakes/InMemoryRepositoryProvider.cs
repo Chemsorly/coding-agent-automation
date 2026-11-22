@@ -107,6 +107,12 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     /// <summary>Latest body per PR number, set by the nullable UpdatePullRequestAsync overload.</summary>
     public Dictionary<int, string> PullRequestBodies { get; } = [];
 
+    /// <summary>Errors thrown by the next pushes, one per push. Empty: pushes succeed.</summary>
+    public Queue<Exception> PushErrors { get; } = new();
+
+    /// <summary>Per-PR state for GetPullRequestStateAsync. A PR not listed is Open.</summary>
+    public Dictionary<int, PullRequestState> PrStates { get; } = new();
+
     public void Reset()
     {
         MethodCalls.Clear();
@@ -130,6 +136,8 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         PrMergedState.Clear();
         BrainSeedFiles.Clear();
         PullRequestBodies.Clear();
+        PushErrors.Clear();
+        PrStates.Clear();
     }
 
     public Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct)
@@ -180,6 +188,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         MethodCalls.Add(nameof(PushBranchAsync));
+        if (PushErrors.TryDequeue(out var error)) throw error;
         return Task.CompletedTask;
     }
 
@@ -205,6 +214,9 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
 
     public Task ClosePullRequestAsync(int prNumber, CancellationToken ct) => Task.CompletedTask;
+
+    public Task<PullRequestState> GetPullRequestStateAsync(int prNumber, CancellationToken ct) =>
+        Task.FromResult(PrStates.TryGetValue(prNumber, out var state) ? state : PullRequestState.Open);
 
     public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct) =>
         Task.CompletedTask;
