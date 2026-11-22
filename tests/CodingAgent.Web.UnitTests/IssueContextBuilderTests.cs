@@ -610,13 +610,19 @@ public class IssueContextBuilderTests
     {
         var unverified = Enumerable.Range(1, 60).Select(i => new IssueComment
         {
-            Id = $"u{i}", Author = "outsider", Body = $"outside {i}",
-            CreatedAt = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i), IsVerified = false
+            Id = $"u{i}",
+            Author = "outsider",
+            Body = $"outside {i}",
+            CreatedAt = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i),
+            IsVerified = false
         });
         var verified = Enumerable.Range(1, 3).Select(i => new IssueComment
         {
-            Id = $"v{i}", Author = "maintainer", Body = $"inside {i}",
-            CreatedAt = new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i), IsVerified = true
+            Id = $"v{i}",
+            Author = "maintainer",
+            Body = $"inside {i}",
+            CreatedAt = new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i),
+            IsVerified = true
         });
         SetupIssueProvider(VerifiedIssue(), unverified.Concat(verified).ToList());
         var infra = CreateInfrastructure();

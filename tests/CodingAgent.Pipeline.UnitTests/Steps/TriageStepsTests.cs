@@ -93,13 +93,19 @@ public sealed class TriageStepsTests : IDisposable
         var verified = Enumerable.Range(1, 3)
             .Select(i => new IssueComment
             {
-                Id = $"v{i}", Author = "maintainer", Body = $"inside {i}", IsVerified = true,
+                Id = $"v{i}",
+                Author = "maintainer",
+                Body = $"inside {i}",
+                IsVerified = true,
                 CreatedAt = DateTime.UnixEpoch.AddMinutes(i)
             });
         var unverified = Enumerable.Range(1, 60)
             .Select(i => new IssueComment
             {
-                Id = $"u{i}", Author = "outsider", Body = $"outside {i}", IsVerified = false,
+                Id = $"u{i}",
+                Author = "outsider",
+                Body = $"outside {i}",
+                IsVerified = false,
                 CreatedAt = DateTime.UnixEpoch.AddHours(1).AddMinutes(i)
             });
         context.IssueComments = verified.Concat(unverified).ToList();
@@ -298,12 +304,13 @@ public sealed class TriageStepsTests : IDisposable
                 switch (call++)
                 {
                     case 0: File.WriteAllText(ResultPath, ValidResult); return Ok();                  // investigation
-                    case 1: return new AgentResult                                                    // review, rate-limited
-                    {
-                        ExitCode = 1,
-                        OutputLines = [],
-                        ErrorCategory = AgentErrorCategory.ProviderRateLimit
-                    };
+                    case 1:
+                        return new AgentResult                                                    // review, rate-limited
+                        {
+                            ExitCode = 1,
+                            OutputLines = [],
+                            ErrorCategory = AgentErrorCategory.ProviderRateLimit
+                        };
                     case 2: File.WriteAllText(reviewPath, "[CRITICAL] E1 has no source"); return Ok(); // review, sent again
                     default: File.WriteAllText(ResultPath, ValidResult); return Ok();                 // refinement
                 }
