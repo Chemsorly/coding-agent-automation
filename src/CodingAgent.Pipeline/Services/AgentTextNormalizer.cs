@@ -157,7 +157,7 @@ public static partial class AgentTextNormalizer
             return true;
         }
 
-        // TODO [WARNING] Fence tracking ignores HTML blocks, so a hidden comment can survive: in "<div>\n```\n<!-- payload -->" with no
+        // NOTE: Fence tracking ignores HTML blocks, so a hidden comment can survive: in "<div>\n```\n<!-- payload -->" with no
         // blank line, the page shows the backticks as text and hides the comment, but this scanner takes them as an open fence and
         // copies the payload verbatim into the prompt. A fix needs HTML block tracking, a design change; the doc comment on
         // AgentTextNormalizer already says this is not a guarantee.

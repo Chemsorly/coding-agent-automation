@@ -488,15 +488,15 @@ public class IssueContextBuilderTests
     // ── Text from outside authors ────────────────────────────────────────────
 
     private const string VerifiedBody =
-        "Intro <!-- maintainer note -->\n\n## Requirements\nKeep the ​marker.\n\n## Acceptance Criteria\n- [ ] Parser works <!-- hint -->";
+        "Intro <!-- maintainer note -->\n\n## Requirements\nKeep the \u200Bmarker.\n\n## Acceptance Criteria\n- [ ] Parser works <!-- hint -->";
 
     private const string VerifiedContextFile =
-        "# Issue: Fix the ⚠️ parser\n\n" +
+        "# Issue: Fix the \u26A0\uFE0F parser\n\n" +
         "## Description\n" +
         "Intro <!-- maintainer note -->\n\n" +
-        "## Requirements\nKeep the ​marker.\n\n" +
+        "## Requirements\nKeep the \u200Bmarker.\n\n" +
         "## Acceptance Criteria\n- [ ] Parser works <!-- hint -->\n\n" +
-        "## Requirements\nKeep the ​marker.\n\n" +
+        "## Requirements\nKeep the \u200Bmarker.\n\n" +
         "## Acceptance Criteria\n- Parser works <!-- hint -->\n\n" +
         "## Comments\n" +
         "The following comments were left on the issue and may contain clarifications, updated requirements, or stakeholder feedback.\n\n" +
@@ -506,7 +506,7 @@ public class IssueContextBuilderTests
     private static IssueDetail VerifiedIssue() => new()
     {
         Identifier = "42",
-        Title = "Fix the ⚠️ parser",
+        Title = "Fix the \u26A0\uFE0F parser",
         Description = VerifiedBody,
         Labels = [],
         IsAuthorVerified = true

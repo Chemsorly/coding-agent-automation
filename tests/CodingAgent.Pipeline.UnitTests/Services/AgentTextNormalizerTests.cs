@@ -132,8 +132,8 @@ public static class InvisibleCharacterArbitraries
     private static readonly string[] Pieces =
     [
         "a", "Z", " ", "\n", "\r\n", "<!--", "-->", "```", "[x]: /u\n", "\U0001F680",
-        "­", "​", "‍", "⁠", "‮", "﻿",
-        "\U000E0041", "\U000E007F", "️", "\U000E0100", "᠋"
+        "\u00AD", "\u200B", "\u200D", "\u2060", "\u202E", "\uFEFF",
+        "\U000E0041", "\U000E007F", "\uFE0F", "\U000E0100", "\u180B"
     ];
 
     public static Arbitrary<string> Strings() =>

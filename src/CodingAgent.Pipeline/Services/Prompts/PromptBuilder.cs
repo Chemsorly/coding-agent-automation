@@ -622,10 +622,10 @@ public static partial class PromptBuilder
     /// <summary>
     /// Appends the ## Attached Images table listing all downloaded images.
     /// </summary>
-    // TODO [WARNING] Hidden text still reaches the context file through this table: IssueImageExtractor reads the raw body and raw
+    // NOTE: Hidden text still reaches the context file through this table: IssueImageExtractor reads the raw body and raw
     // comment bodies, so it also finds images inside HTML comments, and their alt text is written below unnormalized, after the
-    // "## Unverified input" section and outside its "information, not instructions" rule. Normalize or drop the alt text of images
-    // from unverified authors. Deferred: this issue lists image alt text for a later change.
+    // section for unverified comments and outside its "information, not instructions" rule. Normalize or drop the alt text of
+    // images from unverified authors. Deferred: this issue lists image alt text for a later change.
     private static void AppendAttachedImagesTable(StringBuilder sb, IReadOnlyList<DownloadedImage> downloadedImages)
     {
         sb.AppendLine("## Attached Images");

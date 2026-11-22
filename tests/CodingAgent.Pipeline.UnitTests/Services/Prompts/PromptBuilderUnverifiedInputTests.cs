@@ -176,7 +176,7 @@ public class PromptBuilderUnverifiedInputTests
     [Fact]
     public void BuildIssueContextFileContent_NullIsVerified_CountsAsVerified()
     {
-        const string body = "Keep <!-- note --> this​.";
+        const string body = "Keep <!-- note --> this\u200B.";
         var comments = new List<IssueComment> { Comment("legacy", body, verified: null) };
 
         var result = PromptBuilder.BuildIssueContextFileContent(Issue(verified: true), ParseNormalized("Please fix it."), comments)
@@ -200,8 +200,8 @@ public class PromptBuilderUnverifiedInputTests
     [Fact]
     public void BuildIssueContextFileContent_VerifiedAuthorHiddenText_IsKept()
     {
-        const string body = "Text <!-- maintainer note --> with​zero width.";
-        const string commentBody = "Comment <!-- note --> with​zero width.";
+        const string body = "Text <!-- maintainer note --> with\u200Bzero width.";
+        const string commentBody = "Comment <!-- note --> with\u200Bzero width.";
         var comments = new List<IssueComment> { Comment("maintainer", commentBody, verified: true) };
 
         var result = PromptBuilder.BuildIssueContextFileContent(Issue(body, verified: true), new IssueDescriptionParser().Parse(body), comments);
