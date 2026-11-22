@@ -102,7 +102,10 @@ public sealed class FeedbackService
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(feedbackTimeoutSeconds));
 
-            var agentResult = await agentProvider.ExecuteAsync(
+            // A provider rate limit or overload is sent again after TransientRetryDelay. The waits and the
+            // attempts run on timeoutCts.Token, so the retries end with the feedback timeout.
+            var agentResult = await ProviderBusyRetry.ExecuteAsync(
+                (r, _, c) => agentProvider.ExecuteAsync(r, c, line => emitOutputLine(line)),
                 new AgentRequest
                 {
                     Prompt = feedbackPrompt,
@@ -110,8 +113,16 @@ public sealed class FeedbackService
                     Timeout = TimeSpan.FromSeconds(feedbackTimeoutSeconds),
                     UseResume = true
                 },
-                timeoutCts.Token,
-                line => emitOutputLine(line));
+                request.TransientRetryDelay,
+                (result, consecutive, total) =>
+                {
+                    _logger.Warning(
+                        "Pipeline {RunId} feedback: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s ({TotalRetries} in this call)",
+                        run.RunId, result.ErrorCategory, consecutive, ProviderBusyRetry.MaxConsecutiveRetries, (int)request.TransientRetryDelay.TotalSeconds, total);
+                    emitOutputLine(
+                        $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {(int)request.TransientRetryDelay.TotalSeconds} s ({consecutive}/{ProviderBusyRetry.MaxConsecutiveRetries})");
+                },
+                timeoutCts.Token);
 
             var responseText = string.Join("\n", agentResult.OutputLines);
             run.Feedback = ParseFeedbackFromResponse(responseText, outcome, DateTime.UtcNow);
