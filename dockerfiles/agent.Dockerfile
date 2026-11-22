@@ -103,6 +103,13 @@ RUN JAVA_ARCH=$(dpkg --print-architecture) && \
     chown -R ubuntu:ubuntu /home/ubuntu /app/workspaces
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
+# VSTest 18.12.0 (SDK 11.0.100) opens its test-session directory with the x86_64 values of
+# O_NOFOLLOW|O_DIRECTORY on every Linux. On arm64 those bits mean O_LARGEFILE|O_DIRECT, the open
+# fails with errno 22, and `dotnet test` exits 1 although every test passed, so the quality gate
+# fails on the arm64 nodes. Upstream: microsoft/vstest#16657, fixed by microsoft/vstest#16697.
+# TODO: remove once the SDK pinned above ships a VSTest release that contains microsoft/vstest#16697.
+ENV VSTEST_DISABLE_ARTIFACTS_DIRECTORY_VERIFICATION=1
+
 USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
