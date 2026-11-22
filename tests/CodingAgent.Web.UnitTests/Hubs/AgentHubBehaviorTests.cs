@@ -1687,13 +1687,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
         IssueProviderConfigId = "issue-cfg-1"
     };
 
-    private Func<Task> HeartbeatWithStep(PipelineStep step, out Mock<HubCallerContext> context)
+    private Func<Task> HeartbeatWithStep(PipelineStep step, out Mock<HubCallerContext> context, DateTimeOffset? timestamp = null)
     {
         var hub = CreateHub(out context);
         var heartbeat = new HeartbeatMessage
         {
             AgentId = "agent-1",
-            Timestamp = DateTimeOffset.UtcNow,
+            Timestamp = timestamp ?? DateTimeOffset.UtcNow,
             CurrentStep = step,
             MemoryUsageMb = 512
         };
@@ -1867,6 +1867,145 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // LastStepChangeAt should NOT be refreshed — step mismatch
         run.LastStepChangeAt.Should().Be(originalTimestamp);
+    }
+
+    // A step report sent while the hub was disconnected is lost; the heartbeat carries the agent's real step.
+    // The lifecycle service is a mock, so these tests assert the call, not the run's step.
+
+    // Proves the heartbeat reached the step comparison (the run was looked up) and then did not correct the run.
+    private void VerifyNoStepCorrection()
+    {
+        _mockFacade.Verify(f => f.GetRun("job-1"), Times.Once);
+        _mockLifecycleService.Verify(
+            s => s.HandleStepTransition(
+                It.IsAny<JobId>(), It.IsAny<PipelineStep>(), It.IsAny<DateTimeOffset>(), It.IsAny<Dictionary<string, string>?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_StepMismatch_CorrectsTheRunStep()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.AnalyzingCode;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(PipelineStep.ReviewingAnalysis, out _)();
+
+        _mockLifecycleService.Verify(
+            s => s.HandleStepTransition(
+                It.Is<JobId>(j => j.Value == "job-1"),
+                PipelineStep.ReviewingAnalysis,
+                It.IsAny<DateTimeOffset>(),
+                null),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Heartbeat_StepMismatch_FutureTimestamp_ClampsTheCorrectionTimestamp()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.AnalyzingCode;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(PipelineStep.ReviewingAnalysis, out _, DateTimeOffset.UtcNow.AddHours(5))();
+
+        _mockLifecycleService.Verify(
+            s => s.HandleStepTransition(
+                It.IsAny<JobId>(),
+                PipelineStep.ReviewingAnalysis,
+                It.Is<DateTimeOffset>(t => t <= DateTimeOffset.UtcNow),
+                null),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Heartbeat_StepMismatch_PastTimestamp_IsPassedThrough()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.AnalyzingCode;
+        ArrangeActiveJob(run);
+        var agentTimestamp = DateTimeOffset.UtcNow.AddSeconds(-20);
+
+        await HeartbeatWithStep(PipelineStep.ReviewingAnalysis, out _, agentTimestamp)();
+
+        _mockLifecycleService.Verify(
+            s => s.HandleStepTransition(
+                It.IsAny<JobId>(), PipelineStep.ReviewingAnalysis, agentTimestamp, null),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Heartbeat_StepMatches_DoesNotReportATransition()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(PipelineStep.RunningQualityGates, out _)();
+
+        VerifyNoStepCorrection();
+        // The "same step" branch ran, so this is not an early exit
+        _mockFacade.Verify(
+            f => f.TouchLastProgressAsync(It.Is<JobId>(j => j.Value == "job-1"), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Heartbeat_TerminalStepFromAgent_DoesNotCorrectTheRun()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.AnalyzingCode;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(PipelineStep.Completed, out _)();
+
+        VerifyNoStepCorrection();
+    }
+
+    [Theory]
+    [InlineData(PipelineStep.Failed)]
+    [InlineData(PipelineStep.Cancelled)]
+    [InlineData(PipelineStep.ConflictRestart)]
+    [InlineData(PipelineStep.PrMerged)]
+    [InlineData(PipelineStep.PrClosed)]
+    public async Task Heartbeat_OtherTerminalStepFromAgent_DoesNotCorrectTheRun(PipelineStep agentStep)
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.AnalyzingCode;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(agentStep, out _)();
+
+        VerifyNoStepCorrection();
+    }
+
+    [Fact]
+    public async Task Heartbeat_RunAlreadyTerminal_DoesNotCorrectTheRun()
+    {
+        var run = CreateRun();
+        run.CurrentStep = PipelineStep.Cancelled;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(PipelineStep.GeneratingCode, out _)();
+
+        VerifyNoStepCorrection();
+    }
+
+    [Theory]
+    [InlineData(PipelineStep.Completed)]
+    [InlineData(PipelineStep.Failed)]
+    [InlineData(PipelineStep.ConflictRestart)]
+    [InlineData(PipelineStep.PrMerged)]
+    [InlineData(PipelineStep.PrClosed)]
+    public async Task Heartbeat_RunAtOtherTerminalStep_DoesNotCorrectTheRun(PipelineStep runStep)
+    {
+        var run = CreateRun();
+        run.CurrentStep = runStep;
+        ArrangeActiveJob(run);
+
+        await HeartbeatWithStep(PipelineStep.GeneratingCode, out _)();
+
+        VerifyNoStepCorrection();
     }
 
     [Fact]
