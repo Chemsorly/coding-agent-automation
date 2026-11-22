@@ -402,6 +402,7 @@ public partial class QualityGateExecutor
                     run, issue, latestReport, cats.HarnessCategories, cats.IssueCategories),
                 Outcome = FeedbackOutcome.Failure,
                 FeedbackTimeoutSeconds = context.Config.FeedbackTimeoutSeconds,
+                TransientRetryDelay = context.Config.TransientRetryDelay,
                 EmitOutputLine = line => context.Callbacks.EmitOutputLine(line)
             },
             ct);
