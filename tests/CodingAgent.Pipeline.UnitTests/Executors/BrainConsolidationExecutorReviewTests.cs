@@ -82,6 +82,29 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         LastSuccessfulRunUtc = DateTime.UtcNow.AddDays(-7)
     };
 
+    /// <summary>A job whose provider retries wait no time, so a test of a retry does not wait for the default 30 seconds.</summary>
+    private ConsolidationJobMessage CreateJobWithoutProviderRetryDelay()
+    {
+        var job = CreateJob(reviewEnabled: true);
+        return new ConsolidationJobMessage
+        {
+            JobId = job.JobId,
+            Type = job.Type,
+            TemplateId = job.TemplateId,
+            TemplateName = job.TemplateName,
+            ProviderConfigs = job.ProviderConfigs,
+            PipelineConfiguration = job.PipelineConfiguration with { TransientRetryDelay = TimeSpan.Zero },
+            LastSuccessfulRunUtc = job.LastSuccessfulRunUtc
+        };
+    }
+
+    private static AgentResult BusyResult(AgentErrorCategory category) => new()
+    {
+        ExitCode = 1,
+        OutputLines = ["provider is busy"],
+        ErrorCategory = category
+    };
+
     private Action<string> CaptureOutput => line => _outputLines.Add(line);
 
     private static AgentResult SuccessResult(TokenUsage? usage = null) => new()
@@ -90,6 +113,160 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         OutputLines = ["Files modified: 2", "Entries merged: 1"],
         Usage = usage
     };
+
+    /// <summary>
+    /// The brain consolidation agent is retried after a provider overload: the job does not fail on one busy answer.
+    /// The wait is the job's <c>TransientRetryDelay</c>; a call that ignored it would wait 30 seconds and miss the bound.
+    /// </summary>
+    [Fact]
+    public async Task ConsolidationAgent_ProviderOverload_IsRetried()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutProviderRetryDelay();
+        var callCount = 0;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest _, CancellationToken _, Action<string>? _) =>
+                ++callCount == 1 ? BusyResult(AgentErrorCategory.ProviderOverload) : SuccessResult());
+
+        var result = await executor
+            .ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None, CaptureOutput)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        result.Success.Should().BeTrue();
+        // generator (busy), generator again, diff summary (writes no file, so the review is skipped)
+        _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
+        _outputLines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderOverload)", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The diff summary continues the generator's session, so its retry carries the note that the previous turn was cut off.
+    /// </summary>
+    [Fact]
+    public async Task DiffSummary_ProviderRateLimit_IsRetriedWithTheRetryNote()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutProviderRetryDelay();
+        var requests = new List<AgentRequest>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                requests.Add(req);
+                switch (requests.Count)
+                {
+                    case 1: // generator
+                        return SuccessResult();
+                    case 2: // diff summary, turned down
+                        return BusyResult(AgentErrorCategory.ProviderRateLimit);
+                    case 3: // diff summary again
+                        var diffPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(diffPath)!);
+                        File.WriteAllText(diffPath, "## Changes\n- Modified lessons-learned.md\n- Merged 2 entries about Docker");
+                        return SuccessResult();
+                    default: // discriminator: only a suggestion, so no refinement
+                        var reviewPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.BrainConsolidationReviewFilePath);
+                        File.WriteAllText(reviewPath, "[SUGGESTION] Consider adding more detail to merged entries");
+                        return SuccessResult();
+                }
+            });
+
+        var result = await executor
+            .ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None, CaptureOutput)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        result.Success.Should().BeTrue();
+        requests.Should().HaveCount(4, "generator, diff summary twice, discriminator");
+        requests[1].UseResume.Should().BeTrue();
+        requests[2].Prompt.Should().Be(ProviderBusyRetry.RetryNote + requests[1].Prompt);
+        _outputLines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    /// <summary>The adversarial reviewer is retried too: a busy answer does not end the review.</summary>
+    [Fact]
+    public async Task AdversarialReview_ProviderRateLimit_IsRetried()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutProviderRetryDelay();
+        var callCount = 0;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                switch (++callCount)
+                {
+                    case 1: // generator
+                        return SuccessResult();
+                    case 2: // diff summary
+                        var diffPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(diffPath)!);
+                        File.WriteAllText(diffPath, "## Changes\n- Modified lessons-learned.md\n- Merged 2 entries about Docker");
+                        return SuccessResult();
+                    case 3: // discriminator, turned down
+                        return BusyResult(AgentErrorCategory.ProviderRateLimit);
+                    default: // discriminator again: only a suggestion, so no refinement
+                        var reviewPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.BrainConsolidationReviewFilePath);
+                        File.WriteAllText(reviewPath, "[SUGGESTION] Consider adding more detail to merged entries");
+                        return SuccessResult();
+                }
+            });
+
+        var result = await executor
+            .ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None, CaptureOutput)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        result.Success.Should().BeTrue();
+        _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(4));
+        _outputLines.Should().Contain(l => l.StartsWith("📋 Review complete", StringComparison.Ordinal));
+        _outputLines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The refinement continues the generator's session and is retried after a provider rate limit; its retry
+    /// carries the note that the previous turn was cut off.
+    /// </summary>
+    [Fact]
+    public async Task Refinement_ProviderRateLimit_IsRetriedWithTheRetryNote()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJobWithoutProviderRetryDelay();
+        var requests = new List<AgentRequest>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                requests.Add(req);
+                switch (requests.Count)
+                {
+                    case 1: // generator
+                        return SuccessResult();
+                    case 2: // diff summary
+                        var diffPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(diffPath)!);
+                        File.WriteAllText(diffPath, "## Changes\n- Modified lessons-learned.md\n- Merged 2 entries about Docker");
+                        return SuccessResult();
+                    case 3: // discriminator: a critical finding triggers the refinement
+                        var reviewPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.BrainConsolidationReviewFilePath);
+                        File.WriteAllText(reviewPath, "[CRITICAL] Incorrectly removed valuable entry about Docker");
+                        return SuccessResult();
+                    case 4: // refinement, turned down
+                        return BusyResult(AgentErrorCategory.ProviderRateLimit);
+                    default: // refinement again
+                        return SuccessResult();
+                }
+            });
+
+        var result = await executor
+            .ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None, CaptureOutput)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        result.Success.Should().BeTrue();
+        requests.Should().HaveCount(5, "generator, diff summary, discriminator, refinement twice");
+        requests[3].UseResume.Should().BeTrue();
+        requests[4].Prompt.Should().Be(ProviderBusyRetry.RetryNote + requests[3].Prompt);
+        _outputLines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+        _outputLines.Should().Contain(l => l.StartsWith("✅ Refinement complete", StringComparison.Ordinal));
+    }
 
     [Fact]
     public async Task ReviewEnabled_ProducesDiffThenReviews()

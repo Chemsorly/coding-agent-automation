@@ -2,7 +2,10 @@ using AwesomeAssertions;
 using CodingAgent.Agent.Executors;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Moq;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Agent.UnitTests.Executors;
 
@@ -151,6 +154,159 @@ public class ConsolidationExecutorBaseTests
     }
 
     [Fact]
+    public async Task ExecuteAgentAndCheckAsync_ProviderRateLimit_IsRetried()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.SetupSequence(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["done"] });
+        var lines = new List<string>();
+
+        var (result, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-1", CancellationToken.None,
+            onOutputLine: lines.Add, providerRetryDelay: TimeSpan.Zero);
+
+        mockAgent.Verify(
+            x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(2));
+        failure.Should().BeNull();
+        result.Success.Should().BeTrue();
+        lines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAgentAndCheckAsync_ProviderOverloadOnAResumedRequest_IsRetriedWithTheRetryNote()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.SetupSequence(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderOverload })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var (_, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp", UseResume = true }, "job-1",
+            CancellationToken.None, providerRetryDelay: TimeSpan.Zero);
+
+        failure.Should().BeNull();
+        var prompts = mockAgent.Invocations
+            .Where(i => i.Method.Name == nameof(IAgentProvider.ExecuteAsync))
+            .Select(i => ((AgentRequest)i.Arguments[0]).Prompt)
+            .ToList();
+        prompts.Should().Equal("test", ProviderBusyRetry.RetryNote + "test");
+    }
+
+    [Fact]
+    public async Task ExecuteAgentAndCheckAsync_ProviderRateLimit_LogsAWarningWithTheExecutorAndRun()
+    {
+        var sink = new CapturingSink();
+        using var logger = new Serilog.LoggerConfiguration().MinimumLevel.Debug().WriteTo.Sink(sink).CreateLogger();
+        var executor = new TestableExecutor(logger);
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.SetupSequence(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-7", CancellationToken.None,
+            providerRetryDelay: TimeSpan.Zero);
+
+        var warning = sink.Events.Should().ContainSingle(e => e.MessageTemplate.Text.Contains("model provider busy")).Which;
+        warning.Level.Should().Be(LogEventLevel.Warning);
+        ScalarValueOf(warning, "ExecutorName").Should().Be("Test executor");
+        ScalarValueOf(warning, "RunId").Should().Be("job-7");
+        ScalarValueOf(warning, "ErrorCategory").Should().Be(AgentErrorCategory.ProviderRateLimit);
+        ScalarValueOf(warning, "Attempt").Should().Be(1);
+        ScalarValueOf(warning, "MaxRetries").Should().Be(ProviderBusyRetry.MaxConsecutiveRetries);
+        ScalarValueOf(warning, "DelaySeconds").Should().Be(0);
+        ScalarValueOf(warning, "TotalRetries").Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAgentAndCheckAsync_ProviderStaysBusy_FailsWithTheExitCodeAfterTheRetriesAreUsedUp()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit });
+
+        var (result, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-1", CancellationToken.None,
+            providerRetryDelay: TimeSpan.Zero);
+
+        mockAgent.Verify(
+            x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(ProviderBusyRetry.MaxConsecutiveRetries + 1));
+        result.ErrorCategory.Should().Be(AgentErrorCategory.ProviderRateLimit);
+        failure.Should().NotBeNull();
+        failure!.FailureCategory.Should().Be(FailureReason.ExitCodeFailure);
+        failure.ErrorMessage.Should().Be("Agent exited with code 1");
+    }
+
+    [Theory]
+    [InlineData(AgentErrorCategory.None)]
+    [InlineData(AgentErrorCategory.ProviderQuotaExhausted)]
+    [InlineData(AgentErrorCategory.PermanentAuthFailure)]
+    public async Task ExecuteAgentAndCheckAsync_OtherFailureCategories_AreNotRetried(AgentErrorCategory category)
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = category });
+
+        var (_, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-1", CancellationToken.None,
+            providerRetryDelay: TimeSpan.Zero);
+
+        mockAgent.Verify(
+            x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+        failure.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteWithProviderRetryAsync_ProviderOverload_IsRetriedAndReturnsTheSuccess()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        var success = new AgentResult { ExitCode = 0, OutputLines = ["done"] };
+        mockAgent.SetupSequence(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderOverload })
+            .ReturnsAsync(success);
+        var lines = new List<string>();
+
+        var result = await executor.InvokeExecuteWithProviderRetryAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, TimeSpan.Zero, "job-1",
+            CancellationToken.None, lines.Add);
+
+        result.Should().BeSameAs(success);
+        lines.Should().ContainSingle(l => l == "⏳ Model provider busy (ProviderOverload), retrying in 0 s (1/10)");
+    }
+
+    [Fact]
+    public async Task ExecuteWithProviderRetryAsync_CancelDuringTheWait_Throws()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        using var cts = new CancellationTokenSource();
+        mockAgent.Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit });
+
+        var act = () => executor.InvokeExecuteWithProviderRetryAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, TimeSpan.FromMinutes(5), "job-1",
+            cts.Token, line =>
+            {
+                // The busy line is written just before the wait, so cancelling here ends the call at the wait.
+                if (line.StartsWith("⏳", StringComparison.Ordinal)) cts.Cancel();
+            });
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        mockAgent.Verify(
+            x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task WrapWithCancellationHandlingAsync_Success_ReturnsActionResult()
     {
         var executor = CreateExecutor();
@@ -263,6 +419,17 @@ public class ConsolidationExecutorBaseTests
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("void error");
     }
 
+    private static object? ScalarValueOf(LogEvent logEvent, string propertyName) =>
+        ((ScalarValue)logEvent.Properties[propertyName]).Value;
+
+    /// <summary>Collects the events of a real Serilog logger, so a test can read the properties of a log entry.</summary>
+    private sealed class CapturingSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = [];
+
+        public void Emit(LogEvent logEvent) => Events.Add(logEvent);
+    }
+
     /// <summary>
     /// Concrete test subclass to expose protected members for testing.
     /// </summary>
@@ -278,8 +445,14 @@ public class ConsolidationExecutorBaseTests
         public static ConsolidationJobResult InvokeCreateCancelledResult(string jobId) => CreateCancelledResult(jobId);
 
         public Task<(AgentResult Result, ConsolidationJobResult? Failure)> InvokeExecuteAgentAndCheckAsync(
-            IAgentProvider agentProvider, AgentRequest request, string jobId, CancellationToken ct)
-            => ExecuteAgentAndCheckAsync(agentProvider, request, jobId, ct);
+            IAgentProvider agentProvider, AgentRequest request, string jobId, CancellationToken ct,
+            Action<string>? onOutputLine = null, TimeSpan? providerRetryDelay = null)
+            => ExecuteAgentAndCheckAsync(agentProvider, request, jobId, ct, onOutputLine, providerRetryDelay: providerRetryDelay);
+
+        public Task<AgentResult> InvokeExecuteWithProviderRetryAsync(
+            IAgentProvider agentProvider, AgentRequest request, TimeSpan retryDelay, string jobId,
+            CancellationToken ct, Action<string>? onOutputLine)
+            => ExecuteWithProviderRetryAsync(agentProvider, request, retryDelay, jobId, ct, onOutputLine);
 
         public Task<ConsolidationJobResult> InvokeWrapWithCancellationHandlingAsync(
             string jobId, Func<Task<ConsolidationJobResult>> action, CancellationToken ct)
