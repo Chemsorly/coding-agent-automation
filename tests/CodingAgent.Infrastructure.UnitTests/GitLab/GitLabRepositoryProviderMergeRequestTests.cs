@@ -829,6 +829,22 @@ public class GitLabRepositoryProviderMergeRequestTests
     }
 
     [Fact]
+    public async Task GetOpenPullRequestAsync_TokensOwnUser_SetsTheFlag()
+    {
+        // The mock opens the merge request as the default user, who is also the token's own user.
+        var (client, projectId) = CreateServerWithMergeRequest(
+            "Review me", "Closes #3", "src-branch", "main");
+        var iid = (int)client.GetMergeRequest(projectId).All.Single().Iid;
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var result = await provider.GetOpenPullRequestAsync(iid, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Author.Should().Be("TestUser");
+        result.IsAuthorVerified.Should().BeTrue("the author is the token's own user");
+    }
+
+    [Fact]
     public async Task GetOpenPullRequestAsync_ClosedMr_ReturnsNull()
     {
         var (client, projectId) = CreateServerWithMergeRequest(

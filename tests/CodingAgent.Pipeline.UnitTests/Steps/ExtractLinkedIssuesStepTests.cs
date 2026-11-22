@@ -181,6 +181,46 @@ public class ExtractLinkedIssuesStepTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExtractLinkedIssues_NoLinkedIssue_SubjectCarriesReviewPrAuthorVerified(bool value)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"test-extract-pr-subject-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var run = new PipelineRun
+            {
+                RunId = "test-run",
+                IssueIdentifier = "77",
+                IssueTitle = "My PR Title",
+                IssueProviderConfigId = "ip",
+                RepoProviderConfigId = "rp",
+                StartedAt = DateTime.UtcNow,
+                WorkspacePath = tempDir,
+                RunType = PipelineRunType.Review,
+                ReviewPrDescription = "This PR adds pagination support",
+                ReviewPrAuthorVerified = value,
+                LinkedIssueContexts = Array.Empty<LinkedIssueContext>()
+            };
+
+            var context = BuildContext(run);
+
+            await new ExtractLinkedIssuesStep(new IssueDescriptionParser()).ExecuteAsync(context, CancellationToken.None);
+
+            context.Issue.Should().NotBeNull();
+            context.Issue!.Identifier.Should().Be("77");
+            context.Issue.IsAuthorVerified.Should().Be(value, "with no linked issue the subject is the PR, whose author was checked at dispatch");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ExecuteAsync_NoLinkedIssues_FallsBackToPrMetadata()
     {

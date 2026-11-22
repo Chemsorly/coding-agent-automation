@@ -223,7 +223,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             Description = reviewRequest.PrDescription ?? "",
             Labels = [],
             Url = reviewRequest.PrUrl,
-            IsAuthorVerified = false
+            IsAuthorVerified = reviewRequest.PrAuthorVerified
         };
         var result = await PrepareAsync(
             new OrchestratorPreparationRequest(
@@ -253,6 +253,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             ReviewPrTargetBranch = reviewRequest.PrTargetBranch,
             ReviewPrDescription = reviewRequest.PrDescription,
             ReviewPrAuthor = reviewRequest.PrAuthor,
+            ReviewPrAuthorVerified = reviewRequest.PrAuthorVerified,
             LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null
         };
     }

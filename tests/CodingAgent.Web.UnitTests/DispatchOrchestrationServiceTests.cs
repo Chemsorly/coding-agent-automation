@@ -702,6 +702,41 @@ public class DispatchOrchestrationServiceTests
         result.ReviewPrAuthor.Should().Be("dev-user");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PrepareReviewDistributionRequestAsync_CarriesPrAuthorVerified(bool value)
+    {
+        SetupStandardMocks();
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "issue-42",
+            PrNumber = 42,
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "This PR does things",
+            PrAuthor = "dev-user",
+            PrAuthorVerified = value,
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ReviewPrAuthorVerified.Should().Be(value);
+        result.IssueDetail.Should().NotBeNull();
+        result.IssueDetail!.IsAuthorVerified.Should().Be(value, "the review's subject is the pull request, whose author was checked");
+    }
+
     [Fact]
     public async Task PrepareReviewDistributionRequestAsync_LinkedPullRequestNumber_IsThePrNumber()
     {

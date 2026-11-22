@@ -98,6 +98,7 @@ public sealed partial class PipelineRun
             ReviewPrUrl = p.ReviewPrUrl,
             ReviewPrDescription = p.ReviewPrDescription,
             ReviewPrAuthor = p.ReviewPrAuthor,
+            ReviewPrAuthorVerified = p.ReviewPrAuthorVerified,
             LinkedIssueContexts = p.LinkedIssueContexts,
             DecompositionSource = p.DecompositionSource
         };

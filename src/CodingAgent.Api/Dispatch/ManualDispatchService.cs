@@ -104,6 +104,7 @@ internal sealed class ManualDispatchService(
             PrTargetBranch = pr.TargetBranch,
             PrDescription = pr.Description,
             PrAuthor = pr.Author,
+            PrAuthorVerified = pr.IsAuthorVerified,
             IssueProviderId = template.IssueProviderId,
             RepoProviderId = template.RepoProviderId,
             BrainProviderId = template.BrainProviderId,

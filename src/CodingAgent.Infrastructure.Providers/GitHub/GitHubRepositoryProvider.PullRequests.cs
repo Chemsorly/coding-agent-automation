@@ -432,7 +432,7 @@ public partial class GitHubRepositoryProvider
             // the housekeeping agentDonePrs list and triggering spurious rework swaps.
             // null state (field absent in response) → treat as non-open and filter out.
             if (IsOpen(pr))
-                items.Add(ToSummary(pr));
+                items.Add(await ToSummaryAsync(pr, ct));
         }
 
         return SharedPrOperations.BuildPagedResult(items, page, pageSize, hasMore);
@@ -444,7 +444,7 @@ public partial class GitHubRepositoryProvider
         try
         {
             var pr = await FetchPullRequestDetailAsync(prNumber, "GetOpenPullRequest", ct);
-            return IsOpen(pr) ? ToSummary(pr) : null;
+            return IsOpen(pr) ? await ToSummaryAsync(pr, ct) : null;
         }
         catch (NotFoundException)
         {
@@ -471,7 +471,7 @@ public partial class GitHubRepositoryProvider
 
     private static bool IsOpen(GitHubPrDetailDto pr) => string.Equals(pr.State, "open", StringComparison.OrdinalIgnoreCase);
 
-    private static PullRequestSummary ToSummary(GitHubPrDetailDto pr) => new()
+    private async Task<PullRequestSummary> ToSummaryAsync(GitHubPrDetailDto pr, CancellationToken ct) => new()
     {
         Number = pr.Number,
         Identifier = pr.Number.ToString(),
@@ -483,6 +483,11 @@ public partial class GitHubRepositoryProvider
         Url = pr.HtmlUrl ?? string.Empty,
         IsDraft = pr.Draft,
         Author = pr.User?.Login,
+        IsAuthorVerified = await IsVerifiedAuthorAsync(
+            pr.AuthorAssociation,
+            string.Equals(pr.User?.Type, "Bot", StringComparison.OrdinalIgnoreCase),
+            pr.User?.Login,
+            ct),
         CreatedAt = pr.CreatedAt.UtcDateTime,
         HasAutoMerge = pr.AutoMerge is not null,
     };
@@ -763,6 +768,8 @@ public partial class GitHubRepositoryProvider
         public GitHubPrRefDto? Base { get; set; }
         public string? HtmlUrl { get; set; }
         public GitHubPrUserDto? User { get; set; }
+        /// <summary>The author's relation to the repository as GitHub reports it (OWNER, MEMBER, CONTRIBUTOR, NONE …), read as a raw string.</summary>
+        public string? AuthorAssociation { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public GitHubPrLabelDto[]? Labels { get; set; }
         /// <summary>
@@ -785,6 +792,8 @@ public partial class GitHubRepositoryProvider
     private sealed class GitHubPrUserDto
     {
         public string? Login { get; set; }
+        /// <summary>The account type: User, Bot, Mannequin …</summary>
+        public string? Type { get; set; }
     }
 
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]

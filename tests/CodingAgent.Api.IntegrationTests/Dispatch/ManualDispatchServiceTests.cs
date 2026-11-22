@@ -263,6 +263,32 @@ public class ManualDispatchServiceTests
             && r.IssueProviderId.Value == "ip-1" && r.RepoProviderId.Value == "rp-1" && r.InitiatedBy == InitiatedByConstants.Manual), Project, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DispatchPullRequestAsync_CarriesPrAuthorVerified(bool value)
+    {
+        _repository.Setup(r => r.GetOpenPullRequestAsync(3363, It.IsAny<CancellationToken>())).ReturnsAsync(new PullRequestSummary
+        {
+            Number = 3363,
+            Identifier = "3363",
+            Title = "Fix it",
+            Description = "Closes #42",
+            Labels = [],
+            BranchName = "agent/42-fix",
+            TargetBranch = "main",
+            Url = "https://example.test/pull/3363",
+            IsDraft = false,
+            Author = "bot",
+            IsAuthorVerified = value
+        });
+
+        await Service().DispatchPullRequestAsync(Target(), 3363, CancellationToken.None);
+
+        _orchestration.Verify(o => o.PrepareReviewDistributionRequestAsync(It.Is<ReviewDispatchRequest>(r =>
+            r.PrNumber == 3363 && r.PrAuthor == "bot" && r.PrAuthorVerified == value), Project, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task DispatchPullRequestAsync_OfAPullRequestThatIsNotOpen_IsRefused()
     {

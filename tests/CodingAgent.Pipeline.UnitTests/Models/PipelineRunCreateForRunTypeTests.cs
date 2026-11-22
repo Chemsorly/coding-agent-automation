@@ -79,6 +79,26 @@ public class PipelineRunCreateForRunTypeTests
         run.ReviewPrAuthor.Should().Be("dev-user");
     }
 
+    [Fact]
+    public void CreateForRunType_CarriesReviewPrAuthorVerified()
+    {
+        // The default is false, so only a true value shows that the factory copies the flag.
+        var p = new PipelineRunCreationParams
+        {
+            RunId = "r-review",
+            IssueIdentifier = "org/repo#2",
+            IssueTitle = "PR Review",
+            IssueProviderConfigId = "ip-2",
+            RepoProviderConfigId = "rp-2",
+            RunType = PipelineRunType.Review,
+            ReviewPrAuthorVerified = true
+        };
+
+        var run = PipelineRun.CreateForRunType(p);
+
+        run.ReviewPrAuthorVerified.Should().BeTrue();
+    }
+
     // ── Decomposition ─────────────────────────────────────────────────────
 
     [Fact]

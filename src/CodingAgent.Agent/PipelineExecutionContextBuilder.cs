@@ -82,6 +82,7 @@ internal sealed class PipelineExecutionContextBuilder
             ReviewPrTargetBranch = job.ReviewPrTargetBranch ?? string.Empty,
             ReviewPrDescription = job.ReviewPrDescription,
             ReviewPrAuthor = job.ReviewPrAuthor,
+            ReviewPrAuthorVerified = job.ReviewPrAuthorVerified,
             LinkedIssueContexts = job.LinkedIssueContexts
         });
         run.RepositoryName = repoProvider.RepositoryFullName;

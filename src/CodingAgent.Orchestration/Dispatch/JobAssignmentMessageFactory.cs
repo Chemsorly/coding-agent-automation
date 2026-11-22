@@ -60,6 +60,7 @@ public static class JobAssignmentMessageFactory
             ReviewPrTargetBranch = request.ReviewPrTargetBranch,
             ReviewPrDescription = request.ReviewPrDescription,
             ReviewPrAuthor = request.ReviewPrAuthor,
+            ReviewPrAuthorVerified = request.ReviewPrAuthorVerified,
             ProjectContext = request.ProjectContext,
             ProjectId = request.ProjectId?.ToString(),
             ProjectName = request.ProjectName,

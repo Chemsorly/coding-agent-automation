@@ -91,6 +91,7 @@ internal static class WorkItemEntityBuilder
             ReviewPrTargetBranch = request.ReviewPrTargetBranch,
             ReviewPrDescription = request.ReviewPrDescription,
             ReviewPrAuthor = request.ReviewPrAuthor,
+            ReviewPrAuthorVerified = request.ReviewPrAuthorVerified,
 
             // Decomposition identity
             // ProjectContext is pre-built by DispatchOrchestrationService.BuildDecompositionProjectContextAsync

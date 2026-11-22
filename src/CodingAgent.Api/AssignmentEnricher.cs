@@ -491,7 +491,7 @@ public class AssignmentEnricher
         Description = identity.ReviewPrDescription ?? "",
         Labels = [],
         Url = identity.LinkedPullRequest?.Url,
-        IsAuthorVerified = false
+        IsAuthorVerified = identity.ReviewPrAuthorVerified
     };
 
     /// <summary>Whether <paramref name="issueProviderConfigId"/> is the tracker of an enabled template of the project.</summary>
