@@ -159,6 +159,30 @@ public class PullRequestFinalizationServiceTests
     }
 
     [Fact]
+    public async Task CollectFeedbackAsync_ProviderRateLimit_IsRetriedAfterConfiguredDelay()
+    {
+        var run = CreateRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        // A 10 s budget: the default 30 s delay would outlast it, so the retry only happens when the configured delay is used.
+        var config = new PipelineConfiguration { TransientRetryDelay = TimeSpan.Zero, FeedbackTimeoutSeconds = 10 };
+        var callCount = 0;
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((_, _, _) =>
+                Task.FromResult(++callCount == 1
+                    ? new AgentResult { ExitCode = 1, OutputLines = ["provider is busy"], ErrorCategory = AgentErrorCategory.ProviderRateLimit }
+                    : new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"category":"testing","stuckReason":"second attempt"}}"""] }));
+
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None, config);
+
+        agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Exactly(2));
+        run.Feedback.Should().NotBeNull();
+        run.Feedback!.Harness.Category.Should().Be("testing");
+        run.Feedback.Harness.StuckReason.Should().Be("second attempt");
+    }
+
+    [Fact]
     public async Task WhenConfigFeedbackTimeoutSecondsIsNonDefault_UsesConfiguredTimeout()
     {
         var run = CreateRun();

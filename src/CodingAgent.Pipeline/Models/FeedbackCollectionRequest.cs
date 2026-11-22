@@ -26,6 +26,9 @@ internal sealed record FeedbackCollectionRequest
     /// <summary>Timeout for the feedback agent call, in seconds.</summary>
     public required int FeedbackTimeoutSeconds { get; init; }
 
+    /// <summary>Wait before a feedback call that hit a provider rate limit or overload is sent again; the retries stay within <see cref="FeedbackTimeoutSeconds"/>.</summary>
+    public TimeSpan TransientRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Receives agent output lines.</summary>
     public required Action<string> EmitOutputLine { get; init; }
 }

@@ -588,6 +588,86 @@ public class FeedbackServiceTests
         run.Feedback.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_ProviderRateLimit_IsRetried()
+    {
+        var run = BuildMinimalRun();
+        const string feedbackJson = """
+            ```json
+            {"harness":{"category":"compilation failure","stuckReason":"missing dep"}}
+            ```
+            """;
+        var sentRequests = new List<AgentRequest>();
+        var emitted = new List<string>();
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((request, _, _) =>
+            {
+                sentRequests.Add(request);
+                return Task.FromResult(sentRequests.Count == 1
+                    ? new AgentResult { ExitCode = 1, OutputLines = ["provider is busy"], ErrorCategory = AgentErrorCategory.ProviderRateLimit }
+                    : new AgentResult { ExitCode = 0, OutputLines = [feedbackJson] });
+            });
+
+        await _sut.CollectFeedbackCoreAsync(
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "test prompt",
+                Outcome = FeedbackOutcome.Failure,
+                FeedbackTimeoutSeconds = 30,
+                TransientRetryDelay = TimeSpan.Zero,
+                EmitOutputLine = emitted.Add
+            },
+            CancellationToken.None);
+
+        agentProvider.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Exactly(2));
+        run.Feedback.Should().NotBeNull();
+        run.Feedback!.Harness.Category.Should().Be("compilation failure");
+        run.Feedback.Harness.StuckReason.Should().Be("missing dep");
+        sentRequests[0].Prompt.Should().Be("test prompt");
+        sentRequests[1].Prompt.Should().Be(ProviderBusyRetry.RetryNote + "test prompt");
+        emitted.Should().Contain("⏳ Model provider busy (ProviderRateLimit), retrying in 0 s (1/10)");
+    }
+
+    [Fact]
+    public async Task CollectFeedbackCoreAsync_TimeoutDuringRetryWait_GivesTimedOutFallback()
+    {
+        var run = BuildMinimalRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = ["provider is busy"], ErrorCategory = AgentErrorCategory.ProviderRateLimit });
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        await _sut.CollectFeedbackCoreAsync(
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "test prompt",
+                Outcome = FeedbackOutcome.Failure,
+                FeedbackTimeoutSeconds = 1,
+                TransientRetryDelay = TimeSpan.FromSeconds(30),
+                EmitOutputLine = _ => { }
+            },
+            CancellationToken.None);
+        stopwatch.Stop();
+
+        run.Feedback.Should().NotBeNull();
+        run.Feedback!.Harness.StuckReason.Should().Be("Feedback collection timed out");
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10), "the 30 s retry wait ends when the 1 s feedback timeout fires");
+        agentProvider.Verify(
+            a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
+            Times.Once);
+    }
+
     private static PipelineRun BuildMinimalRun() => new()
     {
         RunId = "collect-core-test",
