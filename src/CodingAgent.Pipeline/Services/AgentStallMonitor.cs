@@ -31,23 +31,14 @@ internal sealed record AgentMonitorContext(
 /// </summary>
 internal static class AgentStallMonitor
 {
-    /// <summary>
-    /// How many times in a row a call is sent again after the model provider answered with a rate limit or an
-    /// overload, counting only attempts that made no progress. When they are used up, the last result is
-    /// returned as it is.
-    /// </summary>
-    internal const int MaxProviderRetries = 10;
+    /// <inheritdoc cref="ProviderBusyRetry.MaxConsecutiveRetries"/>
+    internal const int MaxProviderRetries = ProviderBusyRetry.MaxConsecutiveRetries;
 
-    /// <summary>
-    /// Upper bound on retries of one call, also when attempts in between made progress.
-    /// </summary>
-    internal const int MaxProviderRetriesPerCall = 30;
+    /// <inheritdoc cref="ProviderBusyRetry.MaxRetriesPerCall"/>
+    internal const int MaxProviderRetriesPerCall = ProviderBusyRetry.MaxRetriesPerCall;
 
-    /// <summary>
-    /// Put in front of the prompt of a retried call that continues a session, so the agent knows its
-    /// previous turn ended with a provider error and carries on instead of starting over.
-    /// </summary>
-    internal const string ProviderRetryNote = "Your previous turn on this task was cut off by a model-provider error (rate limit or overload). Your work so far is in this conversation and in the workspace: continue from where you stopped instead of starting over.\n\n";
+    /// <inheritdoc cref="ProviderBusyRetry.RetryNote"/>
+    internal const string ProviderRetryNote = ProviderBusyRetry.RetryNote;
 
     /// <summary>
     /// Executes an agent request with background stall monitoring and per-session span.
@@ -74,7 +65,7 @@ internal static class AgentStallMonitor
     /// Time source used for all clock reads and delays. Defaults to <see cref="TimeProvider.System"/>.
     /// Pass a fake/controllable provider in tests to eliminate wall-clock dependency.
     /// </param>
-    public static async Task<AgentResult> ExecuteWithMonitoringAsync(
+    public static Task<AgentResult> ExecuteWithMonitoringAsync(
         AgentMonitorContext monitor,
         AgentRequest request,
         CancellationToken ct,
@@ -84,45 +75,25 @@ internal static class AgentStallMonitor
         string? phase = null)
     {
         timeProvider ??= TimeProvider.System;
-        var attemptRequest = request;
-        var consecutive = 0; // retries since the last attempt that made progress
-        var total = 0; // all retries of this call
-        while (true)
-        {
-            var result = await ExecuteMonitoredCallAsync(
-                monitor, attemptRequest, ct, onOutputLine, reportStallEvent, timeProvider, phase, total);
+        var delay = monitor.Config.TransientRetryDelay;
+        var delaySeconds = (int)delay.TotalSeconds;
 
-            if (!IsProviderBusy(result))
-                return result;
-
-            // An attempt that produced output tokens moved the call forward, so the count starts again.
-            if (result.Usage?.OutputTokens > 0)
-                consecutive = 0;
-
-            if (consecutive == MaxProviderRetries || total == MaxProviderRetriesPerCall)
-                return result;
-
-            consecutive++;
-            total++;
-
-            // TODO [WARNING] Tokens, cost, tool calls and usage details of every discarded busy attempt never reach the
-            // run totals: callers call run.AccumulateTokenUsage only on the result returned here, while AccumulateAgentSession
-            // still counts each attempt, so SessionCount and the PR cost text disagree (the span still carries the usage).
-            // Accumulating here would race with parallel review agents, which merge their usage serially, so the fix needs a
-            // decision: thread-safe accumulation, or folding the discarded usage into the returned result.
-
-            // The wait is outside every monitored call: no stall monitor runs while the provider recovers.
-            var delay = monitor.Config.TransientRetryDelay;
-            var delaySeconds = (int)delay.TotalSeconds;
-            monitor.Logger.Warning(
-                "Pipeline {RunId} {Phase}: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s ({TotalRetries} in this call)",
-                monitor.Run.RunId, monitor.PhaseDescription, result.ErrorCategory, consecutive, MaxProviderRetries, delaySeconds, total);
-            onOutputLine?.Invoke(
-                $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {delaySeconds} s ({consecutive}/{MaxProviderRetries})");
-
-            await Task.Delay(delay, timeProvider, ct);
-            attemptRequest = BuildProviderRetryRequest(request);
-        }
+        // The wait is outside every monitored call: no stall monitor runs while the provider recovers.
+        return ProviderBusyRetry.ExecuteAsync(
+            (attemptRequest, retry, c) => ExecuteMonitoredCallAsync(
+                monitor, attemptRequest, c, onOutputLine, reportStallEvent, timeProvider, phase, retry),
+            request,
+            delay,
+            (result, consecutive, total) =>
+            {
+                monitor.Logger.Warning(
+                    "Pipeline {RunId} {Phase}: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s ({TotalRetries} in this call)",
+                    monitor.Run.RunId, monitor.PhaseDescription, result.ErrorCategory, consecutive, MaxProviderRetries, delaySeconds, total);
+                onOutputLine?.Invoke(
+                    $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {delaySeconds} s ({consecutive}/{MaxProviderRetries})");
+            },
+            ct,
+            timeProvider);
     }
 
     /// <summary>
@@ -205,33 +176,6 @@ internal static class AgentStallMonitor
 
         return result;
     }
-
-    /// <summary>
-    /// True when the call failed because the model provider rate-limited or overloaded it: short-lived
-    /// by definition, unlike a used-up quota or rejected credentials. A null result (an agent that
-    /// reported nothing) is not a provider failure.
-    /// </summary>
-    private static bool IsProviderBusy(AgentResult result) =>
-        result is { Success: false, ErrorCategory: AgentErrorCategory.ProviderRateLimit or AgentErrorCategory.ProviderOverload };
-
-    /// <summary>
-    /// Copies <paramref name="original"/> for a retry. A request that continues a session gets
-    /// <see cref="ProviderRetryNote"/> in front of the original prompt; a fresh one is sent as it was.
-    /// Always built from the original, so the note is never added twice.
-    /// </summary>
-    private static AgentRequest BuildProviderRetryRequest(AgentRequest original) => new()
-    {
-        Prompt = original.UseResume || original.ResumeSessionId is not null
-            ? ProviderRetryNote + original.Prompt
-            : original.Prompt,
-        WorkspacePath = original.WorkspacePath,
-        Timeout = original.Timeout,
-        UseResume = original.UseResume,
-        ResumeSessionId = original.ResumeSessionId,
-        ImagePaths = original.ImagePaths,
-        EnvironmentVariables = original.EnvironmentVariables,
-        EffortOverride = original.EffortOverride
-    };
 
     /// <summary>
     /// Sets the exit code, token usage, cost and provider-reported usage details on the session span.

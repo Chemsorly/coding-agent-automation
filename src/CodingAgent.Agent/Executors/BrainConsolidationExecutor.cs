@@ -148,7 +148,8 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                     job.JobId,
                     ct,
                     onOutputLine,
-                    "brain_consolidation");
+                    "brain_consolidation",
+                    providerRetryDelay: job.PipelineConfiguration.TransientRetryDelay);
             });
 
             if (failure is not null) return failure;
@@ -180,7 +181,9 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                         },
                         onOutputLine,
                         Logger,
-                        ct);
+                        ct,
+                        executeAgent: (r, _, c) => ExecuteWithProviderRetryAsync(
+                            agentProvider, r, job.PipelineConfiguration.TransientRetryDelay, job.JobId, c, onOutputLine));
                 });
             }
 
@@ -382,14 +385,16 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             if (File.Exists(diffFilePath)) File.Delete(diffFilePath);
 
             onOutputLine?.Invoke("📝 Requesting diff summary from generator...");
-            var diffResult = await agentProvider.ExecuteAsync(
+            var diffResult = await ExecuteWithProviderRetryAsync(
+                agentProvider,
                 new AgentRequest
                 {
                     Prompt = ConsolidationPromptBuilder.BuildBrainConsolidationDiffPrompt(),
                     WorkspacePath = workspacePath,
                     Timeout = job.PipelineConfiguration.AgentTimeout,
                     UseResume = true
-                }, ct, onOutputLine);
+                },
+                job.PipelineConfiguration.TransientRetryDelay, job.JobId, ct, onOutputLine);
 
             if (!File.Exists(diffFilePath))
             {
