@@ -29,7 +29,8 @@ namespace CodingAgent.Web.E2ETests.Infrastructure;
 ///         the scripted agent provider and in-memory repository provider are used.</item>
 ///   <item><see cref="IQualityGateValidator"/> with <see cref="ConfigurableQualityGateValidator"/>
 ///         so quality gates always pass without running real builds.</item>
-///   <item><see cref="IBrainUpdateService"/> with a no-op so brain writes do nothing.</item>
+///   <item><see cref="IBrainUpdateService"/> with a no-op so brain writes do nothing by default. A test can
+///         pass the real service to <see cref="StartAsync"/> to run the brain against a real repository.</item>
 /// </list>
 /// </para>
 ///
@@ -58,7 +59,8 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
         string workItemId,
         FakeProviderFactory fakeProviders,
         ConfigurableQualityGateValidator qualityGateValidator,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IBrainUpdateService? brainUpdateService = null)
     {
         // The agent uses AGENT_API_KEY as-is. Derive it from the master key and agentId, exactly
         // as the real dispatch does for the per-Job Secret.
@@ -107,9 +109,12 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
 
         // ── Pipeline services ──
         builder.Services.AddPipelineServices(Serilog.Log.Logger);
-        // Replace the default brain update service with a no-op (no git remote needed)
+        // Replace the default brain update service with a no-op (no git remote needed), unless the test passes one
         builder.Services.RemoveAll<IBrainUpdateService>();
-        builder.Services.AddSingleton<IBrainUpdateService, NoOpBrainUpdateService>();
+        if (brainUpdateService is not null)
+            builder.Services.AddSingleton(brainUpdateService);
+        else
+            builder.Services.AddSingleton<IBrainUpdateService, NoOpBrainUpdateService>();
 
         // ── Agent runtime options ──
         builder.Services.AddOptions<AgentRuntimeOptions>();
