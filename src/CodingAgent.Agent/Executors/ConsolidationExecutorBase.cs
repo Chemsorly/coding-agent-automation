@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Agent.Executors;
@@ -49,8 +50,39 @@ public abstract class ConsolidationExecutorBase
         Path.Combine(job.PipelineConfiguration.WorkspaceBaseDirectory, job.JobId);
 
     /// <summary>
-    /// Executes an agent request and checks the result for success. If the agent exits
-    /// with a non-zero code, logs a warning and returns a failure result.
+    /// Sends an agent request and, when the model provider answers with a rate limit or an overload, sends it again
+    /// after <paramref name="retryDelay"/> (see <see cref="ProviderBusyRetry"/>), as a pipeline run does. A consolidation
+    /// has no pipeline run, so unlike there nothing monitors the call for silence. Each retry is logged as a warning and
+    /// shown as a "Model provider busy" output line. When the retries are used up, the last result is returned as it is.
+    /// </summary>
+    protected Task<AgentResult> ExecuteWithProviderRetryAsync(
+        IAgentProvider agentProvider,
+        AgentRequest request,
+        TimeSpan retryDelay,
+        string jobId,
+        CancellationToken ct,
+        Action<string>? onOutputLine)
+    {
+        var delaySeconds = (int)retryDelay.TotalSeconds;
+        return ProviderBusyRetry.ExecuteAsync(
+            (r, _, c) => agentProvider.ExecuteAsync(r, c, onOutputLine),
+            request,
+            retryDelay,
+            (result, consecutive, total) =>
+            {
+                Logger.Warning(
+                    "{ExecutorName} run {RunId}: model provider busy ({ErrorCategory}), retry {Attempt}/{MaxRetries} in {DelaySeconds} s ({TotalRetries} in this call)",
+                    ExecutorName, jobId, result.ErrorCategory, consecutive, ProviderBusyRetry.MaxConsecutiveRetries, delaySeconds, total);
+                onOutputLine?.Invoke(
+                    $"⏳ Model provider busy ({result.ErrorCategory}), retrying in {delaySeconds} s ({consecutive}/{ProviderBusyRetry.MaxConsecutiveRetries})");
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// Executes an agent request and checks the result for success. A provider rate limit or overload is retried first
+    /// (<see cref="ExecuteWithProviderRetryAsync"/>, waiting <paramref name="providerRetryDelay"/>, 30 seconds when null).
+    /// If the agent then exits with a non-zero code, logs a warning and returns a failure result.
     /// </summary>
     protected async Task<(AgentResult Result, ConsolidationJobResult? Failure)> ExecuteAgentAndCheckAsync(
         IAgentProvider agentProvider,
@@ -58,9 +90,10 @@ public abstract class ConsolidationExecutorBase
         string jobId,
         CancellationToken ct,
         Action<string>? onOutputLine = null,
-        string? usagePhase = null)
+        string? usagePhase = null,
+        TimeSpan? providerRetryDelay = null)
     {
-        var agentResult = await agentProvider.ExecuteAsync(request, ct, onOutputLine);
+        var agentResult = await ExecuteWithProviderRetryAsync(agentProvider, request, providerRetryDelay ?? TimeSpan.FromSeconds(30), jobId, ct, onOutputLine);
 
         if (usagePhase is not null) Progress?.AccumulateTokenUsage(agentResult, usagePhase);
 

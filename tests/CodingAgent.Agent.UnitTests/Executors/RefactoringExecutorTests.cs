@@ -83,6 +83,124 @@ public class RefactoringExecutorTests : IDisposable
         };
     }
 
+    /// <summary>
+    /// A job without a review whose provider retries wait no time, so a test of a retry does not wait for the default
+    /// 30 seconds. A caller that ignored the job's <c>TransientRetryDelay</c> would miss the bound the tests below set.
+    /// </summary>
+    private ConsolidationJobMessage CreateJobWithoutProviderRetryDelay()
+    {
+        var job = CreateJob();
+        return new ConsolidationJobMessage
+        {
+            JobId = job.JobId,
+            Type = job.Type,
+            TemplateId = job.TemplateId,
+            TemplateName = job.TemplateName,
+            ProviderConfigs = job.ProviderConfigs,
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = false,
+                TransientRetryDelay = TimeSpan.Zero
+            }
+        };
+    }
+
+    private static readonly AgentResult ProviderBusy = new()
+    {
+        ExitCode = 1,
+        OutputLines = ["provider is busy"],
+        ErrorCategory = AgentErrorCategory.ProviderRateLimit
+    };
+
+    /// <summary>
+    /// Runs a scan whose proposals file is empty and whose provider answers with <paramref name="respond"/>,
+    /// bounded so that a retry that waits for the default 30 seconds fails the test instead of passing slowly.
+    /// </summary>
+    private async Task<(ConsolidationJobResult Result, List<AgentRequest> Requests, List<string> Lines)> RunScanAsync(
+        Func<AgentRequest, AgentResult> respond)
+    {
+        var requests = new System.Collections.Concurrent.ConcurrentQueue<AgentRequest>();
+        var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, "[]"))
+            .Returns(Task.CompletedTask);
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                requests.Enqueue(req);
+                return respond(req);
+            });
+
+        var result = await CreateExecutor()
+            .ExecuteAsync(
+                CreateJobWithoutProviderRetryDelay(), _mockRepoProvider.Object, null, _mockIssueProvider.Object,
+                _mockAgentProvider.Object, CancellationToken.None, onOutputLine: lines.Enqueue)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        return (result, [.. requests], [.. lines]);
+    }
+
+    /// <summary>The context extraction of Phase 0 is retried: one busy answer does not fail the scan.</summary>
+    [Fact]
+    public async Task ExecuteAsync_ContextExtractionProviderRateLimit_IsRetried()
+    {
+        var calls = 0;
+
+        var (result, requests, lines) = await RunScanAsync(
+            _ => Interlocked.Increment(ref calls) == 1 ? ProviderBusy : new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        result.Success.Should().BeTrue();
+        // Phase 0 is the first call and runs alone: its retry is the same prompt again, not the first agent of Phase 1.
+        requests[1].Prompt.Should().Be(requests[0].Prompt);
+        lines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    /// <summary>One busy detection agent of the parallel phases is retried and does not fail the phase.</summary>
+    [Fact]
+    public async Task ExecuteAsync_ParallelAgentProviderRateLimit_IsRetried()
+    {
+        var calls = 0;
+
+        var (result, requests, lines) = await RunScanAsync(
+            // Call 1 is Phase 0; call 2 is the first agent of Phase 1.
+            _ => Interlocked.Increment(ref calls) == 2 ? ProviderBusy : new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        result.Success.Should().BeTrue();
+        requests.GroupBy(r => r.Prompt).Where(g => g.Count() > 1).Should().ContainSingle("only the busy agent is sent again");
+        // The line carries the agent's output prefix, such as "[A] ".
+        lines.Should().ContainSingle(l => l.Contains("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    /// <summary>The final aggregation is retried: one busy answer does not fail a scan that ran for a long time.</summary>
+    [Fact]
+    public async Task ExecuteAsync_AggregationProviderRateLimit_IsRetried()
+    {
+        var aggregationCalls = 0;
+
+        var (result, requests, lines) = await RunScanAsync(
+            req => req.Prompt.Contains(AggregationPromptMarker, StringComparison.Ordinal) && Interlocked.Increment(ref aggregationCalls) == 1
+                ? ProviderBusy
+                : new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        result.Success.Should().BeTrue();
+        requests.Count(r => r.Prompt.Contains(AggregationPromptMarker, StringComparison.Ordinal)).Should().Be(2);
+        lines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    /// <summary>When the provider stays busy, the retries are used up and the scan fails as it did before the retry existed.</summary>
+    [Fact]
+    public async Task ExecuteAsync_ContextExtractionProviderStaysBusy_FailsAfterTheRetriesAreUsedUp()
+    {
+        var (result, requests, _) = await RunScanAsync(_ => ProviderBusy);
+
+        result.Success.Should().BeFalse();
+        result.FailureCategory.Should().Be(FailureReason.ExitCodeFailure);
+        result.ErrorMessage.Should().Be("Agent exited with code 1");
+        requests.Should().HaveCount(ProviderBusyRetry.MaxConsecutiveRetries + 1);
+    }
+
     [Fact]
     public async Task ExecuteAsync_AgentFindsNothing_CreatesNoIssues()
     {

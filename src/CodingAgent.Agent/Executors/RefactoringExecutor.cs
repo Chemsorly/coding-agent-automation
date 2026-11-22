@@ -404,7 +404,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 job.JobId,
                 ct,
                 onOutputLine,
-                "refactoring_conventions");
+                "refactoring_conventions",
+                providerRetryDelay: job.PipelineConfiguration.TransientRetryDelay);
         });
 
         if (failure is not null) return (failure, []);
@@ -464,7 +465,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                     job.JobId,
                     ct,
                     onOutputLine,
-                    "refactoring_aggregation");
+                    "refactoring_aggregation",
+                    providerRetryDelay: job.PipelineConfiguration.TransientRetryDelay);
             });
             return aggregationFailure;
         }
@@ -541,7 +543,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                     job.JobId,
                     ct,
                     agentOnOutputLine,
-                    a.UsagePhase);
+                    a.UsagePhase,
+                    providerRetryDelay: job.PipelineConfiguration.TransientRetryDelay);
             })).ToArray();
 
         var results = await Task.WhenAll(phaseTasks);
@@ -684,7 +687,9 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 },
                 onOutputLine,
                 Logger,
-                ct);
+                ct,
+                executeAgent: (r, _, c) => ExecuteWithProviderRetryAsync(
+                    agentProvider, r, job.PipelineConfiguration.TransientRetryDelay, job.JobId, c, onOutputLine));
         });
 
         RecordUsage(reviewResult.ReviewAgentResult, "refactoring_review");

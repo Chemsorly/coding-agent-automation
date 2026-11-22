@@ -3,6 +3,8 @@ using CodingAgent.Agent.Executors;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
 using Moq;
 
 namespace CodingAgent.Agent.UnitTests.Executors;
@@ -106,6 +108,146 @@ public class RefactoringExecutorReviewTests : IDisposable
         _mockIssueProvider
             .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CreatedIssueResult { Identifier = "99", Url = "https://github.com/test/repo/issues/99" });
+    }
+
+    /// <summary>
+    /// The adversarial reviewer is retried after a provider rate limit, with the job's <c>TransientRetryDelay</c>
+    /// (a call that ignored it would wait 30 seconds and miss the bound).
+    /// </summary>
+    [Fact]
+    public async Task ReviewCall_ProviderRateLimit_IsRetried()
+    {
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            TemplateName = "Test Template",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = true,
+                AgentTimeout = TimeSpan.FromMinutes(5),
+                TransientRetryDelay = TimeSpan.Zero
+            }
+        };
+        SetupCloneWritesProposals(ValidProposalsJson);
+        SetupIssueCreation();
+        var reviewPrompt = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+        var reviewCalls = 0;
+        var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                if (req.Prompt != reviewPrompt)
+                    return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
+
+                if (Interlocked.Increment(ref reviewCalls) == 1)
+                    return new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderRateLimit };
+
+                // Only a suggestion, so no refinement is triggered
+                var reviewPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.RefactoringReviewFilePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(reviewPath)!);
+                File.WriteAllText(reviewPath, "[SUGGESTION] Minor style issue");
+                return new AgentResult { ExitCode = 0, OutputLines = ["Review done."] };
+            });
+
+        var result = await executor
+            .ExecuteAsync(
+                job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object,
+                CancellationToken.None, onOutputLine: lines.Enqueue)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        result.Success.Should().BeTrue();
+        reviewCalls.Should().Be(2);
+        lines.Should().Contain(l => l.StartsWith("📋 Review complete", StringComparison.Ordinal));
+        lines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderRateLimit)", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The refinement of the adversarial review is retried after a provider overload, and, as it continues the
+    /// generator's session, its retry carries the note that the previous turn was cut off.
+    /// </summary>
+    [Fact]
+    public async Task RefinementCall_ProviderOverload_IsRetriedWithTheRetryNote()
+    {
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            TemplateName = "Test Template",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = _tempDir,
+                RefactoringReviewEnabled = true,
+                AgentTimeout = TimeSpan.FromMinutes(5),
+                TransientRetryDelay = TimeSpan.Zero
+            }
+        };
+        SetupCloneWritesProposals(ValidProposalsJson);
+        SetupIssueCreation();
+        var reviewPrompt = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+        var refinementPrompt = ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt();
+        var refinementRequests = new System.Collections.Concurrent.ConcurrentQueue<AgentRequest>();
+        var lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
+            {
+                if (req.Prompt == reviewPrompt)
+                {
+                    // A critical finding triggers the refinement
+                    var reviewPath = Path.Combine(req.WorkspacePath, AgentWorkspacePaths.RefactoringReviewFilePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(reviewPath)!);
+                    File.WriteAllText(reviewPath, "[CRITICAL] Proposal references non-existent file");
+                    return new AgentResult { ExitCode = 0, OutputLines = ["Review done."] };
+                }
+
+                if (!req.Prompt.EndsWith(refinementPrompt, StringComparison.Ordinal))
+                    return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
+
+                refinementRequests.Enqueue(req);
+                if (refinementRequests.Count == 1)
+                    return new AgentResult { ExitCode = 1, OutputLines = [], ErrorCategory = AgentErrorCategory.ProviderOverload };
+
+                var proposalsPath = Path.Combine(req.WorkspacePath, ".agent", "refactoring-proposals.json");
+                File.WriteAllText(proposalsPath, """
+                    [
+                        {
+                            "title": "Refined: Extract shared validation logic",
+                            "affectedFiles": ["src/Service.cs"],
+                            "description": "Refined description.",
+                            "rationale": "Refined rationale."
+                        }
+                    ]
+                    """);
+                return new AgentResult { ExitCode = 0, OutputLines = ["Refined."] };
+            });
+
+        var result = await executor
+            .ExecuteAsync(
+                job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object,
+                CancellationToken.None, onOutputLine: lines.Enqueue)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        result.Success.Should().BeTrue();
+        refinementRequests.Select(r => r.Prompt).Should().Equal(refinementPrompt, ProviderBusyRetry.RetryNote + refinementPrompt);
+        refinementRequests.Should().OnlyContain(r => r.UseResume);
+        lines.Should().ContainSingle(l => l.StartsWith("⏳ Model provider busy (ProviderOverload)", StringComparison.Ordinal));
+        lines.Should().Contain(l => l.StartsWith("✅ Refinement complete", StringComparison.Ordinal));
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(
+                It.Is<string>(t => t.Contains("Refined")),
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     /// <summary>
