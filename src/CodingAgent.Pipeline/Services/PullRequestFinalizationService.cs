@@ -726,6 +726,7 @@ public sealed class PullRequestFinalizationService
                         run, elapsed, cats.HarnessCategories, cats.IssueCategories),
                     Outcome = FeedbackOutcome.Success,
                     FeedbackTimeoutSeconds = config.FeedbackTimeoutSeconds,
+                    TransientRetryDelay = config.TransientRetryDelay,
                     EmitOutputLine = emitOutputLine
                 },
                 ct);
