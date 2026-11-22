@@ -190,6 +190,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// When the agent reports an active pipeline step matching the run's current step,
     /// also refreshes <see cref="PipelineRun.LastStepChangeAt"/> to prevent the progress
     /// timeout from killing agents legitimately waiting in long-running steps (e.g., ExternalCi polling).
+    /// When the agent reports a different non-terminal step, corrects the run to that step.
     /// Does NOT refresh when <c>CurrentStep</c> is null — preserving stuck-agent detection (#788).
     /// </summary>
     public async Task Heartbeat(HeartbeatMessage message)
@@ -230,6 +231,21 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                         "Heartbeat from agent {AgentId}: active job {JobId} has no run record, closing the connection so the agent re-registers and the run is restored",
                         message.AgentId.Value, agent.ActiveJobId);
                     CloseConnectionSoAgentReRegisters();
+                    return;
+                }
+
+                // A step report sent while the hub was disconnected is lost, and a restored run starts at the step it registered
+                // with. The heartbeat carries the agent's real step, so correct the run here.
+                if (run is not null
+                    && run.CurrentStep != message.CurrentStep
+                    && !message.CurrentStep.Value.IsTerminal()
+                    && !run.CurrentStep.IsTerminal())
+                {
+                    _logger.Information(
+                        "Heartbeat from agent {AgentId}: job {JobId} is at {RunStep} but the agent reports {AgentStep}, correcting the run",
+                        message.AgentId.Value, agent.ActiveJobId, run.CurrentStep, message.CurrentStep.Value);
+                    var correctedAt = message.Timestamp <= DateTimeOffset.UtcNow ? message.Timestamp : DateTimeOffset.UtcNow;
+                    _lifecycleService.HandleStepTransition((JobId)agent.ActiveJobId, message.CurrentStep.Value, correctedAt, null);
                     return;
                 }
 
