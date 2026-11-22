@@ -86,6 +86,37 @@ public sealed class TriageStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task WriteTriageContext_OutsideCommentsAboveCap_KeepVerifiedOnes()
+    {
+        var events = new List<Serilog.Events.LogEvent>();
+        var context = Context(logger: new Serilog.LoggerConfiguration().WriteTo.Sink(new ListSink(events)).CreateLogger());
+        var verified = Enumerable.Range(1, 3)
+            .Select(i => new IssueComment
+            {
+                Id = $"v{i}", Author = "maintainer", Body = $"inside {i}", IsVerified = true,
+                CreatedAt = DateTime.UnixEpoch.AddMinutes(i)
+            });
+        var unverified = Enumerable.Range(1, 60)
+            .Select(i => new IssueComment
+            {
+                Id = $"u{i}", Author = "outsider", Body = $"outside {i}", IsVerified = false,
+                CreatedAt = DateTime.UnixEpoch.AddHours(1).AddMinutes(i)
+            });
+        context.IssueComments = verified.Concat(unverified).ToList();
+
+        var result = await new WriteTriageContextStep(null).ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        var report = await File.ReadAllTextAsync(Path.Combine(_workspace, AgentWorkspacePaths.IssueContextFilePath));
+        report.Should().Contain("inside 1").And.Contain("inside 2").And.Contain("inside 3");
+        report.Should().Contain("outside 60").And.NotContain("outside 50\n");
+
+        // The step records the issue context it wrote: 3 verified plus the 50 newest unverified comments.
+        events.Should().ContainSingle(e => e.MessageTemplate.Text.Contains("issue context:"))
+            .Which.RenderMessage().Should().Contain("50 unverified of 53 comments, author verified: True");
+    }
+
+    [Fact]
     public async Task WriteContext_ListsTheOpenIssuesOfEveryTracker_SkippingTheTriagedIssue_AndToleratesAFailingTracker()
     {
         var context = Context(project: new DecompositionProjectContext
@@ -507,7 +538,8 @@ public sealed class TriageStepsTests : IDisposable
         MaxOpenIssuesForContext = 50,
     };
 
-    private PipelineStepContext Context(PipelineConfiguration? config = null, DecompositionProjectContext? project = null)
+    private PipelineStepContext Context(
+        PipelineConfiguration? config = null, DecompositionProjectContext? project = null, ILogger? logger = null)
     {
         var run = new PipelineRun
         {
@@ -538,7 +570,7 @@ public sealed class TriageStepsTests : IDisposable
             QualityGates = Mock.Of<IQualityGateExecutor>(),
             BrainSync = null,
             PrOrchestrator = new PullRequestOrchestrator(Logger),
-            Logger = Logger,
+            Logger = logger ?? Logger,
             ProjectContext = project,
             Issue = new IssueDetail
             {
@@ -574,4 +606,9 @@ public sealed class TriageStepsTests : IDisposable
         PageSize = 50,
         HasMore = false,
     };
+
+    private sealed class ListSink(List<Serilog.Events.LogEvent> events) : Serilog.Core.ILogEventSink
+    {
+        public void Emit(Serilog.Events.LogEvent logEvent) => events.Add(logEvent);
+    }
 }

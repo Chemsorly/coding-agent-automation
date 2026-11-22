@@ -5,6 +5,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
 using Moq;
 using Serilog;
 using Serilog.Events;
@@ -67,6 +68,31 @@ public class IssueContextBuilderTests
                 Description = issueDescription,
                 Labels = Array.Empty<string>()
             });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(comments);
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+    }
+
+    private void SetupIssueProvider(IssueDetail issue, IReadOnlyList<IssueComment> comments)
+    {
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-provider-1",
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Test Issue Provider"
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-provider-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issue);
         mockIssueProvider
             .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(comments);
@@ -457,6 +483,153 @@ public class IssueContextBuilderTests
         result!.ForceRefreshAnalysis.Should().BeTrue();
         result.StalenessSignal.Should().Be("gate_rejection",
             "gate_rejection has higher priority than body_changed");
+    }
+
+    // ── Text from outside authors ────────────────────────────────────────────
+
+    private const string VerifiedBody =
+        "Intro <!-- maintainer note -->\n\n## Requirements\nKeep the ​marker.\n\n## Acceptance Criteria\n- [ ] Parser works <!-- hint -->";
+
+    private const string VerifiedContextFile =
+        "# Issue: Fix the ⚠️ parser\n\n" +
+        "## Description\n" +
+        "Intro <!-- maintainer note -->\n\n" +
+        "## Requirements\nKeep the ​marker.\n\n" +
+        "## Acceptance Criteria\n- [ ] Parser works <!-- hint -->\n\n" +
+        "## Requirements\nKeep the ​marker.\n\n" +
+        "## Acceptance Criteria\n- Parser works <!-- hint -->\n\n" +
+        "## Comments\n" +
+        "The following comments were left on the issue and may contain clarifications, updated requirements, or stakeholder feedback.\n\n" +
+        "**@maintainer** (2026-10-01):\n" +
+        "Please keep <!-- note --> this.";
+
+    private static IssueDetail VerifiedIssue() => new()
+    {
+        Identifier = "42",
+        Title = "Fix the ⚠️ parser",
+        Description = VerifiedBody,
+        Labels = [],
+        IsAuthorVerified = true
+    };
+
+    private static List<IssueComment> MaintainerComments(bool? isVerified) =>
+    [
+        new IssueComment
+        {
+            Id = "1", Author = "maintainer", Body = "Please keep <!-- note --> this.",
+            CreatedAt = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc), IsVerified = isVerified
+        },
+        new IssueComment
+        {
+            Id = "2", Author = "maintainer", Body = $"{CommentMarkers.GateRejection}\nrejected",
+            CreatedAt = new DateTime(2026, 10, 2, 12, 0, 0, DateTimeKind.Utc), IsVerified = isVerified
+        }
+    ];
+
+    private const string HiddenCheckboxBody = "## Acceptance Criteria\n- [ ] Real\n<!--\n- [ ] Hidden\n-->";
+
+    private static IssueDetail UnverifiedIssue(string body) => new()
+    {
+        Identifier = "42",
+        Title = "Outside issue",
+        Description = body,
+        Labels = [],
+        IsAuthorVerified = false
+    };
+
+    private static IssueComment AnalysisCommentFor(string hashedBody) => new()
+    {
+        Id = "c-analysis",
+        Author = "maintainer",
+        Body = $"{CommentMarkers.AnalysisHeader}\n<!-- agent:analysis-body-hash:{AnalysisBodyHash.Compute(hashedBody)} -->",
+        CreatedAt = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
+        IsVerified = true
+    };
+
+    [Fact]
+    public async Task BuildIssueContext_VerifiedOnlyIssue_GivesByteIdenticalContextFile()
+    {
+        // The expected string is the output before this feature existed. Never edit it to fit new output.
+        SetupIssueProvider(VerifiedIssue(), MaintainerComments(isVerified: true));
+
+        var result = await CreateInfrastructure().BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+        var content = PromptBuilder.BuildIssueContextFileContent(
+            result!.IssueDetail, result.ParsedIssue, result.IssueComments, null);
+
+        content.ReplaceLineEndings("\n").Should().Be(VerifiedContextFile);
+    }
+
+    [Fact]
+    public async Task BuildIssueContext_OlderApiComments_GiveTheSameContextFile()
+    {
+        SetupIssueProvider(VerifiedIssue(), MaintainerComments(isVerified: null));
+
+        var result = await CreateInfrastructure().BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+        var content = PromptBuilder.BuildIssueContextFileContent(
+            result!.IssueDetail, result.ParsedIssue, result.IssueComments, null);
+
+        content.ReplaceLineEndings("\n").Should().Be(VerifiedContextFile);
+    }
+
+    [Fact]
+    public async Task BuildIssueContext_UnverifiedAuthor_KeepsRawDescriptionAndParsesNormalized()
+    {
+        SetupIssueProvider(UnverifiedIssue(HiddenCheckboxBody), []);
+
+        var result = await CreateInfrastructure().BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result!.IssueDetail.Description.Should().Be(HiddenCheckboxBody, "the hash is computed over the raw body");
+        result.ParsedIssue.AcceptanceCriteria.Should().Equal("Real");
+    }
+
+    [Fact]
+    public async Task BuildIssueContext_UnverifiedAuthor_HashStaysOverRawBody()
+    {
+        SetupIssueProvider(UnverifiedIssue(HiddenCheckboxBody), [AnalysisCommentFor(HiddenCheckboxBody)]);
+
+        var result = await CreateInfrastructure().BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result!.ForceRefreshAnalysis.Should().BeFalse("a normalized body would never match the hash of the raw one");
+        result.StalenessSignal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task BuildIssueContext_UnverifiedAuthor_EditOfHiddenTextIsABodyChange()
+    {
+        const string earlierBody = "## Acceptance Criteria\n- [ ] Real\n<!--\n- [ ] Other\n-->";
+        SetupIssueProvider(UnverifiedIssue(HiddenCheckboxBody), [AnalysisCommentFor(earlierBody)]);
+
+        var result = await CreateInfrastructure().BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result!.ForceRefreshAnalysis.Should().BeTrue();
+        result.StalenessSignal.Should().Be("body_changed");
+    }
+
+    [Fact]
+    public async Task BuildIssueContext_OutsideCommentsAboveCap_KeepVerifiedOnes()
+    {
+        var unverified = Enumerable.Range(1, 60).Select(i => new IssueComment
+        {
+            Id = $"u{i}", Author = "outsider", Body = $"outside {i}",
+            CreatedAt = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i), IsVerified = false
+        });
+        var verified = Enumerable.Range(1, 3).Select(i => new IssueComment
+        {
+            Id = $"v{i}", Author = "maintainer", Body = $"inside {i}",
+            CreatedAt = new DateTime(2026, 10, 2, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i), IsVerified = true
+        });
+        SetupIssueProvider(VerifiedIssue(), unverified.Concat(verified).ToList());
+        var infra = CreateInfrastructure();
+
+        var oldest = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+        var newest = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None, newestComments: true);
+
+        oldest!.IssueComments.Where(c => c.IsVerified == true).Select(c => c.Id).Should().Equal("v1", "v2", "v3");
+        oldest.IssueComments.Where(c => c.IsVerified == false).Select(c => c.Id)
+            .Should().Equal(Enumerable.Range(1, 50).Select(i => $"u{i}"));
+        newest!.IssueComments.Where(c => c.IsVerified == true).Select(c => c.Id).Should().Equal("v1", "v2", "v3");
+        newest.IssueComments.Where(c => c.IsVerified == false).Select(c => c.Id)
+            .Should().Equal(Enumerable.Range(11, 50).Select(i => $"u{i}"));
     }
 }
 

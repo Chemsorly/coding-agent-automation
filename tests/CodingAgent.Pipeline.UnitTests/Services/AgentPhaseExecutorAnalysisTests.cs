@@ -247,6 +247,23 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     }
 
     [Fact]
+    public async Task Analysis_RecordsHowManyCommentsAreFromUnverifiedAuthors()
+    {
+        SetupAgentWithValidAnalysis("ready");
+        var comments = new[]
+        {
+            new IssueComment { Id = "1", Body = "from a maintainer", Author = "maintainer", CreatedAt = DateTime.UtcNow, IsVerified = true },
+            new IssueComment { Id = "2", Body = "from an older API", Author = "someone", CreatedAt = DateTime.UtcNow },
+            new IssueComment { Id = "3", Body = "from outside", Author = "outsider", CreatedAt = DateTime.UtcNow, IsVerified = false }
+        };
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, false, CancellationToken.None);
+
+        _mockLogger.Verify(l => l.Information(
+            It.Is<string>(template => template.Contains("issue context:")), "test-run-analysis", 1, 3, true), Times.Once);
+    }
+
+    [Fact]
     public async Task Analysis_ExistingAnalysisComment_SkipsAgentExecution()
     {
         var comments = new[]

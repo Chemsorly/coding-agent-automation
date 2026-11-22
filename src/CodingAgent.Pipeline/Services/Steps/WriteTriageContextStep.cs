@@ -46,10 +46,10 @@ public sealed class WriteTriageContextStep : IPipelineStep
         {
             Directory.CreateDirectory(Path.Combine(workspace, AgentWorkspacePaths.MetadataDirectory));
 
-            var comments = (context.IssueComments ?? [])
-                .OrderBy(c => c.CreatedAt)
-                .TakeLast(TriageConstants.MaxCommentsForContext)
-                .ToList();
+            var comments = IssueCommentCaps.TakeLastPerKind(
+                (context.IssueComments ?? []).OrderBy(c => c.CreatedAt).ToList(),
+                TriageConstants.MaxCommentsForContext);
+            UnverifiedInputTelemetry.RecordIssueContext(activity, context.Logger, context.Run.RunId, context.Issue, comments);
             var parsed = context.ParsedIssue ?? new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" };
             var report = PromptBuilder.BuildIssueContextFileContent(context.Issue, parsed, comments, context.DownloadedImages);
             await File.WriteAllTextAsync(Path.Combine(workspace, AgentWorkspacePaths.IssueContextFilePath), report, ct);

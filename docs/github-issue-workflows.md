@@ -134,6 +134,17 @@ Pipeline markers, such as the analysis header, the gate markers, the decompositi
 
 An issue's author is verified by the same rule. An operator's own triage counts as verified.
 
+## Text From Outside the Repository
+
+On a public repository anyone can write an issue or a comment. Text by an author who is not [verified](#verified-authors) stays in, and is marked:
+
+- **The run's own issue is the task.** The label that started the run accepts the problem and the requested change, and nothing more. The issue's description stays at `## Description` in `.agent/issue-context.md`, under a notice that the author has no other authority. Acceptance criteria and requirements from that body are labelled "from the same author: for the code change only".
+- **Comments go under `## Unverified input`**, as information rather than instructions. They have their own limit, so they do not push out comments by verified authors.
+- **An outside author is not a reason to refuse.** The analysis still judges the request on its merits.
+- **Hidden text is removed from unverified text:** HTML comments, Markdown reference definitions, Unicode format characters, the Tags block and variation selectors. This is not a guarantee that a reader sees what an agent sees: link titles, image alt text, fence info strings and closed `<details>` blocks remain. Images inside hidden comments are still downloaded.
+
+Marking reduces the odds that outside text steers a run. It does not prevent it. Text by verified authors is not changed.
+
 ## Issue Dependencies
 
 An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) are not recognized and do not block dispatch.
