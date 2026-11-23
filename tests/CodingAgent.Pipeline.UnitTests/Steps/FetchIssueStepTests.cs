@@ -436,6 +436,34 @@ public sealed class FetchIssueStepTests
         context.Issue.CreatedAt.Should().Be(issue.CreatedAt);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExecuteAsync_SetsTheRunsSubjectAuthorFlag(bool isAuthorVerified)
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "42",
+            Title = "Fix the​ layout",
+            Description = "Fix the layout.",
+            Labels = new[] { "bug" },
+            IsAuthorVerified = isAuthorVerified
+        };
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issue);
+        _issueProvider
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+
+        var context = BuildContext();
+
+        await CreateStep().ExecuteAsync(context, CancellationToken.None);
+
+        context.Run.IsSubjectAuthorVerified.Should().Be(isAuthorVerified);
+        context.Run.IssueTitle.Should().Be("Fix the​ layout", "the raw title stays the source of the branch name and the PR title, also for an unverified author");
+    }
+
     // ── Criteria are parsed from the normalized body of an outside author ─────
 
     private const string HiddenCheckboxBody = "## Acceptance Criteria\n- [ ] Real\n<!--\n- [ ] Hidden\n-->";

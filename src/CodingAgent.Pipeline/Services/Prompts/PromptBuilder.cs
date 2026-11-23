@@ -402,7 +402,7 @@ public static partial class PromptBuilder
         string? issueContextPathOverride = null)
     {
         var contextPath = issueContextPathOverride ?? AgentWorkspacePaths.IssueContextFilePath;
-        sb.AppendLine($"# Issue #{issue.Identifier}: {issue.Title}");
+        sb.AppendLine($"# Issue #{issue.Identifier}: {UnverifiedInputText.Title(issue)}");
         sb.AppendLine();
         sb.AppendLine($"The full issue description and discussion thread are at `{contextPath}` — read it for context.");
         sb.AppendLine();
@@ -424,8 +424,10 @@ public static partial class PromptBuilder
     /// When downloaded images are provided, replaces inline image URLs with local paths
     /// and appends an attached images table.
     /// </summary>
+    /// <param name="descriptionIsReport">The description is a report to investigate, not a task. It only changes text by an unverified author.</param>
     public static string BuildIssueContextFileContent(IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? comments = null, IReadOnlyList<DownloadedImage>? downloadedImages = null)
+        IReadOnlyList<IssueComment>? comments = null, IReadOnlyList<DownloadedImage>? downloadedImages = null,
+        bool descriptionIsReport = false)
     {
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
@@ -436,15 +438,22 @@ public static partial class PromptBuilder
             : null;
 
         var sb = new StringBuilder();
-        sb.AppendLine($"# Issue: {issue.Title}");
+        sb.AppendLine($"# Issue: {UnverifiedInputText.Title(issue)}");
         sb.AppendLine();
         // Normalized here, at the point of use: issue.Description stays raw, because AnalysisBodyHash hashes it at both ends.
         var description = issue.IsAuthorVerified ? issue.Description : AgentTextNormalizer.Normalize(issue.Description);
 
-        sb.AppendLine("## Description");
-
-        if (!issue.IsAuthorVerified)
+        if (issue.IsAuthorVerified)
         {
+            sb.AppendLine("## Description");
+        }
+        else if (descriptionIsReport)
+        {
+            UnverifiedInputText.AppendSectionStart(sb);
+        }
+        else
+        {
+            sb.AppendLine("## Description");
             sb.AppendLine();
             UnverifiedInputText.AppendDescriptionNotice(sb);
         }
@@ -458,14 +467,16 @@ public static partial class PromptBuilder
 
         if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
         {
-            sb.AppendLine(issue.IsAuthorVerified ? "## Requirements" : UnverifiedInputText.RequirementsHeading);
+            sb.AppendLine(ParsedSectionHeading(issue, descriptionIsReport,
+                "## Requirements", UnverifiedInputText.RequirementsHeading, UnverifiedInputText.ReportRequirementsHeading));
             sb.AppendLine(parsed.RequirementsSection);
             sb.AppendLine();
         }
 
         if (parsed.AcceptanceCriteria.Count > 0)
         {
-            sb.AppendLine(issue.IsAuthorVerified ? "## Acceptance Criteria" : UnverifiedInputText.CriteriaHeading);
+            sb.AppendLine(ParsedSectionHeading(issue, descriptionIsReport,
+                "## Acceptance Criteria", UnverifiedInputText.CriteriaHeading, UnverifiedInputText.ReportCriteriaHeading));
             foreach (var criterion in parsed.AcceptanceCriteria)
             {
                 sb.AppendLine($"- {criterion}");
@@ -476,9 +487,20 @@ public static partial class PromptBuilder
         AppendComments(sb, comments);
 
         if (hasImages)
-            AppendAttachedImagesTable(sb, downloadedImages!);
+        {
+            AppendAttachedImagesTable(sb, downloadedImages!,
+                normalizeAltText: !issue.IsAuthorVerified || comments?.Any(c => c.IsVerified == false) == true);
+        }
 
         return sb.ToString().TrimEnd();
+    }
+
+    private static string ParsedSectionHeading(
+        IssueDetail issue, bool descriptionIsReport, string verified, string unverifiedTask, string unverifiedReport)
+    {
+        if (issue.IsAuthorVerified)
+            return verified;
+        return descriptionIsReport ? unverifiedReport : unverifiedTask;
     }
 
     private static void AppendComments(StringBuilder sb, IReadOnlyList<IssueComment>? comments)
@@ -622,11 +644,11 @@ public static partial class PromptBuilder
     /// <summary>
     /// Appends the ## Attached Images table listing all downloaded images.
     /// </summary>
-    // NOTE: Hidden text still reaches the context file through this table: IssueImageExtractor reads the raw body and raw
-    // comment bodies, so it also finds images inside HTML comments, and their alt text is written below unnormalized, after the
-    // section for unverified comments and outside its "information, not instructions" rule. Normalize or drop the alt text of
-    // images from unverified authors. Deferred: this issue lists image alt text for a later change.
-    private static void AppendAttachedImagesTable(StringBuilder sb, IReadOnlyList<DownloadedImage> downloadedImages)
+    // IssueImageExtractor reads the raw body and raw comment bodies, so it also finds images inside HTML comments. The alt
+    // text is normalized per file, not per image: SourceIndex numbers the list at extraction, and that list is not the one
+    // given here. A maintainer's alt text in a file that also has outside text loses only its hidden characters.
+    private static void AppendAttachedImagesTable(
+        StringBuilder sb, IReadOnlyList<DownloadedImage> downloadedImages, bool normalizeAltText)
     {
         sb.AppendLine("## Attached Images");
         sb.AppendLine();
@@ -639,7 +661,8 @@ public static partial class PromptBuilder
             var source = img.Reference.SourceType == ImageSourceType.Body
                 ? "Body"
                 : $"Comment #{img.Reference.SourceIndex}";
-            sb.AppendLine($"| {i + 1} | {img.LocalFilename} | {img.Reference.AltText} | {source} |");
+            var altText = normalizeAltText ? AgentTextNormalizer.Normalize(img.Reference.AltText) : img.Reference.AltText;
+            sb.AppendLine($"| {i + 1} | {img.LocalFilename} | {altText} | {source} |");
         }
     }
 
@@ -930,7 +953,7 @@ public static partial class PromptBuilder
         sb.AppendLine();
         sb.AppendLine("---");
         sb.AppendLine();
-        sb.AppendLine($"**Issue:** #{run.IssueIdentifier} — {run.IssueTitle}");
+        sb.AppendLine($"**Issue:** #{run.IssueIdentifier} — {run.GetPromptIssueTitle()}");
         sb.AppendLine();
         sb.AppendLine($"Write the description to `{AgentWorkspacePaths.PrDescriptionFilePath}` in the workspace. Do NOT print it to stdout — only write it to that file.");
 

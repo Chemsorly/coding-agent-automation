@@ -196,7 +196,7 @@ public static partial class ConsolidationPromptBuilder
         {
             sb.AppendLine("### Open Refactoring Scan Issues (still pending)");
             foreach (var issue in refactoringIssues)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+                sb.AppendLine($"- #{issue.Identifier} \"{UnverifiedInputText.Title(issue)}\"");
             sb.AppendLine();
         }
 
@@ -204,7 +204,7 @@ public static partial class ConsolidationPromptBuilder
         {
             sb.AppendLine("### Other Open Issues (may overlap)");
             foreach (var issue in otherIssues)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+                sb.AppendLine($"- #{issue.Identifier} \"{UnverifiedInputText.Title(issue)}\"");
             sb.AppendLine();
         }
 
@@ -477,7 +477,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var feedbackLines = closedIssues
             .Where(i => implementerFeedback?.ContainsKey(i.Identifier) == true)
-            .Select(i => $"- #{i.Identifier} \"{i.Title}\" — {implementerFeedback![i.Identifier]}")
+            .Select(i => $"- #{i.Identifier} \"{UnverifiedInputText.Title(i)}\" — {implementerFeedback![i.Identifier]}")
             .ToList();
 
         var implemented = new List<IssueSummary>();
@@ -525,7 +525,7 @@ public static partial class ConsolidationPromptBuilder
 
         sb.AppendLine(heading);
         foreach (var issue in issues)
-            sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine($"- #{issue.Identifier} \"{UnverifiedInputText.Title(issue)}\"");
         sb.AppendLine();
     }
 }

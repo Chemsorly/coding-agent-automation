@@ -1,6 +1,7 @@
 using System.Text;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services.Prompts;
 using Serilog;
 
 namespace CodingAgent.Pipeline.Services;
@@ -271,7 +272,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         // YAML front-matter
         sb.AppendLine("---");
         sb.Append("identifier: \"").Append(EscapeYamlString(detail.Identifier)).AppendLine("\"");
-        sb.Append("title: \"").Append(EscapeYamlString(detail.Title)).AppendLine("\"");
+        sb.Append("title: \"").Append(EscapeYamlString(UnverifiedInputText.Title(detail))).AppendLine("\"");
         if (isClosed)
         {
             sb.AppendLine("status: closed");
@@ -289,7 +290,15 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         // (e.g. hundreds of MB from an attacker-controlled or misconfigured issue tracker) will be written
         // entirely to disk, potentially exhausting available space on the agent host. Consider applying a
         // maximum length (e.g. truncate at 1 MB) before appending.
-        sb.Append(detail.Description);
+        if (detail.IsAuthorVerified)
+        {
+            sb.Append(detail.Description);
+        }
+        else
+        {
+            UnverifiedInputText.AppendSectionStart(sb);
+            sb.Append(AgentTextNormalizer.Normalize(detail.Description));
+        }
 
         return sb.ToString();
     }

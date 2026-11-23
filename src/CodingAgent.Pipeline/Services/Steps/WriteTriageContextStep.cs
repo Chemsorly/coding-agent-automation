@@ -51,7 +51,8 @@ public sealed class WriteTriageContextStep : IPipelineStep
                 TriageConstants.MaxCommentsForContext);
             UnverifiedInputTelemetry.RecordIssueContext(activity, context.Logger, context.Run.RunId, context.Issue, comments);
             var parsed = context.ParsedIssue ?? new ParsedIssue { AcceptanceCriteria = [], RequirementsSection = "" };
-            var report = PromptBuilder.BuildIssueContextFileContent(context.Issue, parsed, comments, context.DownloadedImages);
+            var report = PromptBuilder.BuildIssueContextFileContent(
+                context.Issue, parsed, comments, context.DownloadedImages, descriptionIsReport: true);
             await File.WriteAllTextAsync(Path.Combine(workspace, AgentWorkspacePaths.IssueContextFilePath), report, ct);
 
             var triageContext = string.IsNullOrWhiteSpace(_triageContextMarkdown)
@@ -136,13 +137,16 @@ public sealed class WriteTriageContextStep : IPipelineStep
             sb.AppendLine($"labels: [{string.Join(", ", issue.Labels)}]");
         sb.AppendLine("---");
         sb.AppendLine();
-        sb.AppendLine($"# {issue.Title}");
-        if (!string.IsNullOrWhiteSpace(issue.Description))
+        sb.AppendLine($"# {UnverifiedInputText.Title(issue)}");
+        var description = issue.IsAuthorVerified ? issue.Description : AgentTextNormalizer.Normalize(issue.Description);
+        if (!string.IsNullOrWhiteSpace(description))
         {
             sb.AppendLine();
-            sb.AppendLine(issue.Description.Length > MaxDescriptionChars
-                ? issue.Description[..MaxDescriptionChars] + "\n…"
-                : issue.Description);
+            if (!issue.IsAuthorVerified)
+                UnverifiedInputText.AppendSectionStart(sb);
+            sb.AppendLine(description.Length > MaxDescriptionChars
+                ? description[..MaxDescriptionChars] + "\n…"
+                : description);
         }
         return sb.ToString();
     }

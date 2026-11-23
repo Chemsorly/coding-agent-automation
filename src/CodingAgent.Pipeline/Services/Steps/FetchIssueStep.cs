@@ -49,6 +49,7 @@ public sealed class FetchIssueStep : IPipelineStep
 
         context.Run.IssueTitle = issue.Title;
         context.Run.IssueLabels = issue.Labels;
+        context.Run.IsSubjectAuthorVerified = issue.IsAuthorVerified;
         context.Run.CommitType = ConventionalCommitTypes.Resolve(issue.Description, issue.Labels);
         var parsed = _issueParser.Parse(issue.IsAuthorVerified ? issue.Description : AgentTextNormalizer.Normalize(issue.Description));
 

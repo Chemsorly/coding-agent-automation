@@ -29,6 +29,17 @@ public sealed partial class PipelineRun
     public required IssueIdentifier IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
     public required string IssueTitle { get; set; }
+
+    /// <summary>
+    /// Whether the author of the run's subject is verified. Agent-local: not in the run's hash. False by default, which
+    /// only means the title is normalized for prompts, and that changes nothing for a title with no hidden text.
+    /// </summary>
+    public bool IsSubjectAuthorVerified { get; set; }
+
+    /// <summary>The title for prompt text. Branch names, PR titles and commit messages use <see cref="IssueTitle"/>.</summary>
+    public string GetPromptIssueTitle() =>
+        IsSubjectAuthorVerified ? IssueTitle : AgentTextNormalizer.Normalize(IssueTitle);
+
     /// <summary>Web URL of the issue on the provider, or null if unknown (populated from the fetched issue).</summary>
     public string? IssueUrl { get; set; }
     /// <summary>

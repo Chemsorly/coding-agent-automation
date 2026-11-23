@@ -662,6 +662,7 @@ public class PipelineRunHashExtensionsPropertyTests
         ["StackLabels"] = "set only in the agent process",
         ["BrainInboxText"] = "set only in the agent process",
         ["ChangedBySeparateAgent"] = "set only in the agent process",
+        ["IsSubjectAuthorVerified"] = "set only in the agent process",
     };
 
     [Fact]
