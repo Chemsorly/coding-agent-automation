@@ -45,7 +45,7 @@ jobs:
         run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E&Category!=Integration" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # v5.6.0
+        uses: danielpalme/ReportGenerator-GitHub-Action@70c37c4d588cff5bf9cf190830c6f01dfcfb884b # v5.6.1
         with:
           reports: TestResults/**/coverage.cobertura.xml
           targetdir: CoverageReport
@@ -102,7 +102,7 @@ jobs:
         run: dotnet test tests/CodingAgent.Infrastructure.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # v5.6.0
+        uses: danielpalme/ReportGenerator-GitHub-Action@70c37c4d588cff5bf9cf190830c6f01dfcfb884b # v5.6.1
         with:
           reports: TestResults/**/coverage.cobertura.xml
           targetdir: CoverageReport
@@ -149,7 +149,7 @@ jobs:
         run: dotnet test tests/CodingAgent.Web.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration&Feature=IAM" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
-        uses: danielpalme/ReportGenerator-GitHub-Action@5f3701a41d14548c9b8e575a5c235230e515cbc0 # v5.6.0
+        uses: danielpalme/ReportGenerator-GitHub-Action@70c37c4d588cff5bf9cf190830c6f01dfcfb884b # v5.6.1
         with:
           reports: TestResults/**/coverage.cobertura.xml
           targetdir: CoverageReport
