@@ -49,3 +49,16 @@
   assertion: >
     It is not a scan issue, so it does not count towards the scan's backpressure.
   last_verified: "2026-10-31"
+
+- component: "PromptBuilder"
+  scenario: "An issue and its comments come from authors outside the repository"
+  assertion: >
+    The description stays at "## Description" under a notice, normalized, and its criteria are parsed from the
+    normalized body. Unverified comments go under "## Unverified input", normalized, with their own cap. Text by
+    verified authors gives byte-identical output. AnalysisBodyHash is always computed over the raw body.
+  observable_signals:
+    - log_level: Information
+      message_pattern: "Pipeline {RunId} issue context: {UnverifiedComments} unverified of {TotalComments} comments, author verified: {AuthorVerified}"
+    - span_attribute: "pipeline.comments.unverified"
+    - span_attribute: "pipeline.issue.author_verified"
+  last_verified: "2026-11-22"

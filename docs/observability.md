@@ -522,7 +522,7 @@ All emitted by the agent pod.
 | `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
 | `CloneProjectRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones |
 | `CloneProjectReviewRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones for review runs |
-| `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue` | Issue analysis (confidence gate) |
+| `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Issue analysis (confidence gate) |
 | `GenerateCode` | `pipeline.run_id`, `pipeline.issue`, `pipeline.is_rework` | Code generation / rework |
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |

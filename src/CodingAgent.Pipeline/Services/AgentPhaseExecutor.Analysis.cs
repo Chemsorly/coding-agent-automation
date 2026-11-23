@@ -93,6 +93,7 @@ public partial class AgentPhaseExecutor
         CancellationToken ct)
     {
         var run = context.Run;
+        UnverifiedInputTelemetry.RecordIssueContext(Activity.Current, _logger, run.RunId, context.Issue, issueComments);
         try
         {
             var agentDir = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);

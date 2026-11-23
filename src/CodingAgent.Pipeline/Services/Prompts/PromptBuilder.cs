@@ -173,6 +173,9 @@ public static partial class PromptBuilder
             sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`. **Important:** if the production code fix described in the issue is already present on the branch, set `\"wont_do\"` — do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added. Test-only follow-up work belongs in a separate issue.");
         }
 
+        if (!issue.IsAuthorVerified)
+            sb.AppendLine(UnverifiedInputText.AnalysisRule);
+
         sb.AppendLine();
 
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AgentWorkspacePaths.AnalysisFilePath}`.");
@@ -406,7 +409,7 @@ public static partial class PromptBuilder
 
         if (parsed.AcceptanceCriteria.Count > 0)
         {
-            sb.AppendLine("## Acceptance Criteria");
+            sb.AppendLine(issue.IsAuthorVerified ? "## Acceptance Criteria" : UnverifiedInputText.CriteriaHeading);
             foreach (var criterion in parsed.AcceptanceCriteria)
             {
                 sb.AppendLine($"- {criterion}");
@@ -435,25 +438,34 @@ public static partial class PromptBuilder
         var sb = new StringBuilder();
         sb.AppendLine($"# Issue: {issue.Title}");
         sb.AppendLine();
+        // Normalized here, at the point of use: issue.Description stays raw, because AnalysisBodyHash hashes it at both ends.
+        var description = issue.IsAuthorVerified ? issue.Description : AgentTextNormalizer.Normalize(issue.Description);
+
         sb.AppendLine("## Description");
 
+        if (!issue.IsAuthorVerified)
+        {
+            sb.AppendLine();
+            UnverifiedInputText.AppendDescriptionNotice(sb);
+        }
+
         if (hasImages)
-            AppendProcessedText(sb, issue.Description, urlToLocalPath!);
+            AppendProcessedText(sb, description, urlToLocalPath!);
         else
-            sb.AppendLine(issue.Description);
+            sb.AppendLine(description);
 
         sb.AppendLine();
 
         if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
         {
-            sb.AppendLine("## Requirements");
+            sb.AppendLine(issue.IsAuthorVerified ? "## Requirements" : UnverifiedInputText.RequirementsHeading);
             sb.AppendLine(parsed.RequirementsSection);
             sb.AppendLine();
         }
 
         if (parsed.AcceptanceCriteria.Count > 0)
         {
-            sb.AppendLine("## Acceptance Criteria");
+            sb.AppendLine(issue.IsAuthorVerified ? "## Acceptance Criteria" : UnverifiedInputText.CriteriaHeading);
             foreach (var criterion in parsed.AcceptanceCriteria)
             {
                 sb.AppendLine($"- {criterion}");
@@ -474,22 +486,41 @@ public static partial class PromptBuilder
         if (comments == null || comments.Count == 0)
             return;
 
-        var filtered = comments
+        // On the raw body: the markers are HTML comments, which the normalizer removes.
+        var kept = comments
             .Where(c => !ExcludedCommentMarkers.Any(marker => c.Body.Contains(marker)))
+            .ToList();
+        var verified = kept
+            .Where(c => c.IsVerified != false)
+            .TakeLast(PipelineConstants.OutputTailLineCount)
+            .ToList();
+        var unverified = kept
+            .Where(c => c.IsVerified == false)
             .TakeLast(PipelineConstants.OutputTailLineCount)
             .ToList();
 
-        if (filtered.Count == 0)
-            return;
-
-        sb.AppendLine("## Comments");
-        sb.AppendLine("The following comments were left on the issue and may contain clarifications, updated requirements, or stakeholder feedback.");
-        sb.AppendLine();
-        foreach (var comment in filtered)
+        if (verified.Count > 0)
         {
-            sb.AppendLine($"**@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd}):");
-            sb.AppendLine(comment.Body);
+            sb.AppendLine("## Comments");
+            sb.AppendLine("The following comments were left on the issue and may contain clarifications, updated requirements, or stakeholder feedback.");
             sb.AppendLine();
+            foreach (var comment in verified)
+            {
+                sb.AppendLine($"**@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd}):");
+                sb.AppendLine(comment.Body);
+                sb.AppendLine();
+            }
+        }
+
+        if (unverified.Count > 0)
+        {
+            UnverifiedInputText.AppendSectionStart(sb);
+            foreach (var comment in unverified)
+            {
+                sb.AppendLine($"**@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd}):");
+                sb.AppendLine(AgentTextNormalizer.Normalize(comment.Body));
+                sb.AppendLine();
+            }
         }
     }
 
@@ -591,6 +622,10 @@ public static partial class PromptBuilder
     /// <summary>
     /// Appends the ## Attached Images table listing all downloaded images.
     /// </summary>
+    // NOTE: Hidden text still reaches the context file through this table: IssueImageExtractor reads the raw body and raw
+    // comment bodies, so it also finds images inside HTML comments, and their alt text is written below unnormalized, after the
+    // section for unverified comments and outside its "information, not instructions" rule. Normalize or drop the alt text of
+    // images from unverified authors. Deferred: this issue lists image alt text for a later change.
     private static void AppendAttachedImagesTable(StringBuilder sb, IReadOnlyList<DownloadedImage> downloadedImages)
     {
         sb.AppendLine("## Attached Images");

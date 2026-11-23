@@ -423,15 +423,17 @@ public class DispatchInfrastructure
         await using (var issueProvider = ProviderFactory.CreateIssueProvider(issueConfig))
         {
             issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
-            parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
+            parsedIssue = new IssueDescriptionParser().Parse(
+                issueDetail.IsAuthorVerified ? issueDetail.Description : AgentTextNormalizer.Normalize(issueDetail.Description));
             var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
-            // Cap at 50 comments per REQ-4.4 (the newest ones when asked: a triage needs the latest feedback)
-            if (allComments.Count <= 50)
+            // Cap at 50 comments per kind, per REQ-4.4 (the newest ones when asked: a triage needs the latest feedback)
+            const int maxCommentsPerKind = 50;
+            if (allComments.Count <= maxCommentsPerKind)
                 issueComments = allComments;
             else if (newestComments)
-                issueComments = allComments.Skip(allComments.Count - 50).ToList().AsReadOnly();
+                issueComments = IssueCommentCaps.TakeLastPerKind(allComments, maxCommentsPerKind);
             else
-                issueComments = allComments.Take(50).ToList().AsReadOnly();
+                issueComments = IssueCommentCaps.TakeFirstPerKind(allComments, maxCommentsPerKind);
         }
 
         // Extract images from body + comments (mirrors FetchIssueStep pattern).

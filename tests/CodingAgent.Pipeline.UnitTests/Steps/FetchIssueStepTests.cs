@@ -436,6 +436,49 @@ public sealed class FetchIssueStepTests
         context.Issue.CreatedAt.Should().Be(issue.CreatedAt);
     }
 
+    // ── Criteria are parsed from the normalized body of an outside author ─────
+
+    private const string HiddenCheckboxBody = "## Acceptance Criteria\n- [ ] Real\n<!--\n- [ ] Hidden\n-->";
+
+    private async Task<PipelineStepContext> FetchWithBodyAsync(string body, bool isAuthorVerified)
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "42",
+            Title = "Fix the layout",
+            Description = body,
+            Labels = new[] { "bug" },
+            IsAuthorVerified = isAuthorVerified
+        };
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issue);
+        _issueProvider
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+
+        var context = BuildContext();
+        await CreateStep().ExecuteAsync(context, CancellationToken.None);
+        return context;
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnverifiedAuthor_ParsesCriteriaFromTheNormalizedBody()
+    {
+        var context = await FetchWithBodyAsync(HiddenCheckboxBody, isAuthorVerified: false);
+
+        context.ParsedIssue!.AcceptanceCriteria.Should().Equal("Real");
+        context.Issue!.Description.Should().Be(HiddenCheckboxBody, "the issue keeps the raw body, which the analysis hash covers");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_VerifiedAuthor_ParsesCriteriaFromTheBodyAsWritten()
+    {
+        var context = await FetchWithBodyAsync(HiddenCheckboxBody, isAuthorVerified: true);
+
+        context.ParsedIssue!.AcceptanceCriteria.Should().Equal("Real", "Hidden");
+    }
+
     // ── Cancellation propagates ───────────────────────────────────────────────
 
     [Fact]
