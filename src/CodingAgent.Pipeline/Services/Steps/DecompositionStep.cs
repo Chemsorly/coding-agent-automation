@@ -69,6 +69,7 @@ public sealed class DecompositionStep : IPipelineStep
         await File.WriteAllTextAsync(issueContextPath, issueContextContent, ct);
         logger.Information("Pipeline {RunId} wrote issue context with {CommentCount} comments",
             run.RunId, comments.Count);
+        UnverifiedInputTelemetry.RecordIssueContext(activity, logger, run.RunId, context.Issue, comments);
 
         // 3. Query existing agent-generated sub-issues for deduplication context
         var existingTitles = await QueryExistingSubIssueTitlesAsync(context.IssueOps, context.ProjectContext, logger, run.RunId, ct);
@@ -172,23 +173,47 @@ public sealed class DecompositionStep : IPipelineStep
 
         sb.AppendLine("# Epic Issue Context");
         sb.AppendLine();
-        sb.AppendLine($"## {issue.Title}");
+        sb.AppendLine($"## {UnverifiedInputText.Title(issue)}");
         sb.AppendLine();
-        sb.AppendLine(issue.Description);
+        if (issue.IsAuthorVerified)
+        {
+            sb.AppendLine(issue.Description);
+        }
+        else
+        {
+            UnverifiedInputText.AppendDescriptionNotice(sb);
+            sb.AppendLine(AgentTextNormalizer.Normalize(issue.Description));
+        }
         sb.AppendLine();
 
-        if (comments.Count > 0)
+        var verified = comments.Where(c => c.IsVerified != false).ToList();
+        var unverified = comments.Where(c => c.IsVerified == false).ToList();
+
+        if (verified.Count > 0)
         {
             sb.AppendLine("---");
             sb.AppendLine();
             sb.AppendLine("## Comments");
             sb.AppendLine();
 
-            foreach (var comment in comments)
+            foreach (var comment in verified)
             {
                 sb.AppendLine($"### Comment by {comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})");
                 sb.AppendLine();
                 sb.AppendLine(comment.Body);
+                sb.AppendLine();
+            }
+        }
+
+        if (unverified.Count > 0)
+        {
+            UnverifiedInputText.AppendSectionStart(sb);
+
+            foreach (var comment in unverified)
+            {
+                sb.AppendLine($"### Comment by {comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})");
+                sb.AppendLine();
+                sb.AppendLine(AgentTextNormalizer.Normalize(comment.Body));
                 sb.AppendLine();
             }
         }
