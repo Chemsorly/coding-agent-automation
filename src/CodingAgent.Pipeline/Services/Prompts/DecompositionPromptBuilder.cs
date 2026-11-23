@@ -18,6 +18,43 @@ public static class DecompositionPromptBuilder
     public static string BuildAnalysisPrompt(int maxSubIssues, int maxFiles)
         => BuildAnalysisPromptCore(maxSubIssues, maxFiles, hasUnverifiedComments: false);
 
+    /// <summary>
+    /// Builds the Phase 1 analysis prompt with optional cross-repo project context.
+    /// When project context is present, appends routing instructions for cross-repo decomposition.
+    /// When project context is null, returns the standard analysis prompt (backward compatible).
+    /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
+    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
+    public static string BuildAnalysisPrompt(int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext)
+    {
+        var prompt = BuildAnalysisPrompt(maxSubIssues, maxFiles);
+
+        if (projectContext is null)
+            return prompt;
+
+        // NOTE (issue #3534): Because BuildAnalysisPrompt(int, int) now ends with AppendSection's trailing blank line,
+        // the concatenated output here has one more blank line at the seam between the base prompt and the routing
+        // instructions than the pre-refactor output. No snapshot test covers this projectContext != null path;
+        // a regression here would go undetected. Add a deterministic snapshot for this cross-repo overload.
+        // (Review finding: correctness agent, DecompositionPromptBuilder.cs)
+        return prompt + BuildCrossRepoRoutingInstructions();
+    }
+
+    /// <summary>
+    /// Builds the Phase 1 analysis prompt for an epic whose comments may come from outside the repository.
+    /// </summary>
+    /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
+    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
+    /// <param name="hasUnverifiedComments">Whether the context file has an "Unverified input" section.</param>
+    public static string BuildAnalysisPrompt(
+        int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext, bool hasUnverifiedComments)
+    {
+        var prompt = BuildAnalysisPromptCore(maxSubIssues, maxFiles, hasUnverifiedComments);
+        return projectContext is null ? prompt : prompt + BuildCrossRepoRoutingInstructions();
+    }
+
     private static string BuildAnalysisPromptCore(int maxSubIssues, int maxFiles, bool hasUnverifiedComments)
     {
         var sb = new StringBuilder();
@@ -115,43 +152,6 @@ public static class DecompositionPromptBuilder
         });
 
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Builds the Phase 1 analysis prompt with optional cross-repo project context.
-    /// When project context is present, appends routing instructions for cross-repo decomposition.
-    /// When project context is null, returns the standard analysis prompt (backward compatible).
-    /// </summary>
-    /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
-    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
-    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
-    public static string BuildAnalysisPrompt(int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext)
-    {
-        var prompt = BuildAnalysisPrompt(maxSubIssues, maxFiles);
-
-        if (projectContext is null)
-            return prompt;
-
-        // NOTE (issue #3534): Because BuildAnalysisPrompt(int, int) now ends with AppendSection's trailing blank line,
-        // the concatenated output here has one more blank line at the seam between the base prompt and the routing
-        // instructions than the pre-refactor output. No snapshot test covers this projectContext != null path;
-        // a regression here would go undetected. Add a deterministic snapshot for this cross-repo overload.
-        // (Review finding: correctness agent, DecompositionPromptBuilder.cs)
-        return prompt + BuildCrossRepoRoutingInstructions();
-    }
-
-    /// <summary>
-    /// Builds the Phase 1 analysis prompt for an epic whose comments may come from outside the repository.
-    /// </summary>
-    /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
-    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
-    /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
-    /// <param name="hasUnverifiedComments">Whether the context file has an "Unverified input" section.</param>
-    public static string BuildAnalysisPrompt(
-        int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext, bool hasUnverifiedComments)
-    {
-        var prompt = BuildAnalysisPromptCore(maxSubIssues, maxFiles, hasUnverifiedComments);
-        return projectContext is null ? prompt : prompt + BuildCrossRepoRoutingInstructions();
     }
 
     /// <summary>

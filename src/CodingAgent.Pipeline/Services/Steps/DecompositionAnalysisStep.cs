@@ -270,33 +270,8 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             sb.AppendLine();
         }
 
-        var verified = comments.Where(c => c.IsVerified != false).ToList();
-        var unverified = comments.Where(c => c.IsVerified == false).ToList();
-
-        if (verified.Count > 0)
-        {
-            sb.AppendLine("## Comments");
-            sb.AppendLine();
-            foreach (var comment in verified)
-            {
-                sb.AppendLine($"### Comment by @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC)");
-                sb.AppendLine();
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
-        }
-
-        if (unverified.Count > 0)
-        {
-            UnverifiedInputText.AppendSectionStart(sb);
-            foreach (var comment in unverified)
-            {
-                sb.AppendLine($"### Comment by @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC)");
-                sb.AppendLine();
-                sb.AppendLine(AgentTextNormalizer.Normalize(comment.Body));
-                sb.AppendLine();
-            }
-        }
+        var hasUnverified = EpicContextComments.Append(
+            sb, comments, c => $"### Comment by @{c.Author} ({c.CreatedAt:yyyy-MM-dd HH:mm} UTC)", dividerBeforeComments: false);
 
         // Write to workspace
         var contextFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.IssueContextFilePath);
@@ -305,6 +280,6 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         context.Logger.Information("Wrote epic context ({IssueId}, {CommentCount} comments) to {Path}",
             run.IssueIdentifier, comments.Count, AgentWorkspacePaths.IssueContextFilePath);
         UnverifiedInputTelemetry.RecordIssueContext(Activity.Current, context.Logger, run.RunId, issue, comments);
-        return unverified.Count > 0;
+        return hasUnverified;
     }
 }

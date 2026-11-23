@@ -186,37 +186,8 @@ public sealed class DecompositionStep : IPipelineStep
         }
         sb.AppendLine();
 
-        var verified = comments.Where(c => c.IsVerified != false).ToList();
-        var unverified = comments.Where(c => c.IsVerified == false).ToList();
-
-        if (verified.Count > 0)
-        {
-            sb.AppendLine("---");
-            sb.AppendLine();
-            sb.AppendLine("## Comments");
-            sb.AppendLine();
-
-            foreach (var comment in verified)
-            {
-                sb.AppendLine($"### Comment by {comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})");
-                sb.AppendLine();
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
-        }
-
-        if (unverified.Count > 0)
-        {
-            UnverifiedInputText.AppendSectionStart(sb);
-
-            foreach (var comment in unverified)
-            {
-                sb.AppendLine($"### Comment by {comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})");
-                sb.AppendLine();
-                sb.AppendLine(AgentTextNormalizer.Normalize(comment.Body));
-                sb.AppendLine();
-            }
-        }
+        EpicContextComments.Append(
+            sb, comments, c => $"### Comment by {c.Author} ({c.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})", dividerBeforeComments: true);
 
         return sb.ToString();
     }
