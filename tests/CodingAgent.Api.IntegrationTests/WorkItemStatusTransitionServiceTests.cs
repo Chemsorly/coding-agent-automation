@@ -241,6 +241,36 @@ public sealed class WorkItemStatusTransitionServiceTests
         lifecycleManager.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task TransitionAsync_RunningOnRunningItem_ReturnsTransitioned_NoLifecycleCalls()
+    {
+        // Arrange: an item that is already Running, re-reporting Running. This is a pod that Kubernetes
+        // replaced after a drain: its run was never recorded, so the work item is still Running when the
+        // replacement reports Running again.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var svc = CreateService(opts, lifecycleManager.Object);
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None);
+
+        // Assert: Transitioned maps to 200, AlreadyAtTarget to 204, and the agent treats a 204 as a
+        // rejection and exits 1. The idempotent check in TryRecoverFromInfrastructureFailureCoreAsync
+        // is what keeps a Running report on a Running item on the 200 side.
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned,
+            "a Running report on an already-Running item is answered by the idempotent check in " +
+            "TryRecoverFromInfrastructureFailureCoreAsync; falling through to TransitionDetailedAsync " +
+            "would return AlreadyAtTarget (204) and the agent would exit 1");
+        await using var db = new TestPipelineDbContext(opts);
+        var updated = await db.WorkItems.FindAsync(item.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Running, "the item stays Running");
+        updated.CompletedAt.Should().BeNull("a Running report must not complete the item");
+        lifecycleManager.VerifyNoOtherCalls();
+    }
+
     // ── Lifecycle dispatch ─────────────────────────────────────────────────────
 
     [Fact]
