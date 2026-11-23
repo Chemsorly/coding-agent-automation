@@ -94,6 +94,7 @@ internal sealed class PipelineExecutionContextBuilder
         run.StackLabels = job.StackLabels;
 
         run.IssueLabels = job.IssueDetail.Labels;
+        run.IsSubjectAuthorVerified = job.IssueDetail.IsAuthorVerified;
         run.CommitType = ConventionalCommitTypes.Resolve(job.IssueDetail.Description, job.IssueDetail.Labels);
 
         // Orchestrators

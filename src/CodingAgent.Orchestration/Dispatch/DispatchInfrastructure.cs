@@ -397,7 +397,10 @@ public class DispatchInfrastructure
             IsAuthorVerified = pullRequest.IsAuthorVerified
         };
         return new IssueContextResult(
-            detail, new IssueDescriptionParser().Parse(detail.Description), [],
+            detail,
+            new IssueDescriptionParser().Parse(
+                detail.IsAuthorVerified ? detail.Description : AgentTextNormalizer.Normalize(detail.Description)),
+            [],
             ExistingAnalysis: null, ForceRefreshAnalysis: false, StalenessSignal: null, RefreshCount: 0);
     }
 

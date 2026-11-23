@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services.Prompts;
 using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services.Steps;
@@ -64,11 +65,14 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
                 }
 
                 const int MaxDescriptionLength = 32_768; // 32KB cap
-                var description = issue.Description.Length > MaxDescriptionLength
-                    ? issue.Description[..MaxDescriptionLength] + "\n\n[... truncated ...]"
-                    : issue.Description;
+                var text = issue.IsAuthorVerified ? issue.Description : AgentTextNormalizer.Normalize(issue.Description);
+                var description = text.Length > MaxDescriptionLength
+                    ? text[..MaxDescriptionLength] + "\n\n[... truncated ...]"
+                    : text;
                 var filePath = Path.Combine(issueContextDir, $"linked-issue-{safeId}.md");
-                var content = $"# Issue #{issue.Identifier}: {issue.Title}\n\n{description}";
+                var content = issue.IsAuthorVerified
+                    ? $"# Issue #{issue.Identifier}: {issue.Title}\n\n{description}"
+                    : $"# Issue #{issue.Identifier}: {AgentTextNormalizer.Normalize(issue.Title)}\n\n{UnverifiedInputText.SectionHeading}\n\n{UnverifiedInputText.SectionRule}\n\n{description}";
                 await File.WriteAllTextAsync(filePath, content, ct);
             }
 
@@ -92,7 +96,8 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
                 Labels = Array.Empty<string>(),
                 IsAuthorVerified = primary.IsAuthorVerified
             };
-            context.ParsedIssue = _issueParser.Parse(primary.Description);
+            context.ParsedIssue = _issueParser.Parse(
+                primary.IsAuthorVerified ? primary.Description : AgentTextNormalizer.Normalize(primary.Description));
         }
         else
         {
@@ -106,8 +111,11 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
                 Labels = Array.Empty<string>(),
                 IsAuthorVerified = context.Run.ReviewPrAuthorVerified
             };
-            context.ParsedIssue = _issueParser.Parse(prDescription);
+            context.ParsedIssue = _issueParser.Parse(
+                context.Run.ReviewPrAuthorVerified ? prDescription : AgentTextNormalizer.Normalize(prDescription));
         }
+
+        activity?.SetTag(UnverifiedInputTelemetry.AuthorVerifiedTag, context.Issue.IsAuthorVerified);
 
         // --- Phase 3: Write PR conversation context (non-fatal) ---
         _ = await PrConversationContextWriter.WriteAsync(context, prNumber, ct);

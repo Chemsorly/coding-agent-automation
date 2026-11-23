@@ -536,7 +536,7 @@ All emitted by the agent pod.
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Writing PR conversation context to workspace |
-| `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
+| `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.issue.author_verified` | Extracting linked issues from PR |
 | `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Sub-issue generation (Phase 2) |
 | `DecompositionAnalysis` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Epic analysis (Phase 1) |
 | `PostDecompositionPlan` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting decomposition plan comment |

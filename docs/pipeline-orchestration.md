@@ -761,7 +761,7 @@ A `Triage` run investigates a problem report and reports a root cause analysis w
 
 ```
 Created → CloningRepository (executor + read-only project repositories) → RunningEnvironmentSetup → SyncingBrainRepoPreRun
-  → DownloadingOpenIssues (issue-context.md, triage-context.md, open issues of every project tracker)
+  → DownloadingOpenIssues (issue-context.md, triage-context.md, open issues of every project tracker; text by unverified authors is marked)
   → Investigating → ReviewingRca (when TriageReviewEnabled) → ReportingRca → Completed
 ```
 

@@ -138,10 +138,18 @@ public static class FeedbackPromptBuilder
         // Original issue context
         PromptBuilder.AppendSection(sb, "## Original Issue", s =>
         {
-            s.AppendLine($"**Title:** {issue.Title}");
+            s.AppendLine($"**Title:** {UnverifiedInputText.Title(issue)}");
             s.AppendLine();
             s.AppendLine("**Description:**");
-            s.AppendLine(issue.Description);
+            if (issue.IsAuthorVerified)
+            {
+                s.AppendLine(issue.Description);
+            }
+            else
+            {
+                UnverifiedInputText.AppendDescriptionNotice(s);
+                s.AppendLine(AgentTextNormalizer.Normalize(issue.Description));
+            }
         });
 
         // Retry context — conditional body, not using AppendSection

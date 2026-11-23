@@ -225,6 +225,42 @@ public class DispatchInfrastructureTests
         result.IssueDetail.Identifier.Should().Be("42");
         result.IssueDetail.Url.Should().Be("https://example.com/pull/42");
     }
+
+    [Fact]
+    public void BuildPullRequestContext_UnverifiedAuthor_ParsesNormalizedBodyAndKeepsRawDescription()
+    {
+        const string body = "## Acceptance Criteria\n- [ ] Real\n<!--\n- [ ] Hidden\n-->";
+        var pullRequest = new IssueDetail
+        {
+            Identifier = "42",
+            Title = "My PR",
+            Description = body,
+            Labels = [],
+            IsAuthorVerified = false
+        };
+
+        var result = CreateInfrastructure().BuildPullRequestContext(pullRequest);
+
+        result.ParsedIssue.AcceptanceCriteria.Should().Equal("Real");
+        result.IssueDetail.Description.Should().Be(body);
+    }
+
+    [Fact]
+    public void BuildPullRequestContext_VerifiedAuthor_ParsesRawBody()
+    {
+        var pullRequest = new IssueDetail
+        {
+            Identifier = "42",
+            Title = "My PR",
+            Description = "## Acceptance Criteria\n- [ ] Real <!-- note -->",
+            Labels = [],
+            IsAuthorVerified = true
+        };
+
+        var result = CreateInfrastructure().BuildPullRequestContext(pullRequest);
+
+        result.ParsedIssue.AcceptanceCriteria.Should().Equal("Real <!-- note -->");
+    }
 }
 
 // ── Staleness detection tests (1F-001) ────────────────────────────────────────

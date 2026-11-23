@@ -240,7 +240,7 @@ public partial class AgentPhaseExecutor
                     .Where(kv => !string.IsNullOrEmpty(kv.Value))
                     .Select(kv => $"--- Agent: {kv.Key} ---{Environment.NewLine}{kv.Value}"));
 
-            var prompt = PromptBuilder.BuildReviewSummaryPrompt(diffStat, run.IssueTitle, findings);
+            var prompt = PromptBuilder.BuildReviewSummaryPrompt(diffStat, run.GetPromptIssueTitle(), findings);
 
             var agentResult = await ExecuteAgentRawAsync(
                 new AgentExecutionRequest

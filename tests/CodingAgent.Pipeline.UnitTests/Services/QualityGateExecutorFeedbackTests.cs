@@ -307,6 +307,39 @@ public class QualityGateExecutorFeedbackTests
             Times.Once);
     }
 
+    // ── Fallback issue when the context carries none ─────────────────────────
+
+    [Theory]
+    [InlineData(true, "Fix​ it")]
+    [InlineData(false, "Fix it")]
+    public async Task FeedbackPrompt_WithoutContextIssue_UsesTheRunsSubjectAuthorFlag(bool subjectVerified, string expectedTitle)
+    {
+        SetupValidatorAlwaysFails();
+        SetupAgentReturnsValidFeedback();
+        _run.IssueTitle = "Fix​ it";
+        _run.IsSubjectAuthorVerified = subjectVerified;
+        var context = BuildContext();
+        var withoutIssue = new QualityGateContext
+        {
+            Run = context.Run,
+            Config = context.Config,
+            AgentProvider = context.AgentProvider,
+            IssueOps = context.IssueOps,
+            Callbacks = context.Callbacks,
+            RepoProvider = context.RepoProvider,
+            QualityGateConfigs = context.QualityGateConfigs,
+            Issue = null
+        };
+
+        await _orchestrator.ProceedToQualityGatesAsync(withoutIssue, CancellationToken.None);
+
+        _mockAgent.Verify(a => a.ExecuteAsync(
+            It.Is<AgentRequest>(r => r.Prompt.Contains("**Title:** " + expectedTitle + "\n")
+                || r.Prompt.Contains("**Title:** " + expectedTitle + "\r\n")),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<Action<string>?>()), Times.Once);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetupValidatorAlwaysFails()

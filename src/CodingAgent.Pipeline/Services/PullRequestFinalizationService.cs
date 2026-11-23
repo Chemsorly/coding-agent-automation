@@ -583,7 +583,7 @@ public sealed class PullRequestFinalizationService
 
             var evidenceMd = Brain.BrainInboxComposer.RenderEvidence(run.BrainEvidence ?? new());
             var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                run, evidenceMd, run.StackLabels, DateOnly.FromDateTime(DateTime.UtcNow), run.IssueTitle);
+                run, evidenceMd, run.StackLabels, DateOnly.FromDateTime(DateTime.UtcNow), run.GetPromptIssueTitle());
             _logger.Debug("Pipeline {RunId} reflection prompt:\n{Prompt}", run.RunId, reflectionPrompt);
 
             var reflectionResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(

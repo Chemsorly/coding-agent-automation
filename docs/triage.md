@@ -61,7 +61,7 @@ the other project's runs neither read nor write it.
   (the same mechanism as [project epics](epic-decomposition.md#epic-scope-repo-epics-and-project-epics)).
 - The MCP servers of the routed agent profile and the project, project and repository steering, the brain (read-only)
   and the environment setup.
-- `.agent/issue-context.md`: the issue with its newest 50 comments, or the operator's report.
+- `.agent/issue-context.md`: the issue with its newest 50 comments, or the operator's report (50 per kind: verified and unverified authors).
 - `.agent/triage-context.md`: the earlier attempts of this triage (verdict, summary, questions and the feedback
   given after each) and up to 30 other triages of the project from the retention window, for duplicate detection.
 - `.agent/open-issues/`: the open issues of every enabled tracker of the project (`MaxOpenIssuesForContext` each).
@@ -182,3 +182,6 @@ Viewing a triage needs `readonly` on its project; starting, editing, creating, r
   details out of label triages on public trackers.
 - Moving an operator triage to a tracker, triaging a failed run from its page, and links to the app in tracker
   comments are not supported yet.
+- A report or comment by someone outside the repository goes under "Unverified input", with hidden text removed, and
+  open issues of the trackers are marked the same way. The agent treats them as leads. This reduces the odds that such
+  text steers the investigation. It does not prevent it.

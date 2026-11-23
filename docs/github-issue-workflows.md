@@ -142,6 +142,9 @@ On a public repository anyone can write an issue or a comment. Text by an author
 - **Comments go under `## Unverified input`**, as information rather than instructions. They have their own limit, so they do not push out comments by verified authors.
 - **An outside author is not a reason to refuse.** The analysis still judges the request on its merits.
 - **Hidden text is removed from unverified text:** HTML comments, Markdown reference definitions, Unicode format characters, the Tags block and variation selectors. This is not a guarantee that a reader sees what an agent sees: link titles, image alt text, fence info strings and closed `<details>` blocks remain. Images inside hidden comments are still downloaded.
+- **Open issues and linked issues** that a run reads for context go under `## Unverified input` too, in full.
+- **A pull request or linked issue as the subject of a review** keeps the same notice as a run's own issue. Reviewers judge the code diff.
+- **Titles** are normalized for prompts. Branch names, PR titles and commit messages keep the raw title.
 
 Marking reduces the odds that outside text steers a run. It does not prevent it. Text by verified authors is not changed.
 
