@@ -44,6 +44,8 @@
                                     <option value="@model">@model</option>
                                 }
                             </datalist>
+                            <input type="text" class="route-light" list="@($"route-models-{key}")" data-testid="route-light-model-@key"
+                                   aria-label="@($"Light model for {RowLabel(row)}")" @bind="row.LightModel" placeholder="light: same as above" />
                         </td>
                         <td>
                             @if (tool is { Efforts.Count: 0 })
@@ -53,6 +55,13 @@
                             else
                             {
                                 <select data-testid="route-effort-@key" aria-label="@($"Effort for {RowLabel(row)}")" @bind="row.Effort">
+                                    @foreach (var effort in EffortsFor(tool))
+                                    {
+                                        <option @key="effort" value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
+                                    }
+                                </select>
+                                <select class="route-light" data-testid="route-light-effort-@key" aria-label="@($"Light effort for {RowLabel(row)}")" @bind="row.LightEffort">
+                                    <option value="">light: same as above</option>
                                     @foreach (var effort in EffortsFor(tool))
                                     {
                                         <option @key="effort" value="@effort">@(effort == AgentToolCatalog.Auto ? "auto (the tool's default)" : effort)</option>
@@ -82,4 +91,5 @@
             }
         </tbody>
     </table>
+    <p class="monitoring-muted" data-testid="route-light-hint">The light fields are optional. They are used for warnings fixes, cleanup, PR descriptions and review summaries. Empty uses the row's model and effort.</p>
 </div>
