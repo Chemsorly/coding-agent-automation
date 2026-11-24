@@ -126,6 +126,105 @@ public class OpenCodeRequestBodyPropertyTests
         Assert.Equal(input.Prompt, partsElement[0].GetProperty("text").GetString());
     }
 
+    // ── Light tier ────────────────────────────────────────────────────────
+
+    private const string RouteModel = "anthropic/claude-sonnet-4-20250514";
+    private const string LightModelId = "anthropic/claude-haiku-4-5";
+
+    /// <summary>Sends <paramref name="request"/> and returns the JSON body of the POST /session/:id/message it made.</summary>
+    private static async Task<JsonElement> SendAndReadMessageBodyAsync(
+        OpenCodeTestContext ctx, AgentRequest request, bool sessionExists = false)
+    {
+        if (!sessionExists)
+            OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler);
+        ctx.Handler.ForUrlPattern("/session/.+/message",
+            new SendMessageResponse { Parts = [new MessagePart { Type = "text", Text = "ok" }] });
+
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None);
+
+        Assert.Equal(ExitCodes.Success, result.ExitCode);
+        var messageRequest = ctx.Handler.Requests
+            .FirstOrDefault(r => r.Method == HttpMethod.Post && r.Path.Contains("/message"));
+        Assert.NotNull(messageRequest);
+        Assert.NotNull(messageRequest.Body);
+        return JsonSerializer.Deserialize<JsonElement>(messageRequest.Body);
+    }
+
+    private static void AssertModelRef(JsonElement body, string providerId, string modelId)
+    {
+        var model = body.GetProperty("model");
+        Assert.Equal(providerId, model.GetProperty("providerID").GetString());
+        Assert.Equal(modelId, model.GetProperty("modelID").GetString());
+    }
+
+    /// <summary>A call that starts a fresh session and asks for the light tier sends the light model.</summary>
+    [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 20)]
+    public async Task RequestBody_LightCall_CarriesTheLightModel(PromptInput input)
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext(model: RouteModel, lightModel: LightModelId);
+        var request = OpenCodeTestHelpers.CreateRequest(prompt: input.Prompt, useLightTier: true);
+
+        var body = await SendAndReadMessageBodyAsync(ctx, request);
+
+        AssertModelRef(body, "anthropic", "claude-haiku-4-5");
+        Assert.Equal(input.Prompt, body.GetProperty("parts")[0].GetProperty("text").GetString());
+    }
+
+    /// <summary>
+    /// A resumed call, by id or as the workspace's main conversation, keeps the route's model: the light flag is ignored.
+    /// </summary>
+    [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 20)]
+    public async Task RequestBody_LightFlagOnResumedCall_CarriesTheRouteModel(PromptInput input, bool byExplicitId)
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext(model: RouteModel, lightModel: LightModelId);
+        var request = byExplicitId
+            ? OpenCodeTestHelpers.CreateRequest(prompt: input.Prompt, resumeSessionId: "explicit-session-abc", useLightTier: true)
+            : OpenCodeTestHelpers.CreateRequest(prompt: input.Prompt, useResume: true, useLightTier: true);
+
+        var body = await SendAndReadMessageBodyAsync(ctx, request, sessionExists: byExplicitId);
+
+        AssertModelRef(body, "anthropic", "claude-sonnet-4-20250514");
+    }
+
+    [Fact]
+    public async Task RequestBody_LightCall_UnsetLightModel_CarriesTheRouteModel()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext(model: RouteModel);
+
+        var body = await SendAndReadMessageBodyAsync(ctx, OpenCodeTestHelpers.CreateRequest(useLightTier: true));
+
+        AssertModelRef(body, "anthropic", "claude-sonnet-4-20250514");
+    }
+
+    [Fact]
+    public async Task RequestBody_NoLightFlag_CarriesTheRouteModel_EvenWhenALightModelIsSet()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext(model: RouteModel, lightModel: LightModelId);
+
+        var body = await SendAndReadMessageBodyAsync(ctx, OpenCodeTestHelpers.CreateRequest());
+
+        AssertModelRef(body, "anthropic", "claude-sonnet-4-20250514");
+    }
+
+    [Fact]
+    public async Task RequestBody_LightCall_LightModelAuto_LeavesTheModelToTheServer_NotTheRoutes()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext(model: RouteModel, lightModel: "auto");
+
+        var body = await SendAndReadMessageBodyAsync(ctx, OpenCodeTestHelpers.CreateRequest(useLightTier: true));
+
+        Assert.True(!body.TryGetProperty("model", out var model) || model.ValueKind == JsonValueKind.Null,
+            "auto leaves the choice to the server, which differs from an unset light model");
+    }
+
+    [Fact]
+    public void LightModel_IsExposed_AndNullWhenUnset()
+    {
+        Assert.Equal(LightModelId, OpenCodeTestHelpers.CreateTestContext(model: RouteModel, lightModel: LightModelId).Provider.LightModel);
+        Assert.Null(OpenCodeTestHelpers.CreateTestContext(model: RouteModel).Provider.LightModel);
+        Assert.Equal(RouteModel, OpenCodeTestHelpers.CreateTestContext(model: RouteModel, lightModel: LightModelId).Provider.Model);
+    }
+
     // ── BuildTextPart helper ──────────────────────────────────────────────
 
     /// <summary>

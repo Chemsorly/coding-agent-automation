@@ -147,6 +147,7 @@ public sealed class ProviderFailureRecordingAgentProvider(IAgentProvider inner, 
 
     public AgentProviderType ProviderType => _inner.ProviderType;
     public string? Model => _inner.Model;
+    public string? LightModel => _inner.LightModel;
     public string McpConfigPath => _inner.McpConfigPath;
     public bool SupportsParallelExecution => _inner.SupportsParallelExecution;
     public IReadOnlyList<string> PipelineInjectedPaths => _inner.PipelineInjectedPaths;

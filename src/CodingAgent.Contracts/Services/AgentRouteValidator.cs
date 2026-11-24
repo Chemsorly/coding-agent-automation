@@ -123,6 +123,7 @@ public static partial class AgentRouteValidator
 
         errors.AddRange(ValidateModel(rowLabel, route.Model));
         errors.AddRange(ValidateEffort(rowLabel, route.Effort, tool));
+        errors.AddRange(ValidateLightTier(rowLabel, route, tool));
         return errors;
     }
 
@@ -199,6 +200,22 @@ public static partial class AgentRouteValidator
 
         errors.AddRange(ValidateModel(rowLabel, route.Model));
         errors.AddRange(ValidateEffort(rowLabel, route.Effort, tool));
+        errors.AddRange(ValidateLightTier(rowLabel, route, tool));
+        return errors;
+    }
+
+    /// <summary>
+    /// The optional light tier of a route: a blank value is unset and valid; a set one follows the same rules as the
+    /// route's own model and effort, and its errors name the row as "Default (light)".
+    /// </summary>
+    private static List<string> ValidateLightTier(string rowLabel, AgentRoute route, AgentTool? tool)
+    {
+        var errors = new List<string>();
+        var label = $"{rowLabel} (light)";
+        if (!string.IsNullOrWhiteSpace(route.LightModel))
+            errors.AddRange(ValidateModel(label, route.LightModel));
+        if (!string.IsNullOrWhiteSpace(route.LightEffort))
+            errors.AddRange(ValidateEffort(label, route.LightEffort, tool));
         return errors;
     }
 

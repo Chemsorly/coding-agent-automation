@@ -467,6 +467,175 @@ public class KiroCliAgentProviderTests
             "EffortOverride = High must override the provider's Max effort for this call");
     }
 
+    // --- ExecuteAsync: light tier ---
+
+    /// <summary>
+    /// Runs <paramref name="request"/> on a provider configured with the route's model and effort and the given light
+    /// values, and returns the configuration of the ephemeral orchestrator the call created, or null when it created none.
+    /// </summary>
+    private async Task<KiroCliLib.Configuration.Configuration?> ExecuteAndCaptureEphemeralConfigAsync(
+        AgentRequest request,
+        string? lightModel = null,
+        AgentEffortLevel? lightEffort = null,
+        string? routeModel = "route-model",
+        AgentEffortLevel routeEffort = AgentEffortLevel.High)
+    {
+        KiroCliLib.Configuration.Configuration? capturedConfig = null;
+        var ephemeralMock = new Mock<IKiroCliOrchestrator>();
+        ephemeralMock
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(0);
+
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, routeModel,
+            "/usr/bin/fake-kiro-cli", routeEffort, _mockProcessStarter.Object,
+            lightModel: lightModel, lightEffort: lightEffort)
+        {
+            CreateEphemeralOrchestratorWith = config =>
+            {
+                capturedConfig = config;
+                return ephemeralMock.Object;
+            }
+        };
+
+        await provider.ExecuteAsync(request, CancellationToken.None);
+        return capturedConfig;
+    }
+
+    private static AgentRequest LightRequest(
+        bool useLightTier = true, bool useResume = false, string? resumeSessionId = null, AgentEffortLevel? effortOverride = null) => new()
+        {
+            Prompt = "describe the change",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"kiro-light-{Guid.NewGuid():N}"),
+            UseLightTier = useLightTier,
+            UseResume = useResume,
+            ResumeSessionId = resumeSessionId,
+            EffortOverride = effortOverride,
+        };
+
+    [Fact]
+    public async Task LightCall_UsesLightModelAndEffort()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(LightRequest(), lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+
+        config.Should().NotBeNull();
+        config!.Model.Should().Be("haiku");
+        config.Effort.Should().Be("low");
+    }
+
+    [Fact]
+    public async Task LightFlagOnResumedCall_IsIgnored()
+    {
+        var resumed = await ExecuteAndCaptureEphemeralConfigAsync(
+            LightRequest(useResume: true), lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+        var byId = await ExecuteAndCaptureEphemeralConfigAsync(
+            LightRequest(resumeSessionId: "session-1"), lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+
+        resumed.Should().BeNull("a resumed call runs on the shared orchestrator, which keeps the route's model and effort");
+        byId.Should().BeNull();
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task LightCall_EffortOverrideWins()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(
+            LightRequest(effortOverride: AgentEffortLevel.Max), lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+
+        config!.Effort.Should().Be("max");
+        config.Model.Should().Be("haiku");
+    }
+
+    [Fact]
+    public async Task LightCall_UnsetValues_UseTheRoutes()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(LightRequest());
+
+        config!.Model.Should().Be("route-model");
+        config.Effort.Should().Be("high");
+    }
+
+    [Fact]
+    public async Task LightCall_OnlyTheLightModelSet_KeepsTheRoutesEffort()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(LightRequest(), lightModel: "haiku");
+
+        config!.Model.Should().Be("haiku");
+        config.Effort.Should().Be("high");
+    }
+
+    [Fact]
+    public async Task LightCall_OnlyTheLightEffortSet_KeepsTheRoutesModel()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(LightRequest(), lightEffort: AgentEffortLevel.Medium);
+
+        config!.Model.Should().Be("route-model");
+        config.Effort.Should().Be("medium");
+    }
+
+    [Fact]
+    public async Task LightCall_LightEffortAuto_LeavesTheEffortToTheCli_NotTheRoutes()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(LightRequest(), lightEffort: AgentEffortLevel.Auto);
+
+        config!.Effort.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LightCall_LightEffortXHigh_RunsAtHigh_BecauseKiroHasNoXHigh()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(
+            LightRequest(), lightEffort: AgentEffortLevel.XHigh, routeEffort: AgentEffortLevel.Low);
+
+        config!.Effort.Should().Be("high");
+    }
+
+    [Fact]
+    public async Task LightCall_LightModelAuto_LeavesTheModelToTheCli_NotTheRoutes()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(LightRequest(), lightModel: "auto");
+
+        config!.Model.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task NoLightFlag_IgnoresTheLightValues()
+    {
+        var config = await ExecuteAndCaptureEphemeralConfigAsync(
+            LightRequest(useLightTier: false), lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+
+        config!.Model.Should().Be("route-model");
+        config.Effort.Should().Be("high");
+    }
+
+    [Fact]
+    public void LightProperties_DescribeTheLightTier_AndAreNullWhenUnset()
+    {
+        var light = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, "route-model", "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
+            _mockProcessStarter.Object, lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+        var publicCtor = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, "route-model", "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
+            lightModel: "haiku", lightEffort: AgentEffortLevel.Low);
+
+        light.LightModel.Should().Be("haiku");
+        light.LightEffort.Should().Be(AgentEffortLevel.Low);
+        light.Model.Should().Be("route-model", "the route's model is unchanged");
+        publicCtor.LightModel.Should().Be("haiku");
+        publicCtor.LightEffort.Should().Be(AgentEffortLevel.Low);
+        _provider.LightModel.Should().BeNull();
+        _provider.LightEffort.Should().BeNull();
+    }
+
     // --- ExecuteAsync: configuration the CLI refuses ---
 
     [Theory]

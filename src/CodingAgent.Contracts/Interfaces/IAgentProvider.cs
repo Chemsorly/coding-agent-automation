@@ -14,6 +14,12 @@ public interface IAgentProvider : IAsyncDisposable
     /// </summary>
     string? Model { get; }
 
+    /// <summary>
+    /// The model of the route's light tier, which a request that <see cref="AgentRequest.AppliesLightTier"/> runs with
+    /// instead of <see cref="Model"/>; null when the route has none. A provider without a light tier keeps the default.
+    /// </summary>
+    string? LightModel => null;
+
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>

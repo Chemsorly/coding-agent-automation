@@ -36,6 +36,75 @@ public class AgentProviderConfigFactoryTests
     }
 
     [Fact]
+    public void Build_LightValues_AreInTheSettings()
+    {
+        var config = AgentProviderConfigFactory.Build(Profile, "claude", "opus", "xhigh", "haiku", "low");
+
+        config.Settings.Should().Equal(new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Subscription,
+            [ProviderSettingKeys.McpConfigPath] = "/home/ubuntu/custom-mcp.json",
+            [ProviderSettingKeys.Model] = "opus",
+            [ProviderSettingKeys.Effort] = "xhigh",
+            [ProviderSettingKeys.LightModel] = "haiku",
+            [ProviderSettingKeys.LightEffort] = "low",
+        });
+    }
+
+    [Fact]
+    public void Build_OnlyOneLightValue_LeavesTheOtherOut()
+    {
+        var modelOnly = AgentProviderConfigFactory.Build(Profile, "opencode", "openai/gpt-5", "auto", lightModel: "openai/gpt-5-mini");
+        var effortOnly = AgentProviderConfigFactory.Build(Profile, "claude", "opus", "high", lightEffort: "low");
+
+        modelOnly.Settings[ProviderSettingKeys.LightModel].Should().Be("openai/gpt-5-mini");
+        modelOnly.Settings.Should().NotContainKey(ProviderSettingKeys.LightEffort);
+        effortOnly.Settings[ProviderSettingKeys.LightEffort].Should().Be("low");
+        effortOnly.Settings.Should().NotContainKey(ProviderSettingKeys.LightModel);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Build_NoLightValues_RemovesThemFromTheProfileSettings(string? blank)
+    {
+        var stale = Profile with
+        {
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Subscription,
+                [ProviderSettingKeys.LightModel] = "left-in-profile",
+                [ProviderSettingKeys.LightEffort] = "low",
+            },
+        };
+
+        var config = AgentProviderConfigFactory.Build(stale, "claude", "opus", "high", blank, blank);
+
+        config.Settings.Should().NotContainKey(ProviderSettingKeys.LightModel)
+            .And.NotContainKey(ProviderSettingKeys.LightEffort);
+        config.Settings.Should().ContainKey(ProviderSettingKeys.AuthMode, "only the light keys are removed");
+    }
+
+    [Fact]
+    public void Build_TheRoutesLightValues_WinOverOnesLeftInTheProfileSettings()
+    {
+        var stale = Profile with
+        {
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.LightModel] = "left-in-profile",
+                [ProviderSettingKeys.LightEffort] = "max",
+            },
+        };
+
+        var config = AgentProviderConfigFactory.Build(stale, "claude", "opus", "high", "haiku", "low");
+
+        config.Settings[ProviderSettingKeys.LightModel].Should().Be("haiku");
+        config.Settings[ProviderSettingKeys.LightEffort].Should().Be("low");
+    }
+
+    [Fact]
     public void Build_IdIsTheProfileId_AndKindIsAgent()
     {
         var config = AgentProviderConfigFactory.Build(Profile, "claude", "auto", "auto");

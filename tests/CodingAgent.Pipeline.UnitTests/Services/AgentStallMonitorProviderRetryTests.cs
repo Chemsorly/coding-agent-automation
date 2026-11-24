@@ -324,6 +324,17 @@ public class AgentStallMonitorProviderRetryTests : IDisposable
         retried.EffortOverride.Should().Be(AgentEffortLevel.High);
     }
 
+    [Fact]
+    public async Task RetriedRequest_KeepsTheLightTierFlag()
+    {
+        var original = new AgentRequest { Prompt = OriginalPrompt, WorkspacePath = "/ws", UseLightTier = true };
+        SetupResults(Busy(AgentErrorCategory.ProviderRateLimit), Success());
+
+        await RunAsync(original, CreateConfig());
+
+        SentRequests().Should().HaveCount(2).And.OnlyContain(r => r.UseLightTier && r.AppliesLightTier);
+    }
+
     // ── What the operator sees ─────────────────────────────────────────────────
 
     [Fact]

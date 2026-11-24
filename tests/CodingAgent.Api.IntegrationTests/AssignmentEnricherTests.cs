@@ -291,6 +291,39 @@ public sealed class AssignmentEnricherTests
     }
 
     [Fact]
+    public async Task EnrichAsync_PinnedRouteWithLightValues_PutsThemInTheAgentConfigSettings()
+    {
+        var setup = new Setup();
+        var identity = MakeIdentity() with { Route = PinnedRoute with { LightModel = "haiku", LightEffort = "low" } };
+
+        Enriched(await setup.Build().EnrichAsync(identity, MakeProject(), CancellationToken.None));
+
+        setup.Infra.CapturedRequest!.AgentConfig!.Settings.Should()
+            .Contain(ProviderSettingKeys.LightModel, "haiku")
+            .And.Contain(ProviderSettingKeys.LightEffort, "low")
+            .And.Contain(ProviderSettingKeys.Model, "opus", "the route's own model stays");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_PinnedRouteWithoutLightValues_LeavesLightKeysOutOfTheAgentConfig_EvenWhenTheProfileHasThem()
+    {
+        var profile = MakeProfile() with
+        {
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.LightModel] = "left-in-profile",
+                [ProviderSettingKeys.LightEffort] = "low",
+            },
+        };
+        var setup = new Setup { Profiles = [profile] };
+
+        Enriched(await setup.Build().EnrichAsync(MakeIdentity(), MakeProject(), CancellationToken.None));
+
+        setup.Infra.CapturedRequest!.AgentConfig!.Settings.Keys.Should()
+            .NotContain([ProviderSettingKeys.LightModel, ProviderSettingKeys.LightEffort]);
+    }
+
+    [Fact]
     public async Task EnrichAsync_PinnedRoute_IsNotResolvedAgain_WhenTheRoutingChanged()
     {
         // The default row now names another profile; the item keeps the route it was created with.

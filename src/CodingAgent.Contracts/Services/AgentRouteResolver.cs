@@ -132,7 +132,7 @@ public static class AgentRouteResolver
         }
 
         return AgentRouteResult.Routed(
-            new AgentRouteSnapshot(profile.Id, profile.DisplayName, tool, row.Model, row.Effort, source),
+            new AgentRouteSnapshot(profile.Id, profile.DisplayName, tool, row.Model, row.Effort, source, row.LightModel, row.LightEffort),
             profile);
     }
 
