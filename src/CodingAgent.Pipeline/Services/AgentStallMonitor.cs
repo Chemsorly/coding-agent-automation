@@ -118,7 +118,7 @@ internal static class AgentStallMonitor
         var phaseTag = phase is not null
             ? PipelineTelemetry.NormalizeRunPhase(phase)
             : PipelineTelemetry.NormalizePhaseDescription(monitor.PhaseDescription);
-        var model = agentProvider.Model;
+        var model = request.AppliesLightTier && agentProvider.LightModel is { } lightModel ? lightModel : agentProvider.Model;
 
         // Session span: one per agent CLI invocation, following GenAI semantic conventions
         using var sessionSpan = PipelineTelemetry.ActivitySource.StartActivity(

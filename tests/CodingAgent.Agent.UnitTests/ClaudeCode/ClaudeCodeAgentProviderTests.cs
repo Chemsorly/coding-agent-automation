@@ -39,19 +39,25 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         string? model = "claude-opus-5-5",
         AgentEffortLevel effort = AgentEffortLevel.High,
         ClaudeExitTimings? timings = null,
-        Serilog.ILogger? logger = null) =>
+        Serilog.ILogger? logger = null,
+        string? lightModel = null,
+        AgentEffortLevel? lightEffort = null) =>
         new(logger ?? new Mock<Serilog.ILogger>().Object,
-            new ClaudeCodeSettings(model, "/opt/claude", effort, authMode, _mcpConfigPath),
+            new ClaudeCodeSettings(model, "/opt/claude", effort, authMode, _mcpConfigPath, lightModel, lightEffort),
             _launcher, name => _env.GetValueOrDefault(name), timings);
 
-    private AgentRequest Request(string prompt = "do it", bool useResume = false, string? resumeSessionId = null) => new()
-    {
-        Prompt = prompt,
-        WorkspacePath = _workspace,
-        UseResume = useResume,
-        ResumeSessionId = resumeSessionId,
-        Timeout = TimeSpan.FromMinutes(1)
-    };
+    private AgentRequest Request(
+        string prompt = "do it", bool useResume = false, string? resumeSessionId = null,
+        bool useLightTier = false, AgentEffortLevel? effortOverride = null) => new()
+        {
+            Prompt = prompt,
+            WorkspacePath = _workspace,
+            UseResume = useResume,
+            ResumeSessionId = resumeSessionId,
+            UseLightTier = useLightTier,
+            EffortOverride = effortOverride,
+            Timeout = TimeSpan.FromMinutes(1)
+        };
 
     private static string Init(string sessionId) => JsonSerializer.Serialize(new
     {
@@ -670,6 +676,145 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         ClaudeCodeAgentProvider.WentBackwards(previous, previous with { CostUsd = null }).Should().BeFalse();
         ClaudeCodeAgentProvider.WentBackwards(
             WithOpus(previous, m => m with { CostUsd = null }), previous).Should().BeFalse();
+    }
+
+    // ── Light tier ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LightCall_UsesLightModelAndEffort()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightModel: "claude-haiku-4-5", lightEffort: AgentEffortLevel.Low)
+            .ExecuteAsync(Request(useLightTier: true), CancellationToken.None);
+
+        _launcher.Started.Should().ContainSingle().Which.ArgumentList.Should().Equal(
+            "-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
+            "--model", "claude-haiku-4-5", "--effort", "low");
+    }
+
+    [Fact]
+    public async Task LightFlagOnResumedCall_IsIgnored()
+    {
+        var provider = CreateProvider(lightModel: "claude-haiku-4-5", lightEffort: AgentEffortLevel.Low);
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+        _launcher.Enqueue(Init("other"), Result("other", 1, 1, 0, 0.01m, 1));
+
+        await provider.ExecuteAsync(Request(), CancellationToken.None);
+        await provider.ExecuteAsync(Request(useResume: true, useLightTier: true), CancellationToken.None);
+        await provider.ExecuteAsync(Request(resumeSessionId: "other", useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[1].ArgumentList.Should().ContainInOrder("--model", "claude-opus-5-5", "--effort", "high", "--resume", "s1");
+        _launcher.Started[2].ArgumentList.Should().ContainInOrder("--model", "claude-opus-5-5", "--effort", "high", "--resume", "other");
+        _launcher.Started[1].ArgumentList.Should().NotContain("claude-haiku-4-5");
+        _launcher.Started[2].ArgumentList.Should().NotContain("claude-haiku-4-5");
+    }
+
+    [Fact]
+    public async Task LightFlagOnUseResumeWithoutAnEarlierSession_IsIgnored_BecauseThatCallBecomesTheMainConversation()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightModel: "claude-haiku-4-5", lightEffort: AgentEffortLevel.Low)
+            .ExecuteAsync(Request(useResume: true, useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().ContainInOrder("--model", "claude-opus-5-5", "--effort", "high");
+    }
+
+    [Fact]
+    public async Task LightCall_EffortOverrideWins()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightModel: "claude-haiku-4-5", lightEffort: AgentEffortLevel.Low)
+            .ExecuteAsync(Request(useLightTier: true, effortOverride: AgentEffortLevel.Max), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().ContainInOrder("--model", "claude-haiku-4-5", "--effort", "max");
+    }
+
+    [Fact]
+    public async Task LightCall_UnsetValues_UseTheRoutes()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider().ExecuteAsync(Request(useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().ContainInOrder("--model", "claude-opus-5-5", "--effort", "high");
+    }
+
+    [Fact]
+    public async Task LightCall_OnlyTheLightModelSet_KeepsTheRoutesEffort()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightModel: "claude-haiku-4-5").ExecuteAsync(Request(useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().ContainInOrder("--model", "claude-haiku-4-5", "--effort", "high");
+    }
+
+    [Fact]
+    public async Task LightCall_OnlyTheLightEffortSet_KeepsTheRoutesModel()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightEffort: AgentEffortLevel.Medium).ExecuteAsync(Request(useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().ContainInOrder("--model", "claude-opus-5-5", "--effort", "medium");
+    }
+
+    [Fact]
+    public async Task LightCall_LightEffortAuto_LeavesTheEffortToTheCli_NotTheRoutes()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightEffort: AgentEffortLevel.Auto).ExecuteAsync(Request(useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().NotContain("--effort");
+    }
+
+    [Fact]
+    public async Task LightCall_LightModelAuto_LeavesTheModelToTheCli_NotTheRoutes()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightModel: "auto").ExecuteAsync(Request(useLightTier: true), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().NotContain("--model");
+    }
+
+    [Fact]
+    public async Task NoLightFlag_IgnoresTheLightValues()
+    {
+        _launcher.Enqueue(Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1));
+
+        await CreateProvider(lightModel: "claude-haiku-4-5", lightEffort: AgentEffortLevel.Low)
+            .ExecuteAsync(Request(), CancellationToken.None);
+
+        _launcher.Started[0].ArgumentList.Should().ContainInOrder("--model", "claude-opus-5-5", "--effort", "high");
+    }
+
+    [Fact]
+    public void LightProperties_DescribeTheLightTier_AndAreNullWhenUnset()
+    {
+        var light = CreateProvider(lightModel: "claude-haiku-4-5", lightEffort: AgentEffortLevel.Low);
+        var none = CreateProvider();
+
+        light.LightModel.Should().Be("claude-haiku-4-5");
+        light.LightEffort.Should().Be(AgentEffortLevel.Low);
+        light.Model.Should().Be("claude-opus-5-5", "the route's model is unchanged");
+        none.LightModel.Should().BeNull();
+        none.LightEffort.Should().BeNull();
+    }
+
+    [Fact]
+    public void PublicConstructor_TakesTheLightValues()
+    {
+        var provider = new ClaudeCodeAgentProvider(
+            new Mock<Serilog.ILogger>().Object, "opus", "/opt/claude", AgentEffortLevel.High, null, null, "haiku", AgentEffortLevel.Low);
+
+        provider.LightModel.Should().Be("haiku");
+        provider.LightEffort.Should().Be(AgentEffortLevel.Low);
     }
 
     [Fact]

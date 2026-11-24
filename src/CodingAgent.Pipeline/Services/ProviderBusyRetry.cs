@@ -50,7 +50,8 @@ public static class ProviderBusyRetry
         ResumeSessionId = original.ResumeSessionId,
         ImagePaths = original.ImagePaths,
         EnvironmentVariables = original.EnvironmentVariables,
-        EffortOverride = original.EffortOverride
+        EffortOverride = original.EffortOverride,
+        UseLightTier = original.UseLightTier
     };
 
     /// <summary>

@@ -149,6 +149,8 @@ public sealed class AgentProviderFactory : IProviderFactory
         var executablePath = ResolveCliPath(AgentDefaults.EnvKiroCliPath, AgentDefaults.KiroCliPath);
         var agentName = config.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName);
         var effort = AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort));
+        var lightModel = LightModelOf(config);
+        var lightEffort = LightEffortOf(config);
 
         // The injected orchestrator runs the default CLI path with no model, effort or agent flags. A
         // provider that sets any of them gets its own orchestrator, so every run, shared or isolated,
@@ -158,7 +160,24 @@ public sealed class AgentProviderFactory : IProviderFactory
                            && executablePath == AgentDefaults.KiroCliPath
             ? _orchestrator
             : new KiroCliOrchestrator(runConfig, Serilog.Log.Logger);
-        return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath, effort, agentName);
+        return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath, effort, agentName, lightModel, lightEffort);
+    }
+
+    /// <summary>The route's light model; blank means the route has none.</summary>
+    private static string? LightModelOf(ProviderConfig config)
+    {
+        var value = config.Settings.GetValueOrDefault(ProviderSettingKeys.LightModel);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    /// <summary>
+    /// The route's light effort; blank means the route has none, which differs from <c>auto</c>: that is the tool's
+    /// own default, and a call that applies the light tier then runs with it instead of the route's effort.
+    /// </summary>
+    private static AgentEffortLevel? LightEffortOf(ProviderConfig config)
+    {
+        var value = config.Settings.GetValueOrDefault(ProviderSettingKeys.LightEffort);
+        return string.IsNullOrWhiteSpace(value) ? null : AgentEffortLevelExtensions.ParseEffort(value);
     }
 
     /// <summary>
@@ -175,7 +194,9 @@ public sealed class AgentProviderFactory : IProviderFactory
             executablePath,
             AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort)),
             config.Settings.GetValueOrDefault(ProviderSettingKeys.AuthMode),
-            config.Settings.GetValueOrDefault(ProviderSettingKeys.McpConfigPath));
+            config.Settings.GetValueOrDefault(ProviderSettingKeys.McpConfigPath),
+            LightModelOf(config),
+            LightEffortOf(config));
     }
 
     /// <summary>
@@ -215,7 +236,7 @@ public sealed class AgentProviderFactory : IProviderFactory
 
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
         // A configured Base URL overrides the client's address (OPENCODE_BASE_URL or the default).
-        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model, configuredBaseUrl);
+        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model, configuredBaseUrl, LightModelOf(config));
     }
 
     private GitHubActionsPipelineProvider CreateGitHubPipelineProvider(ProviderConfig config)

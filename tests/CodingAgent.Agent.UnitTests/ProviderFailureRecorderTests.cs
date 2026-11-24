@@ -94,6 +94,26 @@ public class ProviderFailureRecorderTests
     }
 
     [Fact]
+    public void LightModel_IsForwardedFromTheInnerProvider()
+    {
+        var provider = new Mock<IAgentProvider>();
+        provider.SetupGet(p => p.Model).Returns("opus");
+        provider.SetupGet(p => p.LightModel).Returns("haiku");
+        var decorator = new ProviderFailureRecordingAgentProvider(provider.Object, new ProviderFailureRecorder());
+
+        decorator.Model.Should().Be("opus");
+        ((IAgentProvider)decorator).LightModel.Should().Be("haiku", "a default interface member is not forwarded unless the wrapper says so");
+    }
+
+    [Fact]
+    public void LightModel_WhenTheInnerProviderHasNone_IsNull()
+    {
+        var decorator = new ProviderFailureRecordingAgentProvider(new Mock<IAgentProvider>().Object, new ProviderFailureRecorder());
+
+        ((IAgentProvider)decorator).LightModel.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Execute_ExceptionsPassThrough()
     {
         var provider = new Mock<IAgentProvider>();
