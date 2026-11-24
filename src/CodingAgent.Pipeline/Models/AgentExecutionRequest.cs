@@ -30,4 +30,10 @@ internal sealed record AgentExecutionRequest
     /// for silence or its process dies, so the API records <c>pipeline.run.agent_stalls</c> (issue #2979).
     /// </summary>
     public Action<string, string>? ReportStallEvent { get; init; }
+
+    /// <summary>
+    /// Asks for the route's light tier, forwarded to <see cref="AgentRequest.UseLightTier"/>. Only
+    /// <see cref="Services.AgentPhaseExecutor.ExecuteAgentRawAsync"/> honours it: it always starts a fresh session.
+    /// </summary>
+    public bool UseLightTier { get; init; }
 }

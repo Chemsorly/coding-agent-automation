@@ -4,6 +4,7 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
 using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.UnitTests;
@@ -1830,6 +1831,82 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
         return fixRequest;
+    }
+
+    #endregion
+
+    #region Light Tier Tests (issue #4068)
+
+    private const string ReviewSummaryPromptStart = "You are summarizing a code review";
+
+    [Fact]
+    public async Task RunReviewLoop_WarningsFix_AsksForLightTier()
+    {
+        var requests = await CaptureRequestsAsync(BuildContext(), "[WARNING] Minor style issue", "Correctness");
+
+        var fixRequest = requests.Should().ContainSingle(r => r.Prompt == PromptBuilder.BuildWarningsFixPrompt(_config.CodeReview.FixPrompt!)).Subject;
+        fixRequest.UseLightTier.Should().BeTrue("the warnings-only fix needs little judgement");
+        fixRequest.AppliesLightTier.Should().BeTrue("the warnings-only fix starts a fresh session, so the light tier applies");
+    }
+
+    [Fact]
+    public async Task RunReviewLoop_CriticalFix_DoesNotAskForLightTier()
+    {
+        _run.CodegenSessionId = "codegen-session";
+
+        var requests = await CaptureRequestsAsync(BuildContext(), "[CRITICAL] Critical bug found", "Correctness");
+
+        var fixRequest = requests.Should().ContainSingle(r => r.Prompt == PromptBuilder.BuildFixPrompt(_config.CodeReview.FixPrompt!)).Subject;
+        fixRequest.UseLightTier.Should().BeFalse("a critical fix resumes the codegen session and needs full judgement");
+        fixRequest.AppliesLightTier.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunReviewLoop_ReviewAgents_DoNotAskForLightTier()
+    {
+        // Two reviewers and the acceptance criteria check run; no findings, so no fix agent runs.
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+        };
+
+        var requests = await CaptureRequestsAsync(BuildContext(config), "", "AgentA", "AgentB");
+
+        var reviewRequests = requests.Where(r => !r.Prompt.StartsWith(ReviewSummaryPromptStart)).ToList();
+        reviewRequests.Should().HaveCount(3, "two reviewers and the acceptance criteria check");
+        reviewRequests.Should().Contain(r => r.Prompt.Contains(AgentWorkspacePaths.AcceptanceCriteriaFilePath));
+        reviewRequests.Should().OnlyContain(r => !r.UseLightTier, "reviewers judge the change and must run at the route's own tier");
+    }
+
+    [Fact]
+    public async Task ReviewSummary_AsksForLightTier()
+    {
+        var requests = await CaptureRequestsAsync(BuildContext(), "", "Correctness");
+
+        var summaryRequest = requests.Should().ContainSingle(r => r.Prompt.StartsWith(ReviewSummaryPromptStart)).Subject;
+        summaryRequest.UseLightTier.Should().BeTrue("the review summary needs little judgement");
+        summaryRequest.AppliesLightTier.Should().BeTrue("the review summary starts a fresh session, so the light tier applies");
+    }
+
+    /// <summary>
+    /// Runs the review and returns every request sent to the agent, in order. The first agent call (the first
+    /// reviewer) writes <paramref name="findings"/> to the first reviewer's findings file.
+    /// </summary>
+    private async Task<List<AgentRequest>> CaptureRequestsAsync(AgentPhaseContext context, string findings, params string[] agentNames)
+    {
+        var requests = new List<AgentRequest>();
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                requests.Add(req);
+                if (requests.Count == 1)
+                    WriteFindingsFile(agentNames[0], findings);
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers(agentNames));
+        return requests;
     }
 
     #endregion
