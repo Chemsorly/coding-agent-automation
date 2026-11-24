@@ -2733,6 +2733,35 @@ public class PullRequestFinalizationServiceTests
     }
 
     [Fact]
+    public async Task GeneratePrDescriptionAsync_AsksForLightTier()
+    {
+        using var tmpDir = new TempDirectory();
+        WritePrDescriptionFile(tmpDir.Path, "## Summary\nTest description");
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "42";
+        var agentProvider = new Mock<IAgentProvider>();
+        var requests = CaptureAgentRequests(agentProvider);
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(
+                It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        };
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+        var request = requests.Should().ContainSingle().Subject;
+        request.UseLightTier.Should().BeTrue("the PR description needs little judgement");
+        request.AppliesLightTier.Should().BeTrue("the PR description starts a fresh session, so the light tier applies");
+    }
+
+    [Fact]
     public async Task GeneratePrDescriptionAsync_CountsTokensOnce()
     {
         // Verifies that tokens are accumulated exactly once: ExecuteAgentRawAsync records them
@@ -2794,6 +2823,33 @@ public class PullRequestFinalizationServiceTests
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Action<string>>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task RunReflectionAsync_DoesNotAskForLightTier()
+    {
+        var run = CreateRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        var requests = CaptureAgentRequests(agentProvider);
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        await _sut.RunReflectionAsync(run, agentProvider.Object, config, _ => { }, CancellationToken.None);
+
+        var request = requests.Should().ContainSingle().Subject;
+        request.UseLightTier.Should().BeFalse("the reflection continues the main session and judges what the run learned");
+        request.AppliesLightTier.Should().BeFalse();
+    }
+
+    private static List<AgentRequest> CaptureAgentRequests(Mock<IAgentProvider> agentProvider)
+    {
+        var requests = new List<AgentRequest>();
+        agentProvider.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>>((req, _, _) => requests.Add(req))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+        agentProvider.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
+        return requests;
     }
 
     // ── New guard tests (issue #4083) ──────────────────────────────────────────

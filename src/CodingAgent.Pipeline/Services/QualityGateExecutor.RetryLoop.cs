@@ -158,6 +158,7 @@ public partial class QualityGateExecutor
                     Description = "Pre-PR cleanup agent",
                     Logger = _logger,
                     Phase = "cleanup",
+                    UseLightTier = true,
                     OnChange = callbacks.NotifyChange,
                     OnOutputLine = line => callbacks.EmitOutputLine(line),
                     EnvironmentVariables = context.InjectedSecrets,
