@@ -511,14 +511,14 @@ public class KiroCliAgentProviderTests
 
     private static AgentRequest LightRequest(
         bool useLightTier = true, bool useResume = false, string? resumeSessionId = null, AgentEffortLevel? effortOverride = null) => new()
-    {
-        Prompt = "describe the change",
-        WorkspacePath = Path.Combine(Path.GetTempPath(), $"kiro-light-{Guid.NewGuid():N}"),
-        UseLightTier = useLightTier,
-        UseResume = useResume,
-        ResumeSessionId = resumeSessionId,
-        EffortOverride = effortOverride,
-    };
+        {
+            Prompt = "describe the change",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"kiro-light-{Guid.NewGuid():N}"),
+            UseLightTier = useLightTier,
+            UseResume = useResume,
+            ResumeSessionId = resumeSessionId,
+            EffortOverride = effortOverride,
+        };
 
     [Fact]
     public async Task LightCall_UsesLightModelAndEffort()

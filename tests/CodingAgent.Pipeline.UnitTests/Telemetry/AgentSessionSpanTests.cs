@@ -321,14 +321,14 @@ public class AgentSessionSpanTests : IDisposable
 
     private static AgentRequest CreateRequest(
         bool useLightTier = false, bool useResume = false, string? resumeSessionId = null) => new()
-    {
-        Prompt = "do something",
-        WorkspacePath = "/tmp/workspace",
-        Timeout = TimeSpan.FromSeconds(30),
-        UseLightTier = useLightTier,
-        UseResume = useResume,
-        ResumeSessionId = resumeSessionId
-    };
+        {
+            Prompt = "do something",
+            WorkspacePath = "/tmp/workspace",
+            Timeout = TimeSpan.FromSeconds(30),
+            UseLightTier = useLightTier,
+            UseResume = useResume,
+            ResumeSessionId = resumeSessionId
+        };
 
     private static AgentResult SimpleResult() => new() { ExitCode = 0, OutputLines = [] };
 

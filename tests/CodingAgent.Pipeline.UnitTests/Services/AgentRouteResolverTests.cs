@@ -33,7 +33,10 @@ public class AgentRouteResolverTests
 
     private static PipelineJobTemplate Template(params (WorkItemTaskType TaskType, AgentRoute Route)[] rows) => new()
     {
-        Id = "t-api", Name = "api", IssueProviderId = "ip", RepoProviderId = "rp",
+        Id = "t-api",
+        Name = "api",
+        IssueProviderId = "ip",
+        RepoProviderId = "rp",
         AgentRoutes = rows.Length == 0 ? null : rows.ToDictionary(r => r.TaskType, r => r.Route),
     };
 
@@ -149,7 +152,10 @@ public class AgentRouteResolverTests
     {
         var template = new PipelineJobTemplate
         {
-            Id = "t", Name = "api", IssueProviderId = "ip", RepoProviderId = "rp",
+            Id = "t",
+            Name = "api",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp",
             AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Implementation] = null! },
         };
         var routing = new AgentRouting

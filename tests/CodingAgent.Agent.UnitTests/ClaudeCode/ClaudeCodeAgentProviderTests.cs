@@ -49,15 +49,15 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     private AgentRequest Request(
         string prompt = "do it", bool useResume = false, string? resumeSessionId = null,
         bool useLightTier = false, AgentEffortLevel? effortOverride = null) => new()
-    {
-        Prompt = prompt,
-        WorkspacePath = _workspace,
-        UseResume = useResume,
-        ResumeSessionId = resumeSessionId,
-        UseLightTier = useLightTier,
-        EffortOverride = effortOverride,
-        Timeout = TimeSpan.FromMinutes(1)
-    };
+        {
+            Prompt = prompt,
+            WorkspacePath = _workspace,
+            UseResume = useResume,
+            ResumeSessionId = resumeSessionId,
+            UseLightTier = useLightTier,
+            EffortOverride = effortOverride,
+            Timeout = TimeSpan.FromMinutes(1)
+        };
 
     private static string Init(string sessionId) => JsonSerializer.Serialize(new
     {
