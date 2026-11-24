@@ -276,14 +276,14 @@ public sealed class WritePrConversationContextStepTests : IDisposable
 
     private static PrConversationComment Comment(
         string author, string body, bool? isVerified, bool isBot = false, bool isAuthor = false) => new()
-    {
-        Author = author,
-        Body = body,
-        CreatedAt = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
-        IsBot = isBot,
-        IsAuthor = isAuthor,
-        IsVerified = isVerified
-    };
+        {
+            Author = author,
+            Body = body,
+            CreatedAt = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
+            IsBot = isBot,
+            IsAuthor = isAuthor,
+            IsVerified = isVerified
+        };
 
     private PipelineStepContext BuildContext(PipelineRun run)
     {

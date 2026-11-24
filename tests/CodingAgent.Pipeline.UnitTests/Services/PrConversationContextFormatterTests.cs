@@ -180,7 +180,11 @@ public class PrConversationContextFormatterTests
     {
         var comment = new PrConversationComment
         {
-            Author = "bot", CreatedAt = DateTime.UtcNow, Body = "", IsBot = true, IsAuthor = false
+            Author = "bot",
+            CreatedAt = DateTime.UtcNow,
+            Body = "",
+            IsBot = true,
+            IsAuthor = false
         };
 
         PrConversationContextFormatter.FormatAttribution(comment).Should().Be("[BOT]");
@@ -191,7 +195,11 @@ public class PrConversationContextFormatterTests
     {
         var comment = new PrConversationComment
         {
-            Author = "author", CreatedAt = DateTime.UtcNow, Body = "", IsBot = false, IsAuthor = true
+            Author = "author",
+            CreatedAt = DateTime.UtcNow,
+            Body = "",
+            IsBot = false,
+            IsAuthor = true
         };
 
         PrConversationContextFormatter.FormatAttribution(comment).Should().Be("[HUMAN/AUTHOR]");
@@ -202,7 +210,11 @@ public class PrConversationContextFormatterTests
     {
         var comment = new PrConversationComment
         {
-            Author = "reviewer", CreatedAt = DateTime.UtcNow, Body = "", IsBot = false, IsAuthor = false
+            Author = "reviewer",
+            CreatedAt = DateTime.UtcNow,
+            Body = "",
+            IsBot = false,
+            IsAuthor = false
         };
 
         PrConversationContextFormatter.FormatAttribution(comment).Should().Be("[HUMAN]");
@@ -329,7 +341,12 @@ public class PrConversationContextFormatterTests
     {
         var comment = new PrConversationComment
         {
-            Author = "author", CreatedAt = DateTime.UtcNow, Body = "", IsBot = false, IsAuthor = true, IsVerified = false
+            Author = "author",
+            CreatedAt = DateTime.UtcNow,
+            Body = "",
+            IsBot = false,
+            IsAuthor = true,
+            IsVerified = false
         };
 
         PrConversationContextFormatter.FormatAttribution(comment).Should().Be("[UNVERIFIED]");
@@ -340,7 +357,12 @@ public class PrConversationContextFormatterTests
     {
         var comment = new PrConversationComment
         {
-            Author = "reviewer", CreatedAt = DateTime.UtcNow, Body = "", IsBot = false, IsAuthor = false, IsVerified = false
+            Author = "reviewer",
+            CreatedAt = DateTime.UtcNow,
+            Body = "",
+            IsBot = false,
+            IsAuthor = false,
+            IsVerified = false
         };
 
         PrConversationContextFormatter.FormatAttribution(comment).Should().Be("[UNVERIFIED]");
@@ -351,7 +373,12 @@ public class PrConversationContextFormatterTests
     {
         var comment = new PrConversationComment
         {
-            Author = "reviewer", CreatedAt = DateTime.UtcNow, Body = "", IsBot = false, IsAuthor = false, IsVerified = null
+            Author = "reviewer",
+            CreatedAt = DateTime.UtcNow,
+            Body = "",
+            IsBot = false,
+            IsAuthor = false,
+            IsVerified = null
         };
 
         PrConversationContextFormatter.FormatAttribution(comment).Should().Be("[HUMAN]");

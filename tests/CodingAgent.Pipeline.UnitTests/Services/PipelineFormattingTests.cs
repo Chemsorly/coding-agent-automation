@@ -287,11 +287,11 @@ public class PipelineFormattingTests
         // emitted). The CloseReference = null path — where ## Issue Reference must NOT appear — is not covered.
         // Add a complementary test with CloseReference = null to guard the conditional in GeneratePrBody.
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#42",
-                IssueTitle = "Add feature X",
-                CloseReference = "Closes #42",
-            });
+        {
+            IssueReference = "#42",
+            IssueTitle = "Add feature X",
+            CloseReference = "Closes #42",
+        });
 
         result.Should().Contain("## Issue Context");
         result.Should().Contain("**Add feature X** (#42)");
@@ -306,11 +306,11 @@ public class PipelineFormattingTests
     public void GeneratePrBody_IsDraft_ShowsDraftWarning()
     {
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "Draft PR",
-                IsDraft = true,
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "Draft PR",
+            IsDraft = true,
+        });
 
         result.Should().Contain("⚠️ **This is a draft PR — implementation is incomplete.**");
     }
@@ -319,11 +319,11 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithModelName_IncludesModelInFooter()
     {
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "Test",
-                ModelName = "claude-sonnet-4-20250514",
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "Test",
+            ModelName = "claude-sonnet-4-20250514",
+        });
 
         result.Should().Contain("*Model: claude-sonnet-4-20250514 · Automated implementation via pipeline*");
     }
@@ -332,10 +332,10 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithoutModelName_ShowsGenericFooter()
     {
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "Test",
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "Test",
+        });
 
         result.Should().Contain("*Automated implementation via pipeline*");
     }
@@ -344,12 +344,12 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithCost_ShouldShowCostBetweenModelAndSuffix()
     {
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "Test",
-                ModelName = "claude-opus-5-5",
-                CostText = "≈ $17.36",
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "Test",
+            ModelName = "claude-opus-5-5",
+            CostText = "≈ $17.36",
+        });
 
         result.Should().Contain("*Model: claude-opus-5-5 · Cost so far: ≈ $17.36 · Automated implementation via pipeline*");
     }
@@ -358,11 +358,11 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithCostAndNoModel_ShouldShowCostAndSuffix()
     {
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "Test",
-                CostText = "$0.42",
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "Test",
+            CostText = "$0.42",
+        });
 
         result.Should().Contain("*Cost so far: $0.42 · Automated implementation via pipeline*");
     }
@@ -377,11 +377,11 @@ public class PipelineFormattingTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#42",
-                IssueTitle = "Feature",
-                Comments = comments,
-            });
+        {
+            IssueReference = "#42",
+            IssueTitle = "Feature",
+            Comments = comments,
+        });
 
         body.Should().Contain("## Input Comments");
         body.Should().Contain("@alice");
@@ -395,10 +395,10 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithNoComments_OmitsInputCommentsSection()
     {
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "Bug",
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "Bug",
+        });
 
         body.Should().NotContain("## Input Comments");
     }
@@ -511,14 +511,20 @@ public class PipelineFormattingTests
         for (var i = 1; i <= 3; i++)
             comments.Add(new IssueComment
             {
-                Id = $"v{i}", Body = $"verified body {i}", Author = $"member{i}",
-                CreatedAt = start.AddMinutes(i), IsVerified = true
+                Id = $"v{i}",
+                Body = $"verified body {i}",
+                Author = $"member{i}",
+                CreatedAt = start.AddMinutes(i),
+                IsVerified = true
             });
         for (var i = 1; i <= 15; i++)
             comments.Add(new IssueComment
             {
-                Id = $"u{i}", Body = $"outside body {i:D2}", Author = $"outsider{i:D2}",
-                CreatedAt = start.AddMinutes(10 + i), IsVerified = false
+                Id = $"u{i}",
+                Body = $"outside body {i:D2}",
+                Author = $"outsider{i:D2}",
+                CreatedAt = start.AddMinutes(10 + i),
+                IsVerified = false
             });
 
         var body = BodyWithComments(comments);
@@ -675,11 +681,11 @@ public class PipelineFormattingTests
             new() { Id = "1", Author = "user1", Body = longBody, CreatedAt = DateTime.UtcNow }
         };
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#42",
-                IssueTitle = "Fix bug",
-                Comments = comments,
-            });
+        {
+            IssueReference = "#42",
+            IssueTitle = "Fix bug",
+            Comments = comments,
+        });
         body.Should().Contain("user1");
     }
 
@@ -693,11 +699,11 @@ public class PipelineFormattingTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                IssueTitle = "T",
-                Comments = comments,
-            });
+        {
+            IssueReference = "#1",
+            IssueTitle = "T",
+            Comments = comments,
+        });
 
         body.Should().Contain("…");
         body.Should().NotContain(longBody);
@@ -713,11 +719,11 @@ public class PipelineFormattingTests
         };
 
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "5",
-                IssueTitle = "Test",
-                Comments = comments,
-            });
+        {
+            IssueReference = "5",
+            IssueTitle = "Test",
+            Comments = comments,
+        });
 
         body.Should().Contain("@alice");
         body.Should().Contain("Real feedback");
@@ -729,10 +735,10 @@ public class PipelineFormattingTests
     public void GeneratePrBody_WithoutModelName_UsesDefaultFooter()
     {
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#42",
-                IssueTitle = "Fix bug",
-            });
+        {
+            IssueReference = "#42",
+            IssueTitle = "Fix bug",
+        });
         body.Should().Contain("Automated implementation via pipeline");
         body.Should().NotContain("Model:");
     }

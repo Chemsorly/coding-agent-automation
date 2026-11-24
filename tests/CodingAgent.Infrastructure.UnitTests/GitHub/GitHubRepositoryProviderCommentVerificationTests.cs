@@ -61,40 +61,40 @@ public class GitHubRepositoryProviderCommentVerificationTests : WireMockTestBase
     private static object IssueCommentJson(
         long id, string login, string type, string? association, string body = "A comment",
         string createdAt = "2026-01-15T10:00:00Z") => new
-    {
-        id,
-        body,
-        user = new { login, id = 1, type },
-        author_association = association,
-        created_at = createdAt,
-        updated_at = createdAt
-    };
+        {
+            id,
+            body,
+            user = new { login, id = 1, type },
+            author_association = association,
+            created_at = createdAt,
+            updated_at = createdAt
+        };
 
     private static object InlineCommentJson(
         long id, string login, string type, string? association, string body = "An inline comment",
         string createdAt = "2026-01-15T10:30:00Z") => new
-    {
-        id,
-        body,
-        user = new { login, id = 1, type },
-        author_association = association,
-        path = "src/file.cs",
-        original_position = 5,
-        created_at = createdAt,
-        updated_at = createdAt
-    };
+        {
+            id,
+            body,
+            user = new { login, id = 1, type },
+            author_association = association,
+            path = "src/file.cs",
+            original_position = 5,
+            created_at = createdAt,
+            updated_at = createdAt
+        };
 
     private static object ReviewJson(
         long id, string login, string type, string? association, string body = "A review body",
         string submittedAt = "2026-01-15T12:00:00Z") => new
-    {
-        id,
-        body,
-        state = "COMMENTED",
-        user = new { login, id = 1, type },
-        author_association = association,
-        submitted_at = submittedAt
-    };
+        {
+            id,
+            body,
+            state = "COMMENTED",
+            user = new { login, id = 1, type },
+            author_association = association,
+            submitted_at = submittedAt
+        };
 
     private static object BuildSearchIssueJson(int number, string headRef) => new
     {

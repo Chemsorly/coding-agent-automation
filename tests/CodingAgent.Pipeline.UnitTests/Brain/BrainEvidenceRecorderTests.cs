@@ -196,8 +196,11 @@ public class BrainEvidenceRecorderCiTests
 {
     private static PipelineRun MakeRun() => new PipelineRun
     {
-        RunId = "run-1", IssueIdentifier = "owner/repo#1", IssueTitle = "Test",
-        IssueProviderConfigId = "issue-1", RepoProviderConfigId = "repo-1"
+        RunId = "run-1",
+        IssueIdentifier = "owner/repo#1",
+        IssueTitle = "Test",
+        IssueProviderConfigId = "issue-1",
+        RepoProviderConfigId = "repo-1"
     };
 
     private static PipelineRunStatus MakeStatus(IReadOnlyList<PipelineJobResult> jobs) =>
