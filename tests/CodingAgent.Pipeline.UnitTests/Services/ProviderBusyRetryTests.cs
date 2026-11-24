@@ -289,6 +289,19 @@ public class ProviderBusyRetryTests
         retried.EffortOverride.Should().Be(AgentEffortLevel.High);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildRetryRequest_KeepsTheLightTierFlag(bool useLightTier)
+    {
+        var original = new AgentRequest { Prompt = OriginalPrompt, WorkspacePath = "/ws", UseLightTier = useLightTier };
+
+        var retried = ProviderBusyRetry.BuildRetryRequest(original);
+
+        retried.UseLightTier.Should().Be(useLightTier);
+        retried.AppliesLightTier.Should().Be(useLightTier);
+    }
+
     // ── The wait ───────────────────────────────────────────────────────────────
 
     [Fact]

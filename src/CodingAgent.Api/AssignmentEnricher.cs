@@ -215,7 +215,7 @@ public class AssignmentEnricher
         if (!toolsByKey.TryGetValue(key, out var providerType) || AgentToolCatalog.Find(providerType) is not { } tool)
             return Refuse(identity, template, AgentRouteRefusalReason.NoTool, AgentRouteResolver.NoToolText(key, profile));
 
-        var agentConfig = AgentProviderConfigFactory.Build(profile, tool.Id, route.Model, route.Effort);
+        var agentConfig = AgentProviderConfigFactory.Build(profile, tool.Id, route.Model, route.Effort, route.LightModel, route.LightEffort);
         PipelineTelemetry.SetRouteAttributes(Activity.Current, route.ProfileName, route.Model, route.Effort, AgentRouteLabels.Source(route.Source));
         return (new ClaimRoute(profile, route, agentConfig, template), null);
     }

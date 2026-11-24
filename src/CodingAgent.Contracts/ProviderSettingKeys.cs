@@ -40,6 +40,12 @@ public static class ProviderSettingKeys
     /// <summary>Effort level for the agent (e.g., "low", "medium", "high", "xhigh", "max").</summary>
     public const string Effort = "effort";
 
+    /// <summary>Model of the route's light tier; absent when the route has none.</summary>
+    public const string LightModel = "lightModel";
+
+    /// <summary>Effort of the route's light tier (e.g., "low", "medium"); absent when the route has none.</summary>
+    public const string LightEffort = "lightEffort";
+
     /// <summary>Base URL for HTTP-based agent providers (e.g., OpenCode).</summary>
     public const string BaseUrl = "baseUrl";
 

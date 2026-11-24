@@ -28,12 +28,12 @@ public static class OpenCodeTestHelpers
     /// <summary>
     /// Creates a fully wired test context: mock handler, factory, and provider.
     /// </summary>
-    public static OpenCodeTestContext CreateTestContext(string? model = null)
+    public static OpenCodeTestContext CreateTestContext(string? model = null, string? lightModel = null)
     {
         var handler = new MockOpenCodeHandler();
         var factory = new MockOpenCodeClientFactory(handler);
         var logger = new Mock<ILogger>();
-        var provider = new OpenCodeAgentProvider(factory, logger.Object, model);
+        var provider = new OpenCodeAgentProvider(factory, logger.Object, model, lightModel: lightModel);
         return new OpenCodeTestContext(handler, factory, logger, provider);
     }
 
@@ -86,7 +86,8 @@ public static class OpenCodeTestHelpers
         string? workspacePath = null,
         bool useResume = false,
         string? resumeSessionId = null,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        bool useLightTier = false)
     {
         return new AgentRequest
         {
@@ -94,6 +95,7 @@ public static class OpenCodeTestHelpers
             WorkspacePath = workspacePath ?? Path.GetTempPath(),
             UseResume = useResume,
             ResumeSessionId = resumeSessionId,
+            UseLightTier = useLightTier,
             Timeout = timeout ?? TimeSpan.FromMinutes(5)
         };
     }

@@ -26,4 +26,10 @@ public sealed class AgentRequest
     /// Null means use the provider default. Supported by KiroCli (isolated calls) and ClaudeCode.
     /// </summary>
     public AgentEffortLevel? EffortOverride { get; init; }
+
+    /// <summary>Asks for the route's light tier. Applies to fresh sessions only.</summary>
+    public bool UseLightTier { get; init; }
+
+    /// <summary>True when the light tier applies: it was asked for and this call starts a fresh session.</summary>
+    public bool AppliesLightTier => UseLightTier && !UseResume && ResumeSessionId is null;
 }

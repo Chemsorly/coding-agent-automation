@@ -27,6 +27,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly ILogger _logger;
     private readonly string? _model;
     private readonly AgentEffortLevel _effort;
+    private readonly string? _lightModel;
+    private readonly AgentEffortLevel? _lightEffort;
     private readonly string _executablePath;
     private readonly string? _agentName;
     private readonly IProcessStarter _processStarter;
@@ -64,14 +66,20 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>The effort level configured for this agent provider.</summary>
     public AgentEffortLevel Effort => _effort;
 
-    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.High, string? agentName = null)
-        : this(orchestrator, logger, model, executablePath, effort, null, agentName)
+    /// <inheritdoc />
+    public string? LightModel => _lightModel;
+
+    /// <summary>The effort of an isolated call that applies the light tier; null when the route sets none.</summary>
+    public AgentEffortLevel? LightEffort => _lightEffort;
+
+    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.High, string? agentName = null, string? lightModel = null, AgentEffortLevel? lightEffort = null)
+        : this(orchestrator, logger, model, executablePath, effort, null, agentName, lightModel, lightEffort)
     {
     }
 
     internal KiroCliAgentProvider(
         IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, AgentEffortLevel effort,
-        IProcessStarter? processStarter, string? agentName = null)
+        IProcessStarter? processStarter, string? agentName = null, string? lightModel = null, AgentEffortLevel? lightEffort = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(executablePath);
@@ -79,6 +87,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
         _logger = logger ?? Log.Logger;
         _model = model;
         _effort = effort;
+        _lightModel = lightModel;
+        _lightEffort = lightEffort;
         _executablePath = executablePath;
         _agentName = agentName;
         _processStarter = processStarter ?? new DefaultProcessStarter();
@@ -239,7 +249,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
         // _activeProcess field. Resume calls must use the shared orchestrator to maintain
         // session continuity.
         var isIsolatedCall = !request.UseResume && request.ResumeSessionId is null;
-        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator(request.EffortOverride) : _orchestrator;
+        var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator(request.EffortOverride, request.AppliesLightTier) : _orchestrator;
         _activeOrchestrators[orchestrator] = 0;
 
         try
@@ -369,10 +379,11 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// Creates a lightweight orchestrator instance with its own process slot.
     /// Used for isolated (non-resume) calls to enable parallel execution.
     /// </summary>
-    private IKiroCliOrchestrator CreateEphemeralOrchestrator(AgentEffortLevel? effortOverride = null)
+    private IKiroCliOrchestrator CreateEphemeralOrchestrator(AgentEffortLevel? effortOverride = null, bool lightCall = false)
     {
-        var effectiveEffort = effortOverride ?? _effort;
-        var config = CreateRunConfiguration(_executablePath, _model, _agentName, effectiveEffort);
+        var effectiveEffort = effortOverride ?? (lightCall ? _lightEffort : null) ?? _effort;
+        var config = CreateRunConfiguration(
+            _executablePath, lightCall && _lightModel is not null ? _lightModel : _model, _agentName, effectiveEffort);
         _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
         return CreateEphemeralOrchestratorWith(config);
     }
