@@ -506,7 +506,8 @@ public sealed class PullRequestFinalizationService
                     Description = "PR description",
                     Logger = _logger,
                     OnOutputLine = emitOutputLine,
-                    Phase = "pr_description"
+                    Phase = "pr_description",
+                    UseLightTier = true
                 },
                 ct);
 

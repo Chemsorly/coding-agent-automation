@@ -1650,6 +1650,45 @@ public class QualityGateExecutorCleanupCatchTests
             "the cleanup ran in a separate session, so the resumed codegen session must be told");
     }
 
+    // ── Light tier (issue #4068): the cleanup asks for it, the gate fix does not ──
+
+    [Fact]
+    public async Task Cleanup_AsksForLightTier()
+    {
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PassingReport);
+        var requests = CaptureAgentRequests();
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 0)), CancellationToken.None);
+
+        var cleanupRequest = requests.Should().ContainSingle(r => r.Prompt == PromptBuilder.BuildCleanupPrompt()).Subject;
+        cleanupRequest.UseLightTier.Should().BeTrue("the cleanup needs little judgement");
+        cleanupRequest.AppliesLightTier.Should().BeTrue("the cleanup starts a fresh session, so the light tier applies");
+    }
+
+    [Fact]
+    public async Task GateRetry_DoesNotAskForLightTier()
+    {
+        _run.CodegenSessionId = "codegen-session";
+        var validateCalls = 0;
+        // First gate run passes (enters the cleanup path); the final gates after cleanup fail and start the retry.
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<WorkspacePath>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++validateCalls == 1 ? PassingReport : FailingReport);
+        var requests = CaptureAgentRequests();
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(CreateConfig(maxRetries: 1)), CancellationToken.None);
+
+        var retryRequest = requests.Should().Contain(r => r.Prompt.Contains("Quality gates failed (attempt")).Subject;
+        retryRequest.UseLightTier.Should().BeFalse("fixing a failed gate resumes the codegen session and needs full judgement");
+        retryRequest.AppliesLightTier.Should().BeFalse();
+    }
+
     private List<AgentRequest> CaptureAgentRequests()
     {
         var requests = new List<AgentRequest>();

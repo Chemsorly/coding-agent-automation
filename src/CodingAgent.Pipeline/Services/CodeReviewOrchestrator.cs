@@ -377,6 +377,7 @@ internal class CodeReviewOrchestrator
                     Description = description,
                     Logger = _logger,
                     Phase = "fix_warnings",
+                    UseLightTier = true,
                     OnChange = context.Callbacks.NotifyChange,
                     OnOutputLine = line => context.Callbacks.EmitOutputLine(line),
                     EnvironmentVariables = context.InjectedSecrets,

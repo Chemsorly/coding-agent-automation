@@ -254,7 +254,8 @@ public partial class AgentPhaseExecutor
                     Logger = _logger,
                     OnOutputLine = line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"),
                     EnvironmentVariables = context.InjectedSecrets,
-                    Phase = "review_summary"
+                    Phase = "review_summary",
+                    UseLightTier = true
                 },
                 ct);
 

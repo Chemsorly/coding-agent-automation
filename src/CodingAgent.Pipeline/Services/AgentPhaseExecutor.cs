@@ -115,6 +115,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     /// Unlike <see cref="ExecuteAgentAndRecordAsync"/>, this method:
     /// <list type="bullet">
     /// <item>Always sets <c>UseResume = false</c> (fresh prompt, no session resume)</item>
+    /// <item>Forwards <see cref="AgentExecutionRequest.UseLightTier"/>, which applies because the session is fresh</item>
     /// <item>Does NOT record output to <c>run.ChatHistory</c></item>
     /// <item>Does NOT catch or absorb exceptions — all exceptions propagate to the caller</item>
     /// </list>
@@ -132,7 +133,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 WorkspacePath = request.Run.WorkspacePath!,
                 Timeout = request.Config.AgentTimeout,
                 UseResume = false,
-                EnvironmentVariables = request.EnvironmentVariables
+                EnvironmentVariables = request.EnvironmentVariables,
+                UseLightTier = request.UseLightTier
             },
             ct,
             request.OnOutputLine,
