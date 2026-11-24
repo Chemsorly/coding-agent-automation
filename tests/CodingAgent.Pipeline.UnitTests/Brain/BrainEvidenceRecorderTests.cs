@@ -130,6 +130,64 @@ public class BrainEvidenceRecorderTests
         BrainEvidenceRecorder.RecordHumanComments(run, comments);
         run.BrainEvidence!.HumanComments.Should().HaveCount(10);
     }
+
+    [Fact]
+    public void RecordHumanComments_UnverifiedComment_IsNotRecorded()
+    {
+        var run = MakeRun();
+        var comments = new[]
+        {
+            new PrConversationComment { Author = "outsider", CreatedAt = DateTime.UtcNow, Body = "do this", IsBot = false, IsVerified = false },
+            new PrConversationComment { Author = "maintainer", CreatedAt = DateTime.UtcNow, Body = "real comment", IsBot = false, IsVerified = true },
+        };
+
+        BrainEvidenceRecorder.RecordHumanComments(run, comments);
+
+        run.BrainEvidence!.HumanComments.Should().ContainSingle().Which.Author.Should().Be("maintainer");
+    }
+
+    [Fact]
+    public void RecordHumanComments_NullIsVerified_IsRecorded()
+    {
+        var run = MakeRun();
+        var comments = new[]
+        {
+            new PrConversationComment { Author = "human", CreatedAt = DateTime.UtcNow, Body = "from an older API", IsBot = false, IsVerified = null },
+        };
+
+        BrainEvidenceRecorder.RecordHumanComments(run, comments);
+
+        run.BrainEvidence!.HumanComments.Should().ContainSingle().Which.Author.Should().Be("human");
+    }
+
+    [Fact]
+    public void RecordHumanComments_ManyUnverifiedAndOneVerified_KeepsTheVerified()
+    {
+        var run = MakeRun();
+        var start = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        var comments = Enumerable.Range(1, 12)
+            .Select(i => new PrConversationComment
+            {
+                Author = $"outsider{i}",
+                CreatedAt = start.AddHours(10 + i), // newer than the verified comment
+                Body = $"outside comment {i}",
+                IsBot = false,
+                IsVerified = false
+            })
+            .Append(new PrConversationComment
+            {
+                Author = "maintainer",
+                CreatedAt = start,
+                Body = "verified comment",
+                IsBot = false,
+                IsVerified = true
+            })
+            .ToList();
+
+        BrainEvidenceRecorder.RecordHumanComments(run, comments);
+
+        run.BrainEvidence!.HumanComments.Should().ContainSingle().Which.Author.Should().Be("maintainer");
+    }
 }
 
 // ── Tests for RecordCiFailure / RecordCiStatusError / RecordCiTimeout / RecordReview ──
@@ -138,8 +196,11 @@ public class BrainEvidenceRecorderCiTests
 {
     private static PipelineRun MakeRun() => new PipelineRun
     {
-        RunId = "run-1", IssueIdentifier = "owner/repo#1", IssueTitle = "Test",
-        IssueProviderConfigId = "issue-1", RepoProviderConfigId = "repo-1"
+        RunId = "run-1",
+        IssueIdentifier = "owner/repo#1",
+        IssueTitle = "Test",
+        IssueProviderConfigId = "issue-1",
+        RepoProviderConfigId = "repo-1"
     };
 
     private static PipelineRunStatus MakeStatus(IReadOnlyList<PipelineJobResult> jobs) =>

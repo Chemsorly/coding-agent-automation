@@ -27,6 +27,7 @@ public sealed class WritePrConversationContextStep : IPipelineStep
         var prNumber = context.Run.LinkedPullRequest.Number;
 
         var comments = await PrConversationContextWriter.WriteAsync(context, prNumber, ct);
+        context.Run.HasVerifiedPrComments = comments.Any(c => c.IsVerified != false);
         BrainEvidenceRecorder.RecordHumanComments(context.Run, comments);
 
         return StepResult.Continue;

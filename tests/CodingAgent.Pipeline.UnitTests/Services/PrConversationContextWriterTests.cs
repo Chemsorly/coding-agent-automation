@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Services.Steps;
 using Moq;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
@@ -175,9 +178,37 @@ public sealed class PrConversationContextWriterTests : IDisposable
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    // ── Telemetry: comments by authors outside the repository ────────────────
+
+    [Fact]
+    public async Task WriteAsync_CountsUnverifiedComments_OnTheSpanAndInTheLog()
+    {
+        _mockRepo
+            .Setup(r => r.ListPullRequestCommentsAsync(42, "alice", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PrConversationComment>
+            {
+                new() { Author = "maintainer", Body = "One", CreatedAt = DateTime.UnixEpoch, IsBot = false, IsVerified = true },
+                new() { Author = "older-api", Body = "Two", CreatedAt = DateTime.UnixEpoch, IsBot = false, IsVerified = null },
+                new() { Author = "outsider", Body = "Three", CreatedAt = DateTime.UnixEpoch, IsBot = false, IsVerified = false }
+            });
+        var sink = new CollectingSink();
+        using var logger = new Serilog.LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var context = BuildContext(prNumber: 42, reviewPrAuthor: "alice", logger);
+
+        // A bare span, started so that it is Activity.Current. Not one from an ActivityListener, which is process-wide.
+        using var activity = new Activity("test").Start();
+        await PrConversationContextWriter.WriteAsync(context, 42, CancellationToken.None);
+
+        activity.GetTagItem("pipeline.comments.total").Should().Be(3);
+        activity.GetTagItem("pipeline.comments.unverified").Should().Be(1);
+        var logEvent = sink.Events.Should().ContainSingle(e => e.Level == LogEventLevel.Information).Subject;
+        logEvent.Properties["CommentCount"].ToString().Should().Be("3");
+        logEvent.Properties["UnverifiedComments"].ToString().Should().Be("1");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private PipelineStepContext BuildContext(int prNumber, string? reviewPrAuthor) =>
+    private PipelineStepContext BuildContext(int prNumber, string? reviewPrAuthor, Serilog.ILogger? logger = null) =>
         new()
         {
             Run = new PipelineRun
@@ -203,6 +234,13 @@ public sealed class PrConversationContextWriterTests : IDisposable
             QualityGates = Mock.Of<IQualityGateExecutor>(),
             BrainSync = null,
             PrOrchestrator = new PullRequestOrchestrator(_logger),
-            Logger = _logger
+            Logger = logger ?? _logger
         };
+
+    private sealed class CollectingSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = [];
+
+        public void Emit(LogEvent logEvent) => Events.Add(logEvent);
+    }
 }

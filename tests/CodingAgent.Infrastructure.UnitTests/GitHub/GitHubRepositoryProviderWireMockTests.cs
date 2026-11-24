@@ -127,11 +127,11 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
             BuildDetailedPullRequestJson(10, branchName, true, true));
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10/comments"), new[]
         {
-            new { id = 1, body = "Looks good!", user = new { login = "reviewer1", id = 1 }, path = "src/file.cs", created_at = "2026-01-15T10:00:00Z", updated_at = "2026-01-15T10:00:00Z" }
+            new { id = 1, body = "Looks good!", user = new { login = "reviewer1", id = 1 }, author_association = "MEMBER", path = "src/file.cs", created_at = "2026-01-15T10:00:00Z", updated_at = "2026-01-15T10:00:00Z" }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/10/comments"), new[]
         {
-            new { id = 2, body = "Nice work", user = new { login = "reviewer2", id = 2 }, created_at = "2026-01-15T11:00:00Z", updated_at = "2026-01-15T11:00:00Z" }
+            new { id = 2, body = "Nice work", user = new { login = "reviewer2", id = 2 }, author_association = "MEMBER", created_at = "2026-01-15T11:00:00Z", updated_at = "2026-01-15T11:00:00Z" }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10/reviews"), Array.Empty<object>());
 
@@ -182,13 +182,13 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
             BuildDetailedPullRequestJson(3, branchName, false, true));
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/3/comments"), new[]
         {
-            new { id = 1, body = "## 🤖 Pipeline generated this", user = new { login = "bot", id = 1 }, path = "file.cs", created_at = "2026-01-15T10:00:00Z", updated_at = "2026-01-15T10:00:00Z" },
-            new { id = 2, body = "Real review comment", user = new { login = "human", id = 2 }, path = "file.cs", created_at = "2026-01-15T11:00:00Z", updated_at = "2026-01-15T11:00:00Z" }
+            new { id = 1, body = "## 🤖 Pipeline generated this", user = new { login = "bot", id = 1 }, author_association = "MEMBER", path = "file.cs", created_at = "2026-01-15T10:00:00Z", updated_at = "2026-01-15T10:00:00Z" },
+            new { id = 2, body = "Real review comment", user = new { login = "human", id = 2 }, author_association = "MEMBER", path = "file.cs", created_at = "2026-01-15T11:00:00Z", updated_at = "2026-01-15T11:00:00Z" }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/3/comments"), new[]
         {
-            new { id = 3, body = "Contains <!-- agent: marker -->", user = new { login = "bot", id = 1 }, created_at = "2026-01-15T12:00:00Z", updated_at = "2026-01-15T12:00:00Z" },
-            new { id = 4, body = "Human conversation comment", user = new { login = "human", id = 2 }, created_at = "2026-01-15T13:00:00Z", updated_at = "2026-01-15T13:00:00Z" }
+            new { id = 3, body = "Contains <!-- agent: marker -->", user = new { login = "bot", id = 1 }, author_association = "MEMBER", created_at = "2026-01-15T12:00:00Z", updated_at = "2026-01-15T12:00:00Z" },
+            new { id = 4, body = "Human conversation comment", user = new { login = "human", id = 2 }, author_association = "MEMBER", created_at = "2026-01-15T13:00:00Z", updated_at = "2026-01-15T13:00:00Z" }
         });
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/3/reviews"), Array.Empty<object>());
 
@@ -243,6 +243,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
             id = i,
             body = $"Review comment {i}",
             user = new { login = "reviewer", id = 1 },
+            author_association = "MEMBER",
             path = "src/file.cs",
             created_at = "2026-01-15T10:00:00Z",
             updated_at = "2026-01-15T10:00:00Z"
@@ -292,6 +293,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
                 id = 1,
                 body = "## 🤖 Pipeline generated review\nSome automated findings.",
                 user = new { login = "kiro[bot]", id = 1 },
+                author_association = "MEMBER",
                 state = "COMMENTED",
                 submitted_at = "2026-01-15T10:00:00Z"
             },
@@ -300,6 +302,7 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
                 id = 2,
                 body = "Human code review comment",
                 user = new { login = "reviewer", id = 2 },
+                author_association = "MEMBER",
                 state = "COMMENTED",
                 submitted_at = "2026-01-15T11:00:00Z"
             }
