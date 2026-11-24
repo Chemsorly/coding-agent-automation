@@ -14,8 +14,11 @@ public static class AgentProviderConfigFactory
     /// <param name="tool">The tool of the profile's job template (its <c>providerType</c>).</param>
     /// <param name="model">The route's model; <c>auto</c> lets the tool choose.</param>
     /// <param name="effort">The route's effort; <c>auto</c> is the tool's default.</param>
+    /// <param name="lightModel">The route's light model; blank means the route has none.</param>
+    /// <param name="lightEffort">The route's light effort; blank means the route has none.</param>
     /// <exception cref="ArgumentException">The tool is empty or unknown; the caller refuses before building.</exception>
-    public static ProviderConfig Build(AgentProfile profile, string tool, string model, string effort)
+    public static ProviderConfig Build(
+        AgentProfile profile, string tool, string model, string effort, string? lightModel = null, string? lightEffort = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         var agentTool = AgentToolCatalog.Find(tool)
@@ -27,6 +30,10 @@ public static class AgentProviderConfigFactory
             [ProviderSettingKeys.Effort] = effort,
         };
 
+        // Only the route sets a light tier: a value left in the profile settings must not act as one.
+        SetOrRemove(settings, ProviderSettingKeys.LightModel, lightModel);
+        SetOrRemove(settings, ProviderSettingKeys.LightEffort, lightEffort);
+
         return new ProviderConfig
         {
             Id = profile.Id,
@@ -35,5 +42,13 @@ public static class AgentProviderConfigFactory
             ProviderType = agentTool.ProviderConfigType,
             Settings = settings,
         };
+    }
+
+    private static void SetOrRemove(Dictionary<string, string> settings, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            settings.Remove(key);
+        else
+            settings[key] = value;
     }
 }

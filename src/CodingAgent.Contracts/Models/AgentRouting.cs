@@ -5,13 +5,17 @@ namespace CodingAgent.Pipeline.Models;
 
 /// <summary>
 /// Which agent profile runs a task type, with which model and effort (spec 053). <see cref="Model"/> is always set;
-/// <c>auto</c> lets the tool choose. <see cref="Effort"/> <c>auto</c> is the tool's default.
+/// <c>auto</c> lets the tool choose. <see cref="Effort"/> <c>auto</c> is the tool's default. The optional light tier
+/// (<see cref="LightModel"/>, <see cref="LightEffort"/>) is what stages that need little judgement run with; a blank
+/// value is unset and means the route's own.
 /// </summary>
 [MessagePackObject]
 public sealed record AgentRoute(
     [property: Key(0)] string ProfileId,
     [property: Key(1)] string Model,
-    [property: Key(2)] string Effort);
+    [property: Key(2)] string Effort,
+    [property: Key(3)] string? LightModel = null,
+    [property: Key(4)] string? LightEffort = null);
 
 /// <summary>
 /// The global routing table: the default route plus one optional route per task type. Stored as one JSON entry
@@ -70,7 +74,9 @@ public sealed record AgentRouteSnapshot(
     string Tool,
     string Model,
     string Effort,
-    AgentRouteSource Source);
+    AgentRouteSource Source,
+    string? LightModel = null,
+    string? LightEffort = null);
 
 /// <summary>Display texts for routing, shared by refusal texts, validation messages and log lines.</summary>
 public static class AgentRouteLabels

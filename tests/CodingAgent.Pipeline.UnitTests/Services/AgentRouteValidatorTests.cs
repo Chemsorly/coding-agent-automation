@@ -150,6 +150,118 @@ public class AgentRouteValidatorTests
         AgentRouteValidator.ValidateEffort("Default", "turbo", null).Should().Equal("Default: effort 'turbo' is unknown");
     }
 
+    // ── Light tier ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ValidateRoute_InvalidLightModel_NamesTheLightRow()
+    {
+        var route = AgentRoutingTestData.Route("profile-claude", "opus", "high") with { LightModel = "not a model!" };
+
+        AgentRouteValidator.ValidateRoute("Implementation", route, Profiles, Tools)
+            .Should().Equal("Implementation (light): model may contain only letters, digits, '.', '_', '-' and '/'");
+    }
+
+    [Fact]
+    public void ValidateRoute_LightModelTooLong_NamesTheLightRow()
+    {
+        var route = AgentRoutingTestData.Route("profile-claude", "opus", "high") with { LightModel = new string('a', 201) };
+
+        AgentRouteValidator.ValidateRoute("Default", route, Profiles, Tools)
+            .Should().Equal("Default (light): model is longer than 200 characters");
+    }
+
+    [Theory]
+    [InlineData("profile-kiro", "xhigh", "Default (light): Kiro does not accept effort 'xhigh' (use auto, low, medium, high, max)")]
+    [InlineData("profile-opencode", "high", "Default (light): OpenCode has no effort setting; use auto")]
+    [InlineData("profile-claude", "HIGH", "Default (light): Claude Code does not accept effort 'HIGH' (use auto, low, medium, high, xhigh, max)")]
+    public void ValidateRoute_LightEffortTheToolDoesNotTake_IsRefused(string profileId, string lightEffort, string error)
+        => AgentRouteValidator.ValidateRoute(
+                "Default", AgentRoutingTestData.Route(profileId, "auto", "auto") with { LightEffort = lightEffort }, Profiles, Tools)
+            .Should().Equal(error);
+
+    [Theory]
+    [InlineData("profile-claude", "xhigh")]
+    [InlineData("profile-kiro", "low")]
+    [InlineData("profile-kiro", "auto")]
+    [InlineData("profile-opencode", "auto")]
+    public void ValidateRoute_LightEffortTheToolAccepts_HasNoErrors(string profileId, string lightEffort)
+        => AgentRouteValidator.ValidateRoute(
+                "Default", AgentRoutingTestData.Route(profileId, "auto", "auto") with { LightEffort = lightEffort, LightModel = "haiku" }, Profiles, Tools)
+            .Should().BeEmpty();
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ValidateRoute_BlankLightValues_AreValid(string? blank)
+        => AgentRouteValidator.ValidateRoute(
+                "Default", AgentRoutingTestData.Route("profile-opencode", "auto", "auto") with { LightModel = blank, LightEffort = blank }, Profiles, Tools)
+            .Should().BeEmpty("a blank light value is unset");
+
+    [Fact]
+    public void ValidateRoute_LightEffortWithNoJobTemplatesKnown_AcceptsAnyKnownEffort_ButNoInventedOne()
+    {
+        var empty = new Dictionary<string, string>();
+        var known = AgentRoutingTestData.Route("profile-kiro", "auto", "auto") with { LightEffort = "xhigh" };
+        var invented = known with { LightEffort = "turbo" };
+
+        AgentRouteValidator.ValidateRoute("Default", known, Profiles, empty).Should().BeEmpty();
+        AgentRouteValidator.ValidateRoute("Default", invented, Profiles, empty).Should().Equal("Default (light): effort 'turbo' is unknown");
+    }
+
+    [Fact]
+    public void ValidateRoute_InvalidLightValues_AddToTheRoutesOwnErrors()
+    {
+        var route = AgentRoutingTestData.Route("profile-kiro", "bad model", "xhigh") with { LightModel = "bad light", LightEffort = "xhigh" };
+
+        AgentRouteValidator.ValidateRoute("Default", route, Profiles, Tools).Should().Equal(
+            "Default: model may contain only letters, digits, '.', '_', '-' and '/'",
+            "Default: Kiro does not accept effort 'xhigh' (use auto, low, medium, high, max)",
+            "Default (light): model may contain only letters, digits, '.', '_', '-' and '/'",
+            "Default (light): Kiro does not accept effort 'xhigh' (use auto, low, medium, high, max)");
+    }
+
+    [Fact]
+    public void ValidateTemplateRoutes_InvalidLightEffort_IsRefusedByTaskType()
+    {
+        var rows = new Dictionary<WorkItemTaskType, AgentRoute>
+        {
+            [WorkItemTaskType.Review] = AgentRoutingTestData.Route("profile-opencode", "auto", "auto") with { LightEffort = "low" },
+        };
+
+        AgentRouteValidator.ValidateTemplateRoutes(rows, Profiles, Tools)
+            .Should().Equal("PR review (light): OpenCode has no effort setting; use auto");
+    }
+
+    [Fact]
+    public void ValidateImport_LightEffortTheToolDoesNotTake_IsRefused()
+    {
+        var table = Table((WorkItemTaskType.Review,
+            AgentRoutingTestData.Route("profile-opencode", "auto", "auto") with { LightEffort = "high" }));
+
+        AgentRouteValidator.ValidateImport(table, Profiles, Tools)
+            .Should().Equal("PR review (light): OpenCode has no effort setting; use auto");
+    }
+
+    [Fact]
+    public void ValidateImport_InvalidLightModel_NamesTheLightRow()
+    {
+        var table = AgentRoutingTestData.Routing("profile-kiro", "auto", "high");
+        table = table with { Default = table.Default! with { LightModel = "bad light" } };
+
+        AgentRouteValidator.ValidateImport(table, Profiles, Tools)
+            .Should().Equal("Default (light): model may contain only letters, digits, '.', '_', '-' and '/'");
+    }
+
+    [Fact]
+    public void ValidateImport_BlankLightValues_AreValid()
+    {
+        var table = Table((WorkItemTaskType.Review,
+            AgentRoutingTestData.Route("profile-opencode", "auto", "auto") with { LightModel = " ", LightEffort = "" }));
+
+        AgentRouteValidator.ValidateImport(table, Profiles, Tools).Should().BeEmpty();
+    }
+
     // ── Template rows (req 3.5) ──────────────────────────────────────────────
 
     [Fact]

@@ -10,8 +10,10 @@ using Moq;
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="AgentProviderFactory"/>.
+/// Unit tests for <see cref="AgentProviderFactory"/>. They change <c>KIRO_CLI_PATH</c> and <c>OPENCODE_SERVER_PASSWORD</c>,
+/// so the class runs in the shared <c>EnvironmentVariables</c> collection, not in parallel with other tests that do.
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class AgentProviderFactoryTests
 {
     private static AgentProviderFactory CreateFactory(
@@ -309,6 +311,157 @@ public class AgentProviderFactoryTests
         var provider = factory.CreateAgentProvider(config);
 
         provider.Invoking(p => p.GetHealthStatus()).Should().NotThrow("the strict injected orchestrator is never used");
+    }
+
+    private static ProviderConfig AgentConfig(string providerType, params (string Key, string Value)[] settings) => new()
+    {
+        Id = "agent-light",
+        Kind = ProviderKind.Agent,
+        ProviderType = providerType,
+        DisplayName = "Light tier agent",
+        Settings = settings.ToDictionary(s => s.Key, s => s.Value),
+    };
+
+    [Fact]
+    public void CreateAgentProvider_KiroCli_ReadsTheLightSettings()
+    {
+        var config = AgentConfig("KiroCli",
+            (ProviderSettingKeys.Model, "claude-sonnet-4-6"), (ProviderSettingKeys.Effort, "high"),
+            (ProviderSettingKeys.LightModel, "claude-haiku-4-5"), (ProviderSettingKeys.LightEffort, "low"));
+
+        var kiro = CreateFactory().CreateAgentProvider(config)
+            .Should().BeOfType<CodingAgent.Agent.KiroCli.KiroCliAgentProvider>().Subject;
+
+        kiro.LightModel.Should().Be("claude-haiku-4-5");
+        kiro.LightEffort.Should().Be(AgentEffortLevel.Low);
+        kiro.Model.Should().Be("claude-sonnet-4-6");
+        kiro.Effort.Should().Be(AgentEffortLevel.High);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreateAgentProvider_KiroCli_BlankLightSettings_AreUnset(string blank)
+    {
+        var config = AgentConfig("KiroCli",
+            (ProviderSettingKeys.LightModel, blank), (ProviderSettingKeys.LightEffort, blank));
+
+        var kiro = CreateFactory().CreateAgentProvider(config)
+            .Should().BeOfType<CodingAgent.Agent.KiroCli.KiroCliAgentProvider>().Subject;
+
+        kiro.LightModel.Should().BeNull();
+        kiro.LightEffort.Should().BeNull("an unset light effort falls back to the route's");
+    }
+
+    [Fact]
+    public void CreateAgentProvider_KiroCli_LightEffortAuto_IsAValue_NotUnset()
+    {
+        var kiro = CreateFactory().CreateAgentProvider(AgentConfig("KiroCli", (ProviderSettingKeys.LightEffort, "auto")))
+            .Should().BeOfType<CodingAgent.Agent.KiroCli.KiroCliAgentProvider>().Subject;
+
+        kiro.LightEffort.Should().Be(AgentEffortLevel.Auto);
+    }
+
+    [Fact]
+    public void CreateAgentProvider_KiroCli_WithoutLightSettings_HasNoLightTier()
+    {
+        var kiro = CreateFactory().CreateAgentProvider(AgentConfig("KiroCli", (ProviderSettingKeys.Model, "auto")))
+            .Should().BeOfType<CodingAgent.Agent.KiroCli.KiroCliAgentProvider>().Subject;
+
+        kiro.LightModel.Should().BeNull();
+        kiro.LightEffort.Should().BeNull();
+    }
+
+    [Fact]
+    public void CreateAgentProvider_KiroCliWithOnlyLightSettings_KeepsTheInjectedOrchestrator()
+    {
+        // The light values reach only the orchestrators of isolated calls; the shared one is chosen on the route's own settings.
+        var injected = new Mock<IKiroCliOrchestrator>();
+        injected.SetupGet(o => o.IsExecuting).Returns(true);
+        var config = AgentConfig("KiroCli",
+            (ProviderSettingKeys.LightModel, "claude-haiku-4-5"), (ProviderSettingKeys.LightEffort, "low"));
+
+        var provider = CreateFactory(orchestrator: injected.Object).CreateAgentProvider(config);
+
+        provider.GetHealthStatus().IsExecuting.Should().BeTrue("the injected orchestrator is still the shared one");
+    }
+
+    [Fact]
+    public void CreateAgentProvider_ClaudeCode_ReadsTheLightSettings()
+    {
+        var config = AgentConfig("claudecode",
+            (ProviderSettingKeys.Model, "claude-opus-5-5"), (ProviderSettingKeys.Effort, "xhigh"),
+            (ProviderSettingKeys.LightModel, "claude-haiku-4-5"), (ProviderSettingKeys.LightEffort, "low"));
+
+        var claude = CreateFactory().CreateAgentProvider(config)
+            .Should().BeOfType<CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider>().Subject;
+
+        claude.LightModel.Should().Be("claude-haiku-4-5");
+        claude.LightEffort.Should().Be(AgentEffortLevel.Low);
+        claude.Model.Should().Be("claude-opus-5-5");
+        claude.Effort.Should().Be(AgentEffortLevel.XHigh);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CreateAgentProvider_ClaudeCode_BlankLightSettings_AreUnset(string blank)
+    {
+        var config = AgentConfig("claudecode",
+            (ProviderSettingKeys.LightModel, blank), (ProviderSettingKeys.LightEffort, blank));
+
+        var claude = CreateFactory().CreateAgentProvider(config)
+            .Should().BeOfType<CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider>().Subject;
+
+        claude.LightModel.Should().BeNull();
+        claude.LightEffort.Should().BeNull("an unset light effort falls back to the route's");
+    }
+
+    [Fact]
+    public void CreateAgentProvider_ClaudeCode_LightEffortAuto_IsAValue_NotUnset()
+    {
+        var claude = CreateFactory().CreateAgentProvider(AgentConfig("claudecode", (ProviderSettingKeys.LightEffort, "auto")))
+            .Should().BeOfType<CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider>().Subject;
+
+        claude.LightEffort.Should().Be(AgentEffortLevel.Auto);
+    }
+
+    [Fact]
+    public void CreateAgentProvider_ClaudeCode_WithoutLightSettings_HasNoLightTier()
+    {
+        var claude = CreateFactory().CreateAgentProvider(AgentConfig("claudecode", (ProviderSettingKeys.Model, "claude-opus-5-5")))
+            .Should().BeOfType<CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider>().Subject;
+
+        claude.LightModel.Should().BeNull();
+        claude.LightEffort.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("openai/gpt-5-mini", "openai/gpt-5-mini")]
+    [InlineData("  ", null)]
+    [InlineData("", null)]
+    public void CreateAgentProvider_OpenCode_ReadsTheLightModel(string setting, string? expected)
+    {
+        var original = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword, "test-password-32-chars-long-enough");
+            var httpClientFactory = new Mock<IHttpClientFactory>();
+            httpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>()))
+                .Returns(new HttpClient { BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl) });
+            var config = AgentConfig(AgentDefaults.OpenCodeHttpClientName,
+                (ProviderSettingKeys.Model, "openai/gpt-5"), (ProviderSettingKeys.LightModel, setting));
+
+            var openCode = CreateFactory(httpClientFactory: httpClientFactory.Object).CreateAgentProvider(config)
+                .Should().BeOfType<CodingAgent.Agent.OpenCode.OpenCodeAgentProvider>().Subject;
+
+            openCode.LightModel.Should().Be(expected);
+            openCode.Model.Should().Be("openai/gpt-5");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword, original);
+        }
     }
 
     [Fact]

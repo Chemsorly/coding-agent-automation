@@ -25,8 +25,8 @@ public static class AgentRouteReferences
     }
 
     /// <summary>
-    /// The rows naming <paramref name="profile"/> whose effort the tool of its job template does not accept (req 2.5), one
-    /// line per row and labelled like <see cref="Find"/>. A profile saved onto a job template of another tool must not
+    /// The rows naming <paramref name="profile"/> whose effort or light effort the tool of its job template does not accept
+    /// (req 2.5), one line per row and labelled like <see cref="Find"/>. A profile saved onto a job template of another tool must not
     /// leave such rows, or every later save of the routing table is refused. Empty when the tool is unknown.
     /// </summary>
     public static IReadOnlyList<string> EffortsItsToolRefuses(
@@ -48,7 +48,10 @@ public static class AgentRouteReferences
 
         return rows
             .Where(r => Names(r.Route, profile.Id))
-            .SelectMany(r => AgentRouteValidator.ValidateEffort(r.Label, r.Route.Effort, tool))
+            .SelectMany(r => AgentRouteValidator.ValidateEffort(r.Label, r.Route.Effort, tool)
+                .Concat(string.IsNullOrWhiteSpace(r.Route.LightEffort)
+                    ? []
+                    : AgentRouteValidator.ValidateEffort($"{r.Label} (light)", r.Route.LightEffort, tool)))
             .ToList();
     }
 

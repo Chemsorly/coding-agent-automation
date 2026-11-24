@@ -17,12 +17,16 @@ namespace CodingAgent.Agent.ClaudeCode;
 /// <param name="Effort">Passed as <c>--effort</c> unless <see cref="AgentEffortLevel.Auto"/>.</param>
 /// <param name="AuthMode">One of <see cref="ClaudeCodeAuthModes"/>; anything else means auto.</param>
 /// <param name="McpConfigPath">MCP config file passed with <c>--mcp-config</c>; null means <c>~/.claude/pipeline-mcp.json</c>.</param>
+/// <param name="LightModel">Model of a call that starts a fresh session and asks for the light tier; null uses <paramref name="Model"/>.</param>
+/// <param name="LightEffort">Effort of such a call; null uses <paramref name="Effort"/>. <see cref="AgentEffortLevel.Auto"/> is a value, not "unset".</param>
 internal sealed record ClaudeCodeSettings(
     string? Model,
     string ExecutablePath,
     AgentEffortLevel Effort,
     string? AuthMode,
-    string? McpConfigPath);
+    string? McpConfigPath,
+    string? LightModel = null,
+    AgentEffortLevel? LightEffort = null);
 
 /// <summary>
 /// When a CLI that keeps running after its answer is stopped. Since CLI 2.1.292, <c>claude -p</c> waits
@@ -65,6 +69,8 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider, IReportsRateLimits
     private readonly ILogger _logger;
     private readonly string? _model;
     private readonly AgentEffortLevel _effort;
+    private readonly string? _lightModel;
+    private readonly AgentEffortLevel? _lightEffort;
     private readonly string _executablePath;
     private readonly string _authMode;
     private readonly string _mcpConfigPath;
@@ -83,8 +89,10 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider, IReportsRateLimits
         string executablePath = AgentDefaults.ClaudeCliPath,
         AgentEffortLevel effort = AgentEffortLevel.Auto,
         string? authMode = null,
-        string? mcpConfigPath = null)
-        : this(logger, new ClaudeCodeSettings(model, executablePath, effort, authMode, mcpConfigPath), null, null)
+        string? mcpConfigPath = null,
+        string? lightModel = null,
+        AgentEffortLevel? lightEffort = null)
+        : this(logger, new ClaudeCodeSettings(model, executablePath, effort, authMode, mcpConfigPath, lightModel, lightEffort), null, null)
     {
     }
 
@@ -100,6 +108,8 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider, IReportsRateLimits
         _logger = logger ?? Log.Logger;
         _model = settings.Model;
         _effort = settings.Effort;
+        _lightModel = settings.LightModel;
+        _lightEffort = settings.LightEffort;
         _executablePath = settings.ExecutablePath;
         _authMode = ClaudeCodeAuthModes.Normalize(settings.AuthMode);
         _mcpConfigPath = string.IsNullOrWhiteSpace(settings.McpConfigPath)
@@ -117,6 +127,12 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider, IReportsRateLimits
 
     /// <summary>The effort level passed to the CLI with <c>--effort</c>.</summary>
     public AgentEffortLevel Effort => _effort;
+
+    /// <inheritdoc />
+    public string? LightModel => _lightModel;
+
+    /// <summary>The effort of a call that applies the light tier; null when the route sets none.</summary>
+    public AgentEffortLevel? LightEffort => _lightEffort;
 
     /// <summary>The configured credential mode (<see cref="ClaudeCodeAuthModes"/>).</summary>
     public string AuthMode => _authMode;
@@ -376,8 +392,10 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider, IReportsRateLimits
     {
         var startInfo = CreateStartInfo(workspacePath);
         var mcpConfigPath = File.Exists(_mcpConfigPath) ? _mcpConfigPath : null;
-        var effectiveEffort = request.EffortOverride ?? _effort;
-        foreach (var arg in BuildArguments(_model, effectiveEffort, resumeSessionId, mcpConfigPath))
+        var light = request.AppliesLightTier;
+        var effectiveEffort = request.EffortOverride ?? (light ? _lightEffort : null) ?? _effort;
+        var effectiveModel = light && _lightModel is not null ? _lightModel : _model;
+        foreach (var arg in BuildArguments(effectiveModel, effectiveEffort, resumeSessionId, mcpConfigPath))
             startInfo.ArgumentList.Add(arg);
 
         if (request.EnvironmentVariables is { Count: > 0 } secrets)

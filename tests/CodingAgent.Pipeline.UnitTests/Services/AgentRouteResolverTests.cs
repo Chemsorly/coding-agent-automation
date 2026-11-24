@@ -79,6 +79,50 @@ public class AgentRouteResolverTests
     }
 
     [Fact]
+    public void Resolve_RowWithoutLightFields_SnapshotHasNullLightFields()
+    {
+        var result = AgentRouteResolver.Resolve(WorkItemTaskType.Implementation, Template(), Routing(), Profiles, Tools);
+
+        result.Snapshot!.LightModel.Should().BeNull();
+        result.Snapshot.LightEffort.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(AgentRouteSource.Repository)]
+    [InlineData(AgentRouteSource.GlobalTaskRow)]
+    [InlineData(AgentRouteSource.GlobalDefault)]
+    public void Resolve_RowWithLightFields_SnapshotCarriesThem(AgentRouteSource source)
+    {
+        var row = AgentRoutingTestData.Route("profile-claude", "opus", "xhigh") with { LightModel = "haiku", LightEffort = "low" };
+        var template = source == AgentRouteSource.Repository ? Template((WorkItemTaskType.Implementation, row)) : Template();
+        var routing = source switch
+        {
+            AgentRouteSource.GlobalTaskRow => Routing((WorkItemTaskType.Implementation, row)),
+            AgentRouteSource.GlobalDefault => new AgentRouting { Default = row },
+            _ => Routing(),
+        };
+
+        var result = AgentRouteResolver.Resolve(WorkItemTaskType.Implementation, template, routing, Profiles, Tools);
+
+        result.Snapshot.Should().Be(new AgentRouteSnapshot(
+            "profile-claude", "Claude", "claude", "opus", "xhigh", source, "haiku", "low"));
+    }
+
+    [Fact]
+    public void Resolve_RepositoryRow_ReplacesTheGlobalRowsLightFields()
+    {
+        var template = Template((WorkItemTaskType.Implementation, AgentRoutingTestData.Route("profile-claude", "opus", "high")));
+        var routing = Routing((WorkItemTaskType.Implementation,
+            AgentRoutingTestData.Route("profile-claude", "opus", "high") with { LightModel = "haiku", LightEffort = "low" }));
+
+        var result = AgentRouteResolver.Resolve(WorkItemTaskType.Implementation, template, routing, Profiles, Tools);
+
+        result.Snapshot!.Source.Should().Be(AgentRouteSource.Repository);
+        result.Snapshot.LightModel.Should().BeNull("the repository row replaces the global row, light fields included");
+        result.Snapshot.LightEffort.Should().BeNull();
+    }
+
+    [Fact]
     public void Resolve_RowsOfOtherTaskTypes_DoNotApply()
     {
         var template = Template((WorkItemTaskType.Decomposition, AgentRoutingTestData.Route("profile-claude", "opus", "high")));

@@ -250,17 +250,84 @@ public class AgentSessionSpanTests : IDisposable
         span.GetTagItem("gen_ai.request.model").Should().BeNull("model tag must be absent when provider.Model is null");
     }
 
+    // ── Light tier: the span and the phase breakdown name the model the call used ──────────────
+
+    /// <summary>
+    /// Runs one monitored call of <paramref name="request"/> on a provider whose route model is <c>route-model</c> and
+    /// returns its session span and the phase breakdown's model.
+    /// </summary>
+    private async Task<(Activity Span, string? PhaseModel)> RunLightScenarioAsync(
+        string phaseSuffix, AgentRequest request, string? lightModel)
+    {
+        var uniquePhase = $"light_{_testRunTag}_{phaseSuffix}";
+        var provider = CreateMockProvider(AgentProviderType.ClaudeCode, model: "route-model", result: SimpleResult());
+        provider.SetupGet(p => p.LightModel).Returns(lightModel);
+        var run = CreateRun();
+
+        await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            new AgentMonitorContext(provider.Object, run, CreateConfig(), "Light call", null, Serilog.Log.Logger),
+            request, CancellationToken.None, phase: uniquePhase);
+
+        return (SpanFor(uniquePhase), run.Metrics.PhaseBreakdown[uniquePhase].Model);
+    }
+
+    [Fact]
+    public async Task LightCall_TagsTheLightModel()
+    {
+        var (span, phaseModel) = await RunLightScenarioAsync(
+            "applies", CreateRequest(useLightTier: true), lightModel: "light-model");
+
+        span.GetTagItem("gen_ai.request.model").Should().Be("light-model");
+        phaseModel.Should().Be("light-model");
+    }
+
+    [Theory]
+    [InlineData(true, null)]
+    [InlineData(false, "session-1")]
+    public async Task LightFlagOnResumedCall_TagsTheRouteModel(bool useResume, string? resumeSessionId)
+    {
+        var request = CreateRequest(useLightTier: true, useResume: useResume, resumeSessionId: resumeSessionId);
+
+        var (span, phaseModel) = await RunLightScenarioAsync($"resumed_{useResume}", request, lightModel: "light-model");
+
+        span.GetTagItem("gen_ai.request.model").Should().Be("route-model");
+        phaseModel.Should().Be("route-model");
+    }
+
+    [Fact]
+    public async Task LightCall_WithoutALightModel_TagsTheRouteModel()
+    {
+        var (span, phaseModel) = await RunLightScenarioAsync(
+            "unset", CreateRequest(useLightTier: true), lightModel: null);
+
+        span.GetTagItem("gen_ai.request.model").Should().Be("route-model");
+        phaseModel.Should().Be("route-model");
+    }
+
+    [Fact]
+    public async Task CallWithoutTheLightFlag_TagsTheRouteModel_EvenWhenTheProviderHasALightModel()
+    {
+        var (span, phaseModel) = await RunLightScenarioAsync("noflag", CreateRequest(), lightModel: "light-model");
+
+        span.GetTagItem("gen_ai.request.model").Should().Be("route-model");
+        phaseModel.Should().Be("route-model");
+    }
+
     // ── Static helpers ─────────────────────────────────────────────────────────────────────────
 
     private Activity SpanFor(string phaseKey) =>
         _stoppedActivities.Should()
             .Contain(a => (string?)a.GetTagItem("pipeline.phase_key") == phaseKey).Which;
 
-    private static AgentRequest CreateRequest() => new()
+    private static AgentRequest CreateRequest(
+        bool useLightTier = false, bool useResume = false, string? resumeSessionId = null) => new()
     {
         Prompt = "do something",
         WorkspacePath = "/tmp/workspace",
-        Timeout = TimeSpan.FromSeconds(30)
+        Timeout = TimeSpan.FromSeconds(30),
+        UseLightTier = useLightTier,
+        UseResume = useResume,
+        ResumeSessionId = resumeSessionId
     };
 
     private static AgentResult SimpleResult() => new() { ExitCode = 0, OutputLines = [] };

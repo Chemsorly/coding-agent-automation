@@ -36,6 +36,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly string? _model;
+    private readonly string? _lightModel;
     private readonly Uri? _baseUrl;
 
     /// <summary>Sessions with a call in progress, mapped to their workspace, so KillAsync can abort them all.</summary>
@@ -69,6 +70,10 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     public string? Model => _model;
 
     /// <inheritdoc />
+    /// <remarks>OpenCode has no effort setting, so the light tier is a model only.</remarks>
+    public string? LightModel => _lightModel;
+
+    /// <inheritdoc />
     /// <remarks>
     /// OpenCode reads <c>~/.opencode/opencode.json</c> when it first serves a workspace (only the global
     /// <c>~/.config/opencode</c> config is cached at startup), so servers written here before the
@@ -97,16 +102,19 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     /// <param name="logger">Logger; defaults to the static Serilog logger.</param>
     /// <param name="model">Model in <c>provider/model</c> form, sent with every prompt; null or <c>auto</c> leaves it to the server.</param>
     /// <param name="baseUrl">Server address overriding the named client's; null keeps the client's.</param>
+    /// <param name="lightModel">Model, in <c>provider/model</c> form, of a call that starts a fresh session and asks for the light tier; null uses <paramref name="model"/>.</param>
     public OpenCodeAgentProvider(
         IHttpClientFactory httpClientFactory,
         ILogger? logger = null,
         string? model = null,
-        string? baseUrl = null)
+        string? baseUrl = null,
+        string? lightModel = null)
     {
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         _httpClientFactory = httpClientFactory;
         _logger = logger ?? Serilog.Log.Logger;
         _model = model;
+        _lightModel = lightModel;
         _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : new Uri(baseUrl);
     }
 
@@ -296,8 +304,9 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
                 var messageRequest = new SendMessageRequest
                 {
                     Parts = parts,
-                    // The configured provider/model; null leaves it to the server's config.
-                    Model = OpenCodeModelRef.Parse(_model)
+                    // The configured provider/model, or the light tier's for a fresh session that asks for it; null
+                    // leaves it to the server's config.
+                    Model = OpenCodeModelRef.Parse(request.AppliesLightTier && _lightModel is not null ? _lightModel : _model)
                 };
 
                 _logger.Debug("POST /session/{SessionId}/message", sessionId);

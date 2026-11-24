@@ -60,6 +60,105 @@ public class AgentRoutingSerializationTests
     }
 
     [Fact]
+    public void AgentRouteSnapshot_Json_KeepsTheLightFields()
+    {
+        var snapshot = new AgentRouteSnapshot("p", "Kiro", "kiro", "auto", "high", AgentRouteSource.GlobalDefault, "haiku", "low");
+
+        var json = JsonSerializer.Serialize(snapshot, PipelineJsonOptions.Default);
+
+        json.Should().Contain("\"lightModel\": \"haiku\"").And.Contain("\"lightEffort\": \"low\"");
+        JsonSerializer.Deserialize<AgentRouteSnapshot>(json, PipelineJsonOptions.Lenient).Should().Be(snapshot);
+    }
+
+    [Fact]
+    public void AgentRouteSnapshot_JsonWithoutLightFields_HasNullLightFields()
+    {
+        const string json = """{"profileId":"p","profileName":"Kiro","tool":"kiro","model":"auto","effort":"high","source":"GlobalDefault"}""";
+
+        var snapshot = JsonSerializer.Deserialize<AgentRouteSnapshot>(json, PipelineJsonOptions.Lenient)!;
+
+        snapshot.LightModel.Should().BeNull();
+        snapshot.LightEffort.Should().BeNull();
+        snapshot.Model.Should().Be("auto");
+    }
+
+    [Fact]
+    public void AgentRoute_JsonWithoutLightFields_HasNullLightFields()
+    {
+        var routing = JsonSerializer.Deserialize<AgentRouting>(
+            """{"default":{"profileId":"p","model":"auto","effort":"auto"}}""", PipelineJsonOptions.Lenient)!;
+
+        routing.Default!.LightModel.Should().BeNull();
+        routing.Default.LightEffort.Should().BeNull();
+    }
+
+    [Fact]
+    public void AgentRoute_LightFields_SurviveJsonAndMessagePack()
+    {
+        var route = AgentRoutingTestData.Route("profile-claude", "opus", "high") with { LightModel = "haiku", LightEffort = "low" };
+
+        var fromJson = JsonSerializer.Deserialize<AgentRoute>(
+            JsonSerializer.Serialize(route, PipelineJsonOptions.Default), PipelineJsonOptions.Lenient);
+        var fromMessagePack = MessagePackSerializer.Deserialize<AgentRoute>(
+            MessagePackSerializer.Serialize(route, MsgPackOptions), MsgPackOptions);
+
+        fromJson.Should().Be(route);
+        fromMessagePack.Should().Be(route);
+    }
+
+    [Fact]
+    public void AgentRoute_MessagePack_WritesTheLightFieldsAtKeys3And4()
+    {
+        var route = AgentRoutingTestData.Route("profile-claude", "opus", "high") with { LightModel = "haiku", LightEffort = "low" };
+
+        var reader = new MessagePackReader(MessagePackSerializer.Serialize(route, MsgPackOptions));
+
+        reader.ReadArrayHeader().Should().Be(5);
+        new[] { reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadString(), reader.ReadString() }
+            .Should().Equal("profile-claude", "opus", "high", "haiku", "low");
+    }
+
+    [Fact]
+    public void AgentRoute_ThreeElementMessagePack_HasNullLightFields()
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var writer = new MessagePackWriter(buffer);
+        writer.WriteArrayHeader(3);
+        writer.Write("profile-claude");
+        writer.Write("opus");
+        writer.Write("high");
+        writer.Flush();
+
+        var route = MessagePackSerializer.Deserialize<AgentRoute>(buffer.WrittenMemory, MsgPackOptions);
+
+        route.Should().Be(AgentRoutingTestData.Route("profile-claude", "opus", "high"));
+        route.LightModel.Should().BeNull();
+        route.LightEffort.Should().BeNull();
+    }
+
+    [Fact]
+    public void PipelineJobTemplate_AgentRoutesWithLightFields_SurviveJsonAndMessagePack()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = "t", Name = "api", IssueProviderId = "ip", RepoProviderId = "rp",
+            AgentRoutes = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Implementation] =
+                    AgentRoutingTestData.Route("profile-claude", "opus", "high") with { LightModel = "haiku", LightEffort = "low" },
+            },
+        };
+
+        var fromJson = JsonSerializer.Deserialize<PipelineJobTemplate>(
+            JsonSerializer.Serialize(template, PipelineJsonOptions.Default), PipelineJsonOptions.Lenient)!;
+        var fromMessagePack = MessagePackSerializer.Deserialize<PipelineJobTemplate>(
+            MessagePackSerializer.Serialize(template, MsgPackOptions), MsgPackOptions);
+
+        fromJson.AgentRoutes.Should().BeEquivalentTo(template.AgentRoutes);
+        fromMessagePack.AgentRoutes.Should().BeEquivalentTo(template.AgentRoutes);
+    }
+
+    [Fact]
     public void JobDistributionRequest_JsonRoundTrip_KeepsTheRoute_Req4_4()
     {
         var request = new JobDistributionRequest
