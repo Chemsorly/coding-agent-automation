@@ -663,6 +663,7 @@ public class PipelineRunHashExtensionsPropertyTests
         ["BrainInboxText"] = "set only in the agent process",
         ["ChangedBySeparateAgent"] = "set only in the agent process",
         ["IsSubjectAuthorVerified"] = "set only in the agent process",
+        ["HasVerifiedPrComments"] = "set only in the agent process",
     };
 
     [Fact]

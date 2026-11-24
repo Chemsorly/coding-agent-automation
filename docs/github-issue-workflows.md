@@ -81,7 +81,7 @@ The check runs before the PR description is generated, and again after a post-PR
 2. **Pipeline** detects the existing PR by matching the branch name pattern (`feature/auto-{issueNumber}-*`)
 3. **Pipeline** swaps label to `agent:in-progress`, enters rework mode
 4. **Pipeline** checks out the existing PR branch and rebases it onto main. Main is authoritative: where the branch and main changed the same file, main's version is kept and the branch's change to it is dropped. A branch rename of a file main changed or deleted is dropped too, because the rebase does no rename detection and would otherwise leave the branch's stale copy next to main's version. For each such file, `.agent/rework-context.md` records the dropped change, main's change and main's commits
-5. **Pipeline** builds a rework prompt from the dropped files (if any) and/or PR review feedback. It tells the agent to re-apply only what the issue still needs, and not changes outside the issue's scope or changes main has since made in another way
+5. **Pipeline** builds a rework prompt from the dropped files (if any) and/or PR review feedback. It tells the agent to re-apply only what the issue still needs, and not changes outside the issue's scope or changes main has since made in another way. Only comments by [verified authors](#verified-authors) count as review feedback.
 6. **Pipeline** re-runs code generation and quality gates using the rework prompt
 7. **Pipeline** pushes to the existing branch (updates the PR automatically) and refreshes the PR body with current quality gate results
 8. **Pipeline** adds `agent:done` label on success
@@ -145,6 +145,8 @@ On a public repository anyone can write an issue or a comment. Text by an author
 - **Open issues and linked issues** that a run reads for context go under `## Unverified input` too, in full.
 - **A pull request or linked issue as the subject of a review** keeps the same notice as a run's own issue. Reviewers judge the code diff.
 - **Titles** are normalized for prompts. Branch names, PR titles and commit messages keep the raw title.
+- **Pull request comments by unverified authors** do not start a rework and are not review feedback. They stay readable in `.agent/pr-conversation-context.md`, labelled `[UNVERIFIED]`, and they are not recorded as brain evidence.
+- **Issue comments copied to the PR body** are marked there, with hidden text removed and line breaks turned into spaces, and their mentions do not notify anyone.
 
 Marking reduces the odds that outside text steers a run. It does not prevent it. Text by verified authors is not changed.
 

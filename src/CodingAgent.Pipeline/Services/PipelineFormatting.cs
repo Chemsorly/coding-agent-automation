@@ -114,10 +114,11 @@ public static partial class PipelineFormatting
         if (comments == null || comments.Count == 0)
             return;
 
-        var filtered = comments
+        // On the raw body: the markers are HTML comments, which the normalizer removes.
+        var kept = comments
             .Where(c => !PromptBuilder.ExcludedCommentMarkers.Any(marker => c.Body.Contains(marker)))
-            .TakeLast(PipelineConstants.OutputTailLineCount)
             .ToList();
+        var filtered = IssueCommentCaps.TakeLastPerKind(kept, PipelineConstants.OutputTailLineCount);
 
         if (filtered.Count == 0)
             return;
@@ -125,8 +126,21 @@ public static partial class PipelineFormatting
         sb.AppendLine("## Input Comments");
         foreach (var comment in filtered)
         {
-            var body = TruncateMarkdown(comment.Body, MaxCommentLength);
-            sb.AppendLine($"- **@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC): {body}");
+            if (comment.IsVerified == false)
+            {
+                // Normalized because the next review reads this body as verified text. Normalizing removes U+200B,
+                // so the guard that stops a mention from notifying anyone goes in after it. Line breaks become
+                // spaces: a break would start a second bullet or a section that carries no label.
+                var guarded = AgentTextNormalizer.Normalize(comment.Body).Replace("@", "@\u200B")
+                    .ReplaceLineEndings(" ");
+                var body = TruncateMarkdown(guarded, MaxCommentLength);
+                sb.AppendLine($"- **@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC) {UnverifiedInputText.PrBodyLabel}: {body}");
+            }
+            else
+            {
+                var body = TruncateMarkdown(comment.Body, MaxCommentLength);
+                sb.AppendLine($"- **@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC): {body}");
+            }
         }
         sb.AppendLine();
     }

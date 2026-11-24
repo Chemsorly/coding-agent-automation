@@ -1039,6 +1039,72 @@ public class GitLabRepositoryProviderMergeRequestTests
             "GetAgentPullRequestsAsync must cap review comments at 50");
     }
 
+    [Fact]
+    public async Task GetAgentPullRequestsAsync_ReporterNote_IsDropped_GitLab()
+    {
+        var (server, client, projectId, mrIid, rep) = CreateServerWithReporterAndAgentMergeRequest("feature/auto-57-fix");
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        server.CreateClient(rep).GetMergeRequest(projectId).Discussions(mrIid)
+            .Add(new MergeRequestDiscussionCreate { Body = "From a reporter" });
+        client.GetMergeRequest(projectId).Discussions(mrIid)
+            .Add(new MergeRequestDiscussionCreate { Body = "From the token's user" });
+
+        var result = await provider.GetAgentPullRequestsAsync("57", CancellationToken.None);
+
+        result.Should().ContainSingle();
+        result[0].ReviewComments.Should().ContainSingle()
+            .Which.Body.Should().Be("From the token's user");
+    }
+
+    /// <summary>
+    /// A project whose default user (the token's own user) is a maintainer and whose user "Rep" is a Reporter: on the
+    /// project, and not verified. Has one open agent merge request.
+    /// </summary>
+    private static (GitLabServer Server, IGitLabClient Client, int ProjectId, int MergeRequestIid, NGitLab.Mock.User Reporter)
+        CreateServerWithReporterAndAgentMergeRequest(string sourceBranch)
+    {
+        var server = new GitLabConfig()
+            .WithUser("TestUser", isDefault: true)
+            .WithUser("Rep")
+            .WithProject("TestProject", @namespace: "TestUser", addDefaultUserAsMaintainer: true,
+                initialCommit: true, defaultBranch: "main", configure: project =>
+                {
+                    project.WithMergeRequest(sourceBranch: sourceBranch, title: "Agent MR",
+                        targetBranch: "main", description: "Auto");
+                })
+            .BuildServer();
+
+        var client = server.CreateClient();
+        var projectId = (int)client.Projects.Accessible.First().Id;
+        var mr = client.GetMergeRequest(projectId).Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
+        var rep = server.Users.First(u => u.UserName == "Rep");
+        server.AllProjects.First().Permissions.Add(new NGitLab.Mock.Permission(rep, AccessLevel.Reporter));
+        return (server, client, projectId, (int)mr.Iid, rep);
+    }
+
+    #endregion
+
+    #region ListPullRequestCommentsAsync — verification
+
+    [Fact]
+    public async Task ListPullRequestCommentsAsync_ReporterNote_IsUnverified_GitLab()
+    {
+        var (server, client, projectId, mrIid, rep) = CreateServerWithReporterAndAgentMergeRequest("feature/auto-58-fix");
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        server.CreateClient(rep).GetMergeRequest(projectId).Discussions(mrIid)
+            .Add(new MergeRequestDiscussionCreate { Body = "From a reporter" });
+        client.GetMergeRequest(projectId).Discussions(mrIid)
+            .Add(new MergeRequestDiscussionCreate { Body = "From the token's user" });
+
+        var result = await provider.ListPullRequestCommentsAsync(mrIid, "TestUser", CancellationToken.None);
+
+        result.Should().HaveCount(2, "the conversation file keeps all comments");
+        result.Single(c => c.Body == "From a reporter").IsVerified.Should().BeFalse();
+        result.Single(c => c.Body == "From the token's user").IsVerified.Should().BeTrue();
+    }
+
     #endregion
 
     #region Provider properties

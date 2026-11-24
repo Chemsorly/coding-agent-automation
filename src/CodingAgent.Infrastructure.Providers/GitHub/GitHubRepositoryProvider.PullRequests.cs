@@ -183,55 +183,79 @@ public partial class GitHubRepositoryProvider
                     client => client.PullRequest.Review.GetAll(Owner, Repo, item.Number),
                     "GetAgentPullRequests.Reviews", ct);
 
-                var allComments = SharedPrOperations.FinalizeReviewComments(
-                    reviewComments
-                    .Select(c => new Pipeline.Models.PullRequestReviewComment
+                var projected = new List<Pipeline.Models.PullRequestReviewComment>();
+
+                // TODO [WARNING]: IsVerifiedAuthorAsync deliberately propagates a lookup failure other than a
+                // 404 or a "push access" 403 (a rate-limit 403, a 5xx that outlasts the retries), so one failed
+                // lookup faults this whole listing. DetectReworkStep catches every non-cancellation exception
+                // and falls back to RunMode.New, so a transient permission lookup can make an existing agent PR
+                // look absent and risk a duplicate branch or PR. The issue forbids reading a failed lookup as
+                // "not verified" (GetAgentPullRequestsAsync_LookupFails_Throws pins the throw). Decide whether
+                // DetectReworkStep should tell this failure apart from "no PR found".
+
+                // TODO [WARNING]: c.Body is the raw Octokit PullRequestReviewComment.Body,
+                // which can be null for certain approval reviews. The null-coalescing guard
+                // here (Body = c.Body ?? string.Empty) is already present, so this arm is
+                // safe. However, note that the reviews concat arm below assigns r.Body
+                // directly (without ?? string.Empty). Although that arm is guarded upstream
+                // by .Where(r => !string.IsNullOrWhiteSpace(r.Body)), if Body is somehow
+                // null at that point, CommentMarkers.IsPipelineGeneratedComment inside
+                // FinalizeReviewComments would receive null. Verify CommentMarkers.cs
+                // null-guards its parameter, or add ?? string.Empty to r.Body in the
+                // reviews projection below.
+                foreach (var c in reviewComments)
+                {
+                    projected.Add(new Pipeline.Models.PullRequestReviewComment
                     {
                         Id = c.Id.ToString(),
-                        // TODO [WARNING]: c.Body is the raw Octokit PullRequestReviewComment.Body,
-                        // which can be null for certain approval reviews. The null-coalescing guard
-                        // here (Body = c.Body ?? string.Empty) is already present, so this arm is
-                        // safe. However, note that the reviews concat arm below assigns r.Body
-                        // directly (without ?? string.Empty). Although that arm is guarded upstream
-                        // by .Where(r => !string.IsNullOrWhiteSpace(r.Body)), if Body is somehow
-                        // null at that point, CommentMarkers.IsPipelineGeneratedComment inside
-                        // FinalizeReviewComments would receive null. Verify CommentMarkers.cs
-                        // null-guards its parameter, or add ?? string.Empty to r.Body in the
-                        // reviews projection below.
                         Body = c.Body ?? string.Empty,
                         Author = c.User?.Login ?? string.Empty,
                         CreatedAt = c.CreatedAt.UtcDateTime,
-                        Path = c.Path
-                    })
-                    .Concat(conversationComments
-                        .Select(c => new Pipeline.Models.PullRequestReviewComment
-                        {
-                            Id = c.Id.ToString(),
-                            Body = c.Body ?? string.Empty,
-                            Author = c.User?.Login ?? string.Empty,
-                            CreatedAt = c.CreatedAt.UtcDateTime,
-                            Path = null
-                        }))
-                    // TODO [WARNING]: The pre-refactoring code also had
-                    // !string.IsNullOrWhiteSpace(r.Body) in a .Where() guard before projecting
-                    // reviews, which meant reviews with null/whitespace bodies were excluded before
-                    // reaching FinalizeReviewComments. The current code keeps the guard but feeds
-                    // r.Body (possibly null) directly into PullRequestReviewComment.Body. A review
-                    // with a non-whitespace pipeline-generated body is still filtered by
-                    // FinalizeReviewComments; an approval review with no body is still dropped by
-                    // the .Where() guard below. The behaviour is equivalent for current inputs, but
-                    // if Body is ever null here r.Body assignment would set Body = null rather than
-                    // string.Empty. Consider adding ?? string.Empty for defensive consistency.
-                    .Concat(reviews
-                        .Where(r => !string.IsNullOrWhiteSpace(r.Body))
-                        .Select(r => new Pipeline.Models.PullRequestReviewComment
-                        {
-                            Id = r.Id.ToString(),
-                            Body = r.Body,
-                            Author = r.User?.Login ?? string.Empty,
-                            CreatedAt = r.SubmittedAt.UtcDateTime,
-                            Path = null
-                        })));
+                        Path = c.Path,
+                        IsVerified = await IsVerifiedAuthorAsync(
+                            c.AuthorAssociation.StringValue, c.User?.Type == AccountType.Bot, c.User?.Login, ct)
+                    });
+                }
+
+                foreach (var c in conversationComments)
+                {
+                    projected.Add(new Pipeline.Models.PullRequestReviewComment
+                    {
+                        Id = c.Id.ToString(),
+                        Body = c.Body ?? string.Empty,
+                        Author = c.User?.Login ?? string.Empty,
+                        CreatedAt = c.CreatedAt.UtcDateTime,
+                        Path = null,
+                        IsVerified = await IsVerifiedAuthorAsync(
+                            c.AuthorAssociation.StringValue, c.User?.Type == AccountType.Bot, c.User?.Login, ct)
+                    });
+                }
+
+                // TODO [WARNING]: The pre-refactoring code also had
+                // !string.IsNullOrWhiteSpace(r.Body) in a .Where() guard before projecting
+                // reviews, which meant reviews with null/whitespace bodies were excluded before
+                // reaching FinalizeReviewComments. The current code keeps the guard but feeds
+                // r.Body (possibly null) directly into PullRequestReviewComment.Body. A review
+                // with a non-whitespace pipeline-generated body is still filtered by
+                // FinalizeReviewComments; an approval review with no body is still dropped by
+                // the .Where() guard below. The behaviour is equivalent for current inputs, but
+                // if Body is ever null here r.Body assignment would set Body = null rather than
+                // string.Empty. Consider adding ?? string.Empty for defensive consistency.
+                foreach (var r in reviews.Where(r => !string.IsNullOrWhiteSpace(r.Body)))
+                {
+                    projected.Add(new Pipeline.Models.PullRequestReviewComment
+                    {
+                        Id = r.Id.ToString(),
+                        Body = r.Body,
+                        Author = r.User?.Login ?? string.Empty,
+                        CreatedAt = r.SubmittedAt.UtcDateTime,
+                        Path = null,
+                        IsVerified = await IsVerifiedAuthorAsync(
+                            r.AuthorAssociation.StringValue, r.User?.Type == AccountType.Bot, r.User?.Login, ct)
+                    });
+                }
+
+                var allComments = SharedPrOperations.FinalizeReviewComments(projected);
 
                 return new LinkedPullRequest
                 {
@@ -663,7 +687,9 @@ public partial class GitHubRepositoryProvider
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
                 Line = null,
-                IsResolved = null
+                IsResolved = null,
+                IsVerified = await IsVerifiedAuthorAsync(
+                    c.AuthorAssociation.StringValue, c.User?.Type == AccountType.Bot, c.User?.Login, ct)
             });
         }
 
@@ -685,7 +711,9 @@ public partial class GitHubRepositoryProvider
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = c.Path,
                 Line = c.OriginalPosition,
-                IsResolved = null // GitHub review comments don't have individual resolution status via Octokit
+                IsResolved = null, // GitHub review comments don't have individual resolution status via Octokit
+                IsVerified = await IsVerifiedAuthorAsync(
+                    c.AuthorAssociation.StringValue, c.User?.Type == AccountType.Bot, c.User?.Login, ct)
             });
         }
 
@@ -709,7 +737,9 @@ public partial class GitHubRepositoryProvider
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
                 Line = null,
-                IsResolved = null
+                IsResolved = null,
+                IsVerified = await IsVerifiedAuthorAsync(
+                    r.AuthorAssociation.StringValue, r.User?.Type == AccountType.Bot, r.User?.Login, ct)
             });
         }
 

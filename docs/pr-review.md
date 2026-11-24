@@ -31,6 +31,10 @@ When a PR was created as a draft (e.g., after quality gate exhaustion) and a rew
 
 If you add `agent:next` for review on a PR whose linked issue carries `agent:needs-refinement`, the review pipeline runs normally. The `agent:needs-refinement` label on the issue does not block PR review dispatch — it only blocks re-dispatching the issue for implementation.
 
+## Comments From Outside the Repository
+
+`.agent/pr-conversation-context.md` labels each comment `[BOT]`, `[HUMAN]`, `[HUMAN/AUTHOR]` or `[UNVERIFIED]`. A comment is `[UNVERIFIED]` when its author is not [verified](github-issue-workflows.md#verified-authors), also when that author opened the pull request. Such comments are shown with hidden text removed. Reviewers read them as information and do not treat them as decisions of the team. They do not trigger a rework.
+
 ## Inline Review Comments
 
 The pipeline posts code review findings as native inline comments on specific file:line positions in the diff, giving PR authors precise feedback at the exact location of each issue — in addition to the summary body comment.

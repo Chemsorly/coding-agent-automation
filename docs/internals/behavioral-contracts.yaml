@@ -62,3 +62,16 @@
     - span_attribute: "pipeline.comments.unverified"
     - span_attribute: "pipeline.issue.author_verified"
   last_verified: "2026-11-22"
+
+- component: "SharedPrOperations.FinalizeReviewComments"
+  scenario: "A pull request has comments by authors outside the repository"
+  assertion: >
+    They are dropped before the cap of 50, so they do not start a rework or count as review feedback. The PR
+    conversation file shows them normalized under [UNVERIFIED], checked before [HUMAN/AUTHOR]. They are not brain
+    evidence. In the PR body they are marked and normalized, with their mentions guarded. A verified-only
+    conversation gives byte-identical output.
+  observable_signals:
+    - log_level: Information
+      message_pattern: "Wrote PR conversation context ({CommentCount} comments, {UnverifiedComments} unverified) to {FilePath} for PR #{PrNumber}"
+    - span_attribute: "pipeline.comments.unverified"
+  last_verified: "2026-11-24"
