@@ -418,6 +418,12 @@ public sealed partial class PipelineRun
     public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
     /// <summary>
+    /// Whether the PR conversation has a comment by a verified author, a bot's included. Agent-local: not in the
+    /// run's hash. Set from the comment list, never from the conversation file, whose text comment authors control.
+    /// </summary>
+    public bool HasVerifiedPrComments { get; set; }
+
+    /// <summary>
     /// Which agent is executing this run, or null for test runs.
     /// Uses <see cref="Volatile"/> read/write to ensure cross-thread visibility since this is
     /// written by the dispatch path (<c>RunLifecycleManager.AgentAcceptedRunAsync</c>) and read

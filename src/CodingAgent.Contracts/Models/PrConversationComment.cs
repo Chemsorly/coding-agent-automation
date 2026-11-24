@@ -14,6 +14,9 @@ public sealed class PrConversationComment
     /// <summary>Whether this comment is from the PR author.</summary>
     public bool IsAuthor { get; init; }
 
+    /// <summary>Whether the author is on the repository. Set by the provider mapping. Null counts as verified.</summary>
+    public bool? IsVerified { get; init; }
+
     /// <summary>File path if this is an inline review comment, null for general discussion.</summary>
     public string? FilePath { get; init; }
 

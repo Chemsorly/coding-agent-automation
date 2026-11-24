@@ -535,8 +535,8 @@ All emitted by the agent pod.
 | `GateConfigGuard` | `pipeline.run_id`, `pipeline.pr.guard_result` | Quality-gate configuration check on the PR's changed files. A child of `CreatePullRequest`, or of the post-PR CI retry. |
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
-| `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Writing PR conversation context to workspace |
-| `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.issue.author_verified` | Extracting linked issues from PR |
+| `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.comments.total`, `pipeline.comments.unverified` | Writing PR conversation context to workspace |
+| `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Extracting linked issues from PR |
 | `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Sub-issue generation (Phase 2) |
 | `DecompositionAnalysis` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Epic analysis (Phase 1) |
 | `PostDecompositionPlan` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting decomposition plan comment |

@@ -502,6 +502,7 @@ public partial class GitLabRepositoryProvider
         ArgumentNullException.ThrowIfNull(prAuthor);
 
         var results = new List<PrConversationComment>();
+        var verifier = new AuthorVerifier(this);
 
         var discussions = await ExecuteWithResilienceAsync(
             client =>
@@ -536,7 +537,8 @@ public partial class GitLabRepositoryProvider
                     IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                     FilePath = null,
                     Line = null,
-                    IsResolved = null
+                    IsResolved = null,
+                    IsVerified = await verifier.IsVerifiedAsync(note.Author?.Id, ct)
                 });
             }
         }
@@ -849,16 +851,20 @@ public partial class GitLabRepositoryProvider
                 },
                 "GetMergeRequestReviewComments", ct);
 
-            var projected = discussions
-                .SelectMany(d => d.Notes ?? Enumerable.Empty<MergeRequestComment>())
-                .Select(n => new PullRequestReviewComment
+            var verifier = new AuthorVerifier(this);
+            var projected = new List<PullRequestReviewComment>();
+            foreach (var n in discussions.SelectMany(d => d.Notes ?? Enumerable.Empty<MergeRequestComment>()))
+            {
+                projected.Add(new PullRequestReviewComment
                 {
                     Id = n.Id.ToString(),
                     Body = n.Body ?? string.Empty,
                     Author = n.Author?.Username ?? string.Empty,
                     CreatedAt = n.CreatedAt.ToUniversalTime(),
-                    Path = null // GitLab discussion notes don't expose path at the note level easily
+                    Path = null, // GitLab discussion notes don't expose path at the note level easily
+                    IsVerified = await verifier.IsVerifiedAsync(n.Author?.Id, ct)
                 });
+            }
 
             return SharedPrOperations.FinalizeReviewComments(projected);
         }

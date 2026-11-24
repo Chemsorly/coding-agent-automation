@@ -317,6 +317,9 @@ public abstract class GitLabProviderBase : IAsyncDisposable
         private readonly Dictionary<long, bool> _known = [];
         private long? _ownUserId;
 
+        /// <summary>Same as <see cref="VerifyAsync"/>. The name the PR comment mappings use.</summary>
+        public Task<bool> IsVerifiedAsync(long? authorId, CancellationToken ct) => VerifyAsync(authorId, ct);
+
         public async Task<bool> VerifyAsync(long? authorId, CancellationToken ct)
         {
             if (authorId is not { } id)

@@ -35,9 +35,12 @@ public static class PrConversationContextWriter
             var filePath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
             await File.WriteAllTextAsync(filePath, content, ct);
 
+            var unverified = comments.Count(c => c.IsVerified == false);
+            Activity.Current?.SetTag(UnverifiedInputTelemetry.CommentsTotalTag, comments.Count);
+            Activity.Current?.SetTag(UnverifiedInputTelemetry.CommentsUnverifiedTag, unverified);
             context.Logger.Information(
-                "Wrote PR conversation context ({CommentCount} comments) to {FilePath} for PR #{PrNumber}",
-                comments.Count, AgentWorkspacePaths.PrConversationContextFilePath, prNumber);
+                "Wrote PR conversation context ({CommentCount} comments, {UnverifiedComments} unverified) to {FilePath} for PR #{PrNumber}",
+                comments.Count, unverified, AgentWorkspacePaths.PrConversationContextFilePath, prNumber);
 
             return comments;
         }

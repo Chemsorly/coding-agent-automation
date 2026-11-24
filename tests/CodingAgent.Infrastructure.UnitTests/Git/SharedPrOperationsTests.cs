@@ -236,6 +236,35 @@ public class SharedPrOperationsTests
     }
 
     [Fact]
+    public void FinalizeReviewComments_DropsUnverifiedBeforeTheCap()
+    {
+        // 60 unverified comments older than 3 verified ones: the cap of 50 must not let them take the verified places.
+        var unverified = Enumerable.Range(1, 60)
+            .Select(i => MakeReviewComment($"Outside {i}", new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i), isVerified: false));
+        var verified = Enumerable.Range(1, 3)
+            .Select(i => MakeReviewComment($"Verified {i}", new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i), isVerified: true));
+
+        var result = SharedPrOperations.FinalizeReviewComments(unverified.Concat(verified).ToArray());
+
+        result.Select(c => c.Body).Should().Equal("Verified 1", "Verified 2", "Verified 3");
+    }
+
+    [Fact]
+    public void FinalizeReviewComments_KeepsVerifiedAndNull()
+    {
+        var comments = new[]
+        {
+            MakeReviewComment("Verified", new DateTime(2026, 1, 15, 9, 0, 0, DateTimeKind.Utc), isVerified: true),
+            MakeReviewComment("Unknown", new DateTime(2026, 1, 15, 10, 0, 0, DateTimeKind.Utc), isVerified: null),
+            MakeReviewComment("Outside", new DateTime(2026, 1, 15, 11, 0, 0, DateTimeKind.Utc), isVerified: false),
+        };
+
+        var result = SharedPrOperations.FinalizeReviewComments(comments);
+
+        result.Select(c => c.Body).Should().Equal("Verified", "Unknown");
+    }
+
+    [Fact]
     public void FinalizeReviewComments_EmptyInput_ReturnsEmpty()
     {
         var result = SharedPrOperations.FinalizeReviewComments(Array.Empty<PullRequestReviewComment>());
@@ -301,12 +330,13 @@ public class SharedPrOperationsTests
             IsBot = false
         };
 
-    private static PullRequestReviewComment MakeReviewComment(string body, DateTime createdAt)
+    private static PullRequestReviewComment MakeReviewComment(string body, DateTime createdAt, bool? isVerified = null)
         => new()
         {
             Id = Guid.NewGuid().ToString(),
             Author = "testuser",
             Body = body,
-            CreatedAt = createdAt
+            CreatedAt = createdAt,
+            IsVerified = isVerified
         };
 }

@@ -256,6 +256,7 @@ public static class BrainEvidenceRecorder
         var evidence = EnsureEvidence(run);
         var eligible = comments
             .Where(c => !c.IsBot)
+            .Where(c => c.IsVerified != false)
             .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
             .Where(c => !c.Body.StartsWith("🔴 **CRITICAL**", StringComparison.Ordinal))
             .Where(c => !c.Body.StartsWith("🟡 **WARNING**", StringComparison.Ordinal))

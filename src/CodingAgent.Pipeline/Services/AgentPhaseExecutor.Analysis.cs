@@ -232,9 +232,7 @@ public partial class AgentPhaseExecutor
         AnalysisReworkContext? reworkContext = null;
         if (run.LinkedPullRequest is not null)
         {
-            var prConversationPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
-            var hasReviewFeedback = run.LinkedPullRequest.ReviewComments.Count > 0
-                || (File.Exists(prConversationPath) && new FileInfo(prConversationPath).Length > 100);
+            var hasReviewFeedback = run.LinkedPullRequest.ReviewComments.Count > 0 || run.HasVerifiedPrComments;
 
             reworkContext = new AnalysisReworkContext(
                 PrNumber: run.LinkedPullRequest.Number,

@@ -23,4 +23,12 @@ public sealed class PullRequestReviewComment
     /// <summary>File path the comment is on, or null for general conversation comments.</summary>
     [Key(4)]
     public string? Path { get; init; }
+
+    /// <summary>
+    /// Whether the author is on the repository. Set by the provider mapping and read only by
+    /// SharedPrOperations.FinalizeReviewComments, in the same process. Not on the wire. Null counts as verified.
+    /// </summary>
+    [IgnoreMember]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool? IsVerified { get; init; }
 }

@@ -579,6 +579,63 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     }
 
     [Fact]
+    public async Task Analysis_LargeConversationFileWithoutVerifiedComments_HasNoHumanFeedbackPreamble()
+    {
+        _run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 103,
+            BranchName = "feature/outside-comment",
+            IsDraft = false,
+            Url = "https://github.com/test/repo/pull/103",
+            ReviewComments = Array.Empty<PullRequestReviewComment>()
+        };
+        // The file is text that comment authors control: its size must not decide the preamble.
+        Directory.CreateDirectory(Path.Combine(_workspacePath, ".agent"));
+        File.WriteAllText(
+            Path.Combine(_workspacePath, AgentWorkspacePaths.PrConversationContextFilePath), new string('x', 500));
+        _run.HasVerifiedPrComments.Should().BeFalse();
+
+        var capturedPrompt = await CaptureAnalysisPromptAsync();
+
+        capturedPrompt.Should().Contain("## Rework Context");
+        capturedPrompt.Should().NotContain("has human review feedback");
+    }
+
+    [Fact]
+    public async Task Analysis_HasVerifiedPrComments_HasHumanFeedbackPreamble()
+    {
+        _run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 104,
+            BranchName = "feature/verified-comment",
+            IsDraft = false,
+            Url = "https://github.com/test/repo/pull/104",
+            ReviewComments = Array.Empty<PullRequestReviewComment>()
+        };
+        _run.HasVerifiedPrComments = true;
+
+        var capturedPrompt = await CaptureAnalysisPromptAsync();
+
+        capturedPrompt.Should().Contain("has human review feedback");
+    }
+
+    private async Task<string?> CaptureAnalysisPromptAsync()
+    {
+        string? capturedPrompt = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                WriteValidAnalysisFiles();
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        return capturedPrompt;
+    }
+
+    [Fact]
     public async Task Analysis_WithoutLinkedPullRequest_PromptExcludesReworkContext()
     {
         // Fresh run with no LinkedPullRequest — must NOT contain rework context (regression guard)

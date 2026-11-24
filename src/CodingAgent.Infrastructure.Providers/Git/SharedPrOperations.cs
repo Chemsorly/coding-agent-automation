@@ -118,6 +118,7 @@ internal static class SharedPrOperations
     /// Finalizes a sequence of <see cref="PullRequestReviewComment"/> items for
     /// <c>GetAgentPullRequestsAsync</c>:
     /// <list type="number">
+    ///   <item>Filters out comments by authors who are not verified.</item>
     ///   <item>Filters out pipeline-generated comments (checked via <see cref="CommentMarkers.IsPipelineGeneratedComment"/>).</item>
     ///   <item>Sorts by <c>CreatedAt</c> ascending.</item>
     ///   <item>Caps at 50 items.</item>
@@ -128,6 +129,7 @@ internal static class SharedPrOperations
     {
         ArgumentNullException.ThrowIfNull(source);
         return source
+            .Where(c => c.IsVerified != false)
             .Where(c => !CommentMarkers.IsPipelineGeneratedComment(c.Body))
             .OrderBy(c => c.CreatedAt)
             .Take(50)
