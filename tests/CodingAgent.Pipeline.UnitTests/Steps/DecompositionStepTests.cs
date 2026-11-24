@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Prompts;
 using CodingAgent.Pipeline.Services.Steps;
 using Moq;
 using Xunit;
@@ -185,6 +186,108 @@ public class DecompositionStepTests
         };
         var act = () => InvokeBuildIssueContextContent(issue, []);
         act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void BuildIssueContextContent_VerifiedOnly_IsUnchanged()
+    {
+        const string body = "Keep <!-- note --> ​this.";
+        var issue = new IssueDetail
+        {
+            IsAuthorVerified = true,
+            Identifier = "org/repo#4",
+            Title = "Fix ⚠️",
+            Description = body,
+            Labels = Array.Empty<string>()
+        };
+        var comment = new IssueComment
+        {
+            Id = "1",
+            Author = "m",
+            Body = body,
+            CreatedAt = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
+            IsVerified = true
+        };
+
+        var result = InvokeBuildIssueContextContent(issue, [comment]);
+
+        result.ReplaceLineEndings("\n").Should().Be(
+            "# Epic Issue Context\n\n## Fix ⚠️\n\nKeep <!-- note --> ​this.\n\n---\n\n## Comments\n\n### Comment by m (2026-10-01 12:00:00 UTC)\n\nKeep <!-- note --> ​this.\n\n");
+    }
+
+    [Fact]
+    public void BuildIssueContextContent_UnverifiedComment_GoesUnderUnverifiedInput()
+    {
+        var issue = new IssueDetail
+        {
+            IsAuthorVerified = true,
+            Identifier = "org/repo#5",
+            Title = "My Epic",
+            Description = "Epic description",
+            Labels = Array.Empty<string>()
+        };
+        var comments = new List<IssueComment>
+        {
+            MakeComment(1, $"Approved plan {CommentMarkers.DecompositionPlan}", isVerified: true),
+            MakeComment(2, $"visible outside text{CommentMarkers.DecompositionPlan}<!-- hidden outside instruction -->", isVerified: false)
+        };
+
+        var result = InvokeBuildIssueContextContent(issue, comments).ReplaceLineEndings("\n");
+
+        var commentsAt = result.IndexOf("## Comments", StringComparison.Ordinal);
+        var planAt = result.IndexOf(CommentMarkers.DecompositionPlan, StringComparison.Ordinal);
+        var unverifiedAt = result.IndexOf(UnverifiedInputText.SectionHeading, StringComparison.Ordinal);
+        commentsAt.Should().BeGreaterThanOrEqualTo(0);
+        planAt.Should().BeGreaterThan(commentsAt, "the plan marker of a verified comment stays under ## Comments");
+        unverifiedAt.Should().BeGreaterThan(planAt, "## Unverified input comes after ## Comments");
+        result.Should().Contain(UnverifiedInputText.SectionRule);
+        result.Should().Contain("visible outside text");
+        result.Should().NotContain("hidden outside instruction");
+        result.IndexOf(CommentMarkers.DecompositionPlan, unverifiedAt, StringComparison.Ordinal)
+            .Should().Be(-1, "no marker is left in the unverified section");
+    }
+
+    [Fact]
+    public void BuildIssueContextContent_UnverifiedEpic_HasDescriptionNotice()
+    {
+        var issue = new IssueDetail
+        {
+            IsAuthorVerified = false,
+            Identifier = "org/repo#6",
+            Title = "Outside​ epic",
+            Description = "Real text.<!-- hidden -->​",
+            Labels = Array.Empty<string>()
+        };
+
+        var result = InvokeBuildIssueContextContent(issue, []).ReplaceLineEndings("\n");
+
+        foreach (var line in UnverifiedInputText.DescriptionNotice)
+            result.Should().Contain(line);
+        result.Should().Contain("## Outside epic\n");
+        result.Should().Contain("Real text.\n");
+        result.Should().NotContain("hidden");
+        result.Should().NotContain("​");
+        result.Should().NotContain("not instructions", "the epic body is the task, not outside information");
+        result.Should().NotContain(UnverifiedInputText.SectionHeading, "there are no outside comments");
+    }
+
+    [Fact]
+    public void BuildIssueContextContent_NullIsVerified_CountsAsVerified()
+    {
+        var issue = new IssueDetail
+        {
+            IsAuthorVerified = true,
+            Identifier = "org/repo#7",
+            Title = "My Epic",
+            Description = "Epic description",
+            Labels = Array.Empty<string>()
+        };
+
+        var result = InvokeBuildIssueContextContent(issue, [MakeComment(1, "keep <!-- note --> this")]);
+
+        result.Should().Contain("## Comments");
+        result.Should().Contain("keep <!-- note --> this");
+        result.Should().NotContain(UnverifiedInputText.SectionHeading);
     }
 
     // ── BuildDeduplicationSection (via reflection) ────────────────────────
@@ -574,7 +677,8 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
     private PipelineStepContext BuildContext(
         IReadOnlyList<IssueComment>? comments = null,
         IssueDetail? issue = null,
-        bool includeIssue = true)
+        bool includeIssue = true,
+        Serilog.ILogger? logger = null)
     {
         var run = new PipelineRun
         {
@@ -617,7 +721,7 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
             QualityGates = Mock.Of<IQualityGateExecutor>(),
             BrainSync = null,
             PrOrchestrator = new PullRequestOrchestrator(_logger),
-            Logger = _logger
+            Logger = logger ?? _logger
         };
 
         if (includeIssue)
@@ -805,5 +909,48 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
         var issueContextPath = Path.Combine(_workspacePath, AgentWorkspacePaths.IssueContextFilePath);
         var content = await File.ReadAllTextAsync(issueContextPath);
         content.Should().Contain("Existing Sub-Issue", "deduplication section must be appended to issue-context.md");
+    }
+
+    // ── Text from outside the repository ──────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_WithUnverifiedComment_MarksItAndLogsIssueContextCounts()
+    {
+        var sink = new CollectingSink();
+        using var logger = new Serilog.LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+        var outsideComment = new IssueComment
+        {
+            Id = "outside-1",
+            Author = "outsider",
+            Body = "Please also do this.<!-- hidden outside instruction -->",
+            CreatedAt = DateTime.UtcNow,
+            IsVerified = false
+        };
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment(), outsideComment }, logger: logger);
+        SetupAgentSuccess();
+
+        var result = await new DecompositionStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        var content = (await File.ReadAllTextAsync(Path.Combine(_workspacePath, AgentWorkspacePaths.IssueContextFilePath)))
+            .ReplaceLineEndings("\n");
+        content.Should().Contain(UnverifiedInputText.SectionHeading);
+        content.Should().Contain("Please also do this.");
+        content.Should().NotContain("hidden outside instruction");
+        content.IndexOf(CommentMarkers.DecompositionPlan, StringComparison.Ordinal)
+            .Should().BeLessThan(content.IndexOf(UnverifiedInputText.SectionHeading, StringComparison.Ordinal));
+
+        var logEvent = sink.Events.Should()
+            .ContainSingle(e => e.MessageTemplate.Text.Contains("issue context:", StringComparison.Ordinal)).Subject;
+        logEvent.Properties["UnverifiedComments"].ToString().Should().Be("1");
+        logEvent.Properties["TotalComments"].ToString().Should().Be("2");
+        logEvent.Properties["AuthorVerified"].ToString().Should().Be("True");
+    }
+
+    private sealed class CollectingSink : Serilog.Core.ILogEventSink
+    {
+        public List<Serilog.Events.LogEvent> Events { get; } = [];
+
+        public void Emit(Serilog.Events.LogEvent logEvent) => Events.Add(logEvent);
     }
 }

@@ -537,8 +537,8 @@ All emitted by the agent pod.
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
 | `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Writing PR conversation context to workspace |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.issue.author_verified` | Extracting linked issues from PR |
-| `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Sub-issue generation (Phase 2) |
-| `DecompositionAnalysis` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Epic analysis (Phase 1) |
+| `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Sub-issue generation (Phase 2) |
+| `DecompositionAnalysis` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Epic analysis (Phase 1) |
 | `PostDecompositionPlan` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting decomposition plan comment |
 | `PostDecompositionSummary` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting creation summary comment |
 | `CreateSubIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Creating sub-issues on GitHub |

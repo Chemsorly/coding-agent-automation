@@ -43,7 +43,7 @@ Cap: `MaxOpenIssuesForContext` (default 50). Individual fetch failures logged an
 
 ### DecompositionAnalysisStep
 
-1. Writes epic issue body + all comments to `.agent/issue-context.md`
+1. Writes the epic issue body and all comments to `.agent/issue-context.md`. Text by unverified authors is marked: the body under a notice, comments under "## Unverified input"
 2. Builds analysis prompt with `MaxDecompositionSubIssues` cap
 3. Executes agent — expects `.agent/decomposition-plan.md` output
 4. Validates plan file exists and has ≥20 characters
@@ -65,7 +65,7 @@ Adversarial review validates: no overlap with open issues, each sub-issue is rig
 ### DecompositionStep
 
 1. Validates plan comment exists (marker detection, verified authors only); fails the run if the epic has no such comment
-2. Writes epic body + all comments (including plan comment) to `.agent/issue-context.md`
+2. Writes the epic body and all comments (including plan comment) to `.agent/issue-context.md`. Text by unverified authors is marked: the body under a notice, comments under "## Unverified input"
 3. Queries existing `agent:generated` sub-issues for deduplication context
 4. Builds decomposition prompt with `MaxDecompositionSubIssues` cap
 5. Executes agent — expects `.agent/sub-issues/*.json` output
@@ -157,7 +157,7 @@ There is no `decomposition/` subdirectory. Consolidation runs work the same way:
 | `.agent/sub-issues/` | Sub-issue JSON output files |
 | `.agent/decomposition-plan.md` | Decomposition plan output (Phase 1) |
 | `.agent/decomposition-review.md` | Adversarial review findings (Phase 1) |
-| `.agent/issue-context.md` | Epic body + comments context |
+| `.agent/issue-context.md` | Epic body + comments context, with unverified text marked |
 
 All paths defined as constants in `AgentWorkspacePaths`.
 

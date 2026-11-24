@@ -68,8 +68,10 @@ See [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decompo
 After Phase 1 posts the decomposition plan:
 
 - **Approve**: Remove `agent:epic-review`, add `agent:epic-approved` → Phase 2 runs automatically
-- **Request changes**: Post a comment on the epic with feedback, then remove `agent:epic-review` and add `agent:epic` → Phase 1 re-runs with your feedback as context
+- **Request changes**: Post a comment on the epic with feedback, then remove `agent:epic-review` and add `agent:epic` → Phase 1 re-runs with your feedback as context. Only comments by [verified authors](github-issue-workflows.md#verified-authors) count as feedback. Other comments are in the context file under "Unverified input".
 - **The plan comment is updated** (not duplicated) on re-runs, identified by the `<!-- agent:decomposition-plan -->` marker. The marker counts only on a comment by a verified author (see [Verified authors](github-issue-workflows.md#verified-authors))
+
+An epic written by someone outside the repository can be decomposed, since a maintainer's label accepts it. Its text is marked in the agent's context. The sub-issues it creates are written by the pipeline, so they count as verified: review the plan before approving it, and the sub-issues before queueing them.
 
 ## Configuration
 

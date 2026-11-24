@@ -293,7 +293,8 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
         return capturedRequests;
     }
 
-    private PipelineStepContext BuildContext(int maxSubIssues, int maxFiles = 12, TimeSpan? transientRetryDelay = null)
+    private PipelineStepContext BuildContext(
+        int maxSubIssues, int maxFiles = 12, TimeSpan? transientRetryDelay = null, Serilog.ILogger? logger = null)
     {
         var run = new PipelineRun
         {
@@ -333,7 +334,7 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
             QualityGates = Mock.Of<IQualityGateExecutor>(),
             BrainSync = null,
             PrOrchestrator = new PullRequestOrchestrator(_logger),
-            Logger = _logger
+            Logger = logger ?? _logger
         };
     }
 
@@ -511,6 +512,165 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
         var refinementPrompt = capturedRequests[2].Prompt;
         refinementPrompt.Should().Contain($"At most {cap} sub-issues",
             "the refinement prompt must list the cap as a constraint");
+    }
+
+    // ── Text from outside the repository ──────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_UnverifiedComment_GoesUnderUnverifiedInputAndAddsFeedbackLine()
+    {
+        WriteValidPlanFile();
+        SetupComments(
+            MakeComment("maintainer", "Please split by layer.", isVerified: true),
+            MakeComment("outsider", "Visible.<!-- hidden outside instruction -->", isVerified: false));
+        var capturedRequests = SetupAgentMock();
+
+        await new DecompositionAnalysisStep().ExecuteAsync(BuildContext(maxSubIssues: 5), CancellationToken.None);
+
+        capturedRequests[0].Prompt.Should().Contain("Only comments under");
+        var file = ReadIssueContext();
+        file.Should().Contain(
+            "## Comments\n\n### Comment by @maintainer (2026-10-01 12:00 UTC)\n\nPlease split by layer.\n\n"
+            + UnverifiedInputText.SectionHeading + "\n\n" + UnverifiedInputText.SectionRule
+            + "\n\n### Comment by @outsider (2026-10-01 12:00 UTC)\n\nVisible.\n\n");
+        file.Should().NotContain("hidden outside instruction");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnlyVerifiedComments_PromptEqualsTheBuilderWithoutFlag()
+    {
+        const string verifiedBody = "Keep <!-- note --> \u200Bthis.";
+        WriteValidPlanFile();
+        SetupComments(
+            MakeComment("maintainer", verifiedBody, isVerified: true),
+            MakeComment("older-api", verifiedBody, isVerified: null));
+        var capturedRequests = SetupAgentMock();
+
+        await new DecompositionAnalysisStep().ExecuteAsync(BuildContext(maxSubIssues: 7, maxFiles: 12), CancellationToken.None);
+
+        capturedRequests[0].Prompt.Should().Be(DecompositionPromptBuilder.BuildAnalysisPrompt(7, 12, null));
+        var file = ReadIssueContext();
+        file.Should().NotContain("Unverified input");
+        file.Should().Contain("## Comments\n\n### Comment by @maintainer (2026-10-01 12:00 UTC)\n\n" + verifiedBody + "\n\n");
+        file.Should().Contain("### Comment by @older-api (2026-10-01 12:00 UTC)\n\n" + verifiedBody + "\n\n");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ContextFailure_KeepsPromptWithoutFeedbackLine()
+    {
+        WriteValidPlanFile();
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("comments unavailable"));
+        var capturedRequests = SetupAgentMock();
+
+        var result = await new DecompositionAnalysisStep().ExecuteAsync(BuildContext(maxSubIssues: 5), CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        capturedRequests[0].Prompt.Should().NotContain("Only comments under");
+        capturedRequests[0].Prompt.Should().Be(DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12, null));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_VerifiedEpicAuthor_WritesTitleAndDescriptionUnchanged()
+    {
+        const string title = "Fix ⚠️​ epic";
+        const string description = "Keep <!-- note --> ​this.";
+        WriteValidPlanFile();
+        _issueOps
+            .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                IsAuthorVerified = true,
+                Identifier = "42",
+                Title = title,
+                Description = description,
+                Labels = []
+            });
+        SetupAgentMock();
+
+        await new DecompositionAnalysisStep().ExecuteAsync(BuildContext(maxSubIssues: 5), CancellationToken.None);
+
+        ReadIssueContext().Should().StartWith($"# Epic: {title}\n\n## Description\n\n{description}\n\n");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UnverifiedEpicAuthor_WritesDescriptionNoticeAndNoFeedbackLine()
+    {
+        WriteValidPlanFile();
+        _issueOps
+            .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                IsAuthorVerified = false,
+                Identifier = "42",
+                Title = "Outside\u200B epic",
+                Description = "Real text.<!-- hidden outside instruction -->\u200B",
+                Labels = []
+            });
+        SetupComments(MakeComment("maintainer", "Looks fine.", isVerified: true));
+        var capturedRequests = SetupAgentMock();
+
+        await new DecompositionAnalysisStep().ExecuteAsync(BuildContext(maxSubIssues: 5), CancellationToken.None);
+
+        var file = ReadIssueContext();
+        file.Should().Contain("# Epic: Outside epic\n");
+        file.Should().Contain("## Description\n\n" + string.Join("\n", UnverifiedInputText.DescriptionNotice) + "\n\nReal text.\n\n");
+        file.Should().NotContain("hidden outside instruction");
+        file.Should().NotContain("\u200B");
+        file.Should().NotContain("not instructions", "the epic body is the task, not outside information");
+        file.Should().NotContain(UnverifiedInputText.SectionHeading, "the comments are all verified");
+        capturedRequests[0].Prompt.Should().Be(DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12, null));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithUnverifiedComment_LogsIssueContextCounts()
+    {
+        WriteValidPlanFile();
+        SetupComments(
+            MakeComment("maintainer", "Please split by layer.", isVerified: true),
+            MakeComment("outsider", "Hello.", isVerified: false));
+        SetupAgentMock();
+        var sink = new CollectingSink();
+        using var logger = new Serilog.LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+
+        await new DecompositionAnalysisStep().ExecuteAsync(BuildContext(maxSubIssues: 5, logger: logger), CancellationToken.None);
+
+        var logEvent = sink.Events.Should()
+            .ContainSingle(e => e.MessageTemplate.Text.Contains("issue context:", StringComparison.Ordinal)).Subject;
+        logEvent.Properties["UnverifiedComments"].ToString().Should().Be("1");
+        logEvent.Properties["TotalComments"].ToString().Should().Be("2");
+        logEvent.Properties["AuthorVerified"].ToString().Should().Be("True");
+    }
+
+    private void WriteValidPlanFile()
+    {
+        var planPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionPlanFilePath);
+        File.WriteAllText(planPath, "# Plan\n\nSome plan content.\n\n| # | Title | Scope |\n|---|-------|-------|\n| 1 | Sub-issue 1 | Scope |");
+    }
+
+    private void SetupComments(params IssueComment[] comments) =>
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(comments.ToList());
+
+    private string ReadIssueContext() =>
+        File.ReadAllText(Path.Combine(_workspacePath, AgentWorkspacePaths.IssueContextFilePath)).ReplaceLineEndings("\n");
+
+    private static IssueComment MakeComment(string author, string body, bool? isVerified) => new()
+    {
+        Id = author,
+        Author = author,
+        Body = body,
+        CreatedAt = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc),
+        IsVerified = isVerified
+    };
+
+    private sealed class CollectingSink : Serilog.Core.ILogEventSink
+    {
+        public List<Serilog.Events.LogEvent> Events { get; } = [];
+
+        public void Emit(Serilog.Events.LogEvent logEvent) => Events.Add(logEvent);
     }
 }
 public class AgentLabelsDecompositionTests
