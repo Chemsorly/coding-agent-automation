@@ -15,6 +15,8 @@ Why the system behaves as it does where the code can't tell you. Each entry is a
 The rules a plausible change could break. Details are in the linked entries.
 
 - Private keys never enter an agent pod; agents get short-lived tokens only. ([Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant))
+- The agent key and push tokens stay out of the CLI's reach in the Claude and Kiro images, and agent pods are default deny inside the cluster. ([Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant), [Agent pods](#agent-pods-are-isolated-inside-the-cluster-outside-the-cluster-is-out-of-the-charts-scope))
+- Text from outside the repository is marked unverified, and a pipeline marker counts only on verified text. ([Unverified input](#outside-text-is-unverified-input-marked-not-removed))
 - No agent pod receives the master key; each Job gets its own derived key, and an agent can resume only its own run. ([Agent keys](#hmac-key-derivation-for-agent-auth--intentional-simplicity))
 - The browser holds only the session cookie: user tokens stay on the web host, which holds no Kubernetes rights, and every UI HTTP request carries `X-CSRF: 1`. ([BFF](#web-ui-runs-as-webassembly-behind-a-bff), [Separate BFF](#the-bff-stays-a-separate-process-merging-it-into-the-api-was-rejected), [CSRF](#csrf-a-custom-header-on-every-ui-request-whatever-the-method))
 - Agents can't set human-approval labels such as `agent:epic-approved`. ([Gated labels](#dispatchgatedlabels-extensible-set-for-human-approval-required-label-transitions))
@@ -118,9 +120,9 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.
 
 ### Projects share the agents, their capacity and the namespace; the operator sizes them
-<!-- 2026-10-10; updated 2026-11-05 (agent limits) -->
-**Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: the four agent limits (per job template and for all agents, each in the Helm chart and on Settings → Agents → Capacity; see [Agent concurrency](#agent-concurrency-helm-sets-the-ceiling-the-ui-the-operators-limit-chats-count)), the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network isolation between the pods of different projects.
-**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-one-configurable-order-by-task-type)); an agent pod reaches whatever the other projects' pods reach in the namespace.
+<!-- 2026-10-10; updated 2026-10-31, 2026-11-05 (agent limits) -->
+**Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: the four agent limits (per job template and for all agents, each in the Helm chart and on Settings → Agents → Capacity; see [Agent concurrency](#agent-concurrency-helm-sets-the-ceiling-the-ui-the-operators-limit-chats-count)), the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network policy per project.
+**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-one-configurable-order-by-task-type)); agent pods of different projects share one network allow-list and the credentials of their job templates.
 **Not:** quotas or fair-share dispatch per project; a namespace or network policy per project.
 **Revisit when:** one project's work measurably starves another's, or a team must not share a network with another team's repositories.
 
@@ -148,9 +150,9 @@ The rules a plausible change could break. Details are in the linked entries.
 ## Security
 
 ### Token vending: private keys never leave orchestrator or API containers (security invariant)
-<!-- 2026-07-04; updated 2026-09-26 -->
+<!-- 2026-07-04; updated 2026-10-31 -->
 **Rule:** GitHub App private keys stay in the API, web and Scheduler processes. Agents get only short-lived installation tokens, which they request before each provider operation. No container that runs an AI agent holds a private key.
-**Why:** A hijacked agent (prompt injection, hallucination, malicious input) must not reach secrets that allow lasting harm. **Accepting:** token refresh depends on the agent's SignalR connection. GitLab has no token vending, so the GitLab token reaches the agent; use project access tokens that expire within a day.
+**Why:** A hijacked agent (prompt injection, hallucination, malicious input) must not reach secrets that allow lasting harm. So the worker process that holds the agent key and the tokens keeps them from the CLI and its children, in the Claude and Kiro images: the key leaves the worker's environment at startup, other processes of the same user can't read the worker, git credentials go only to the provider's own URL, no clone URL on disk holds a token, and the application files are read-only. **Accepting:** token refresh depends on the agent's SignalR connection. GitLab has no token vending, so the GitLab token reaches the worker, though not `origin`; use project access tokens that expire within a day. A GitLab repository whose own commands need network git passes its own token through its setup step secrets. The OpenCode image is a fallback and is not covered yet.
 **Not:** long-lived credentials as Kubernetes Secrets; projected volumes.
 **Revisit when:** never for the principle; move GitLab to short-lived tokens when they are available.
 
@@ -169,11 +171,25 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** a human gate needs something other than a label. The first such gate is triage approval, an operator action in the app ([Triage](#triage-project-wide-investigation-issues-created-by-a-person-in-the-app)); agents can't reach it because the triage API is operator-tier and the hub refuses issue creation for triage runs.
 
 ### Repository and project content runs next to the agent's credentials
-<!-- 2026-10-10 -->
-**Rule:** What a repository or its pipeline configuration brings runs inside the agent pod, next to the pod's agent credentials (the agent key, the Claude credentials, the OpenCode configuration). This covers setup steps, project and repository secrets, MCP servers, steering, and the repository's own agent configuration such as `.claude/settings.json` hooks and `.mcp.json`. Whoever can change a repository or its project's configuration can use those credentials. Handing the Claude credentials only to the CLI process guards against accidental leaks, not against intent.
-**Why:** The agent must run the repository's build, tests and tools, and the pod is the sandbox. Separating credentials per step would make every tool integration harder, and no current scenario needs it. **Accepting:** a repository owner can read or use the agent credentials of the pods that run their repository. Keep agent credentials rotatable, and give repositories that can't be trusted their own job template and credentials.
-**Not:** credential isolation per step; an environment-variable denylist for setup steps.
-**Revisit when:** teams that must not share agent credentials use one deployment.
+<!-- 2026-10-10; updated 2026-10-31 -->
+**Rule:** What a repository or its pipeline configuration brings runs inside the agent pod. This covers setup steps, project and repository secrets, MCP servers, steering, and the repository's own agent configuration such as `.claude/settings.json` hooks and `.mcp.json`. It runs next to what the CLI legitimately holds: the Claude credentials or OpenCode configuration, project and repository secrets, MCP tokens, and the repository's source. Whoever can change a repository or its project's configuration can use those. The agent key and push tokens are not among them, in the Claude and Kiro images: see [Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant). Handing the Claude credentials only to the CLI process guards against accidental leaks, not against intent.
+**Why:** The agent must run the repository's build, tests and tools, and the pod is the sandbox. Separating what those tools use per step would make every tool integration harder, and no current scenario needs it. Nothing a repository legitimately uses needs the agent key or a push token, so those could leave at no cost to anyone. **Accepting:** a repository owner can read or use the LLM credential and the secrets of the pods that run their repository. Keep these rotatable, keep MCP tokens read-only and short-lived, and give repositories that can't be trusted their own job template and credentials.
+**Not:** credential isolation per step for what the CLI and its tools use; an environment-variable denylist for setup steps.
+**Revisit when:** teams that must not share agent credentials use one deployment, or the OpenCode image stops being only a fallback.
+
+### Agent pods are isolated inside the cluster; outside the cluster is out of the chart's scope
+<!-- 2026-10-31 -->
+**Rule:** The chart gives agent pods one NetworkPolicy, on by default: default deny in both directions, with an allow-list of DNS, this release's API pods, the OpenTelemetry collector and the operator's `extraEgress`. Everything outside the cluster stays open, which takes the cluster's pod and service CIDRs as `clusterCidrs`; the chart refuses to render without them while the policy is on. It uses only vanilla NetworkPolicy.
+**Why:** An agent runs commands chosen from text it reads, so it must not reach Redis, Postgres, other deployments or other namespaces. Agents legitimately need the internet: LLM providers, Git hosts, package registries and MCP servers vary per deployment, so an outbound allow-list would break most of them. The chart can't know what lies around a cluster. **Accepting:** what the CLI legitimately holds, and private repository source, can still be sent out. Node addresses, cloud metadata and hosts on the local network stay reachable unless the operator lists them in `clusterCidrs`, and that value fails open with no signal if it is wrong. It needs a CNI that enforces NetworkPolicy. An operator with an in-cluster MCP server has to list it.
+**Not:** an outbound allow-list or a proxy for internet traffic; CNI-specific policy types; a policy per project.
+**Revisit when:** a deployment needs its agents' outbound traffic limited, and more than one operator asks for the same way to do it.
+
+### Outside text is unverified input: marked, not removed
+<!-- 2026-10-31 -->
+**Rule:** Text written by someone outside the repository stays in what agents read, marked as unverified input. Verified means on the repository: on GitHub, the author association owner, member or collaborator, a bot account, or admin, maintain or write permission; on GitLab, a member with Developer or higher, or the token's own user. A pipeline marker counts only on verified text. The label that starts a run accepts the task as its setter read it: an outside author's issue is still the task, under wording that gives the author no other authority. Outside comments don't steer rework, don't carry `[HUMAN]` authority and don't reach brain evidence. Hidden text such as HTML comments is removed from unverified text before it reaches a prompt. Verified text is untouched.
+**Why:** On a public repository, anyone can write text a run reads, and most outside contributions are useful, so dropping them loses more than it protects. No prompt wording reliably stops an injection, so marking only lowers the odds, and limiting what a hijacked agent can reach is what bounds the damage: see [Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant) and [Agent pods are isolated](#agent-pods-are-isolated-inside-the-cluster-outside-the-cluster-is-out-of-the-charts-scope). A marker is honored on verified text rather than on the pipeline's own identity because that identity isn't available to the agent with an installation token, and it breaks on credential rotation. **Accepting:** a hijack through marked text remains possible. A verified bot that echoes outside text counts as verified, as do sub-issues from an outside epic once a person has approved the plan. Marking adds one lookup per unknown comment author. Listings above the provider fetch cap hide later comments.
+**Not:** dropping outside text; detecting injection, by pattern or by classifier, as a gate; treating an outside body as "information, not instructions", since it is the task.
+**Revisit when:** runs show marked text still steering agents in practice, or a pipeline identity becomes available on every credential type.
 
 ### Web UI sign-in: one OIDC provider, roles in Helm values, no user database
 <!-- 2026-10-04 -->
@@ -534,9 +550,9 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** the Kiro CLI or Amazon Q exposes usage in a parseable form.
 
 ### Filesystem-as-context: workspace files are the context delivery mechanism
-<!-- 2026-07-04 -->
+<!-- 2026-07-04; updated 2026-10-31 -->
 **Rule:** The pipeline gives agents context as workspace files (`.agent/`, `.brain/`, steering files): prompts say what to do, and files say what the context is. Agents also return structured output as files, not on stdout.
-**Why:** Inline context made prompts too large and caused escaping problems. Files can be scanned for prompt injection before the agent reads them, people can inspect them, and they survive crashes.
+**Why:** Inline context made prompts too large and caused escaping problems. People can inspect files, and they survive crashes.
 **Not:** inline prompt context; a hybrid split.
 **Revisit when:** agents often fail to read the referenced files.
 
