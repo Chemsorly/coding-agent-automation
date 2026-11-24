@@ -69,6 +69,7 @@ public sealed class DecompositionStep : IPipelineStep
         await File.WriteAllTextAsync(issueContextPath, issueContextContent, ct);
         logger.Information("Pipeline {RunId} wrote issue context with {CommentCount} comments",
             run.RunId, comments.Count);
+        UnverifiedInputTelemetry.RecordIssueContext(activity, logger, run.RunId, context.Issue, comments);
 
         // 3. Query existing agent-generated sub-issues for deduplication context
         var existingTitles = await QueryExistingSubIssueTitlesAsync(context.IssueOps, context.ProjectContext, logger, run.RunId, ct);
@@ -172,26 +173,21 @@ public sealed class DecompositionStep : IPipelineStep
 
         sb.AppendLine("# Epic Issue Context");
         sb.AppendLine();
-        sb.AppendLine($"## {issue.Title}");
+        sb.AppendLine($"## {UnverifiedInputText.Title(issue)}");
         sb.AppendLine();
-        sb.AppendLine(issue.Description);
-        sb.AppendLine();
-
-        if (comments.Count > 0)
+        if (issue.IsAuthorVerified)
         {
-            sb.AppendLine("---");
-            sb.AppendLine();
-            sb.AppendLine("## Comments");
-            sb.AppendLine();
-
-            foreach (var comment in comments)
-            {
-                sb.AppendLine($"### Comment by {comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})");
-                sb.AppendLine();
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
+            sb.AppendLine(issue.Description);
         }
+        else
+        {
+            UnverifiedInputText.AppendDescriptionNotice(sb);
+            sb.AppendLine(AgentTextNormalizer.Normalize(issue.Description));
+        }
+        sb.AppendLine();
+
+        EpicContextComments.Append(
+            sb, comments, c => $"### Comment by {c.Author} ({c.CreatedAt:yyyy-MM-dd HH:mm:ss UTC})", dividerBeforeComments: true);
 
         return sb.ToString();
     }

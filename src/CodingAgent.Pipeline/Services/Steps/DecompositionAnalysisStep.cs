@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -41,9 +42,10 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
 
         // 2. Write epic issue body + comments to .agent/issue-context.md
         var epicContextFailed = false;
+        var hasUnverifiedComments = false;
         try
         {
-            await WriteEpicContextAsync(context, ct);
+            hasUnverifiedComments = await WriteEpicContextAsync(context, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -70,7 +72,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         // 3. Build analysis prompt
         var maxSubIssues = config.MaxDecompositionSubIssues;
         var maxFiles = config.MaxDecompositionSubIssueFiles;
-        var analysisPrompt = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, maxFiles, context.ProjectContext);
+        var analysisPrompt = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, maxFiles, context.ProjectContext, hasUnverifiedComments);
 
         // 4. Transition to GeneratingPlan
         context.Callbacks.TransitionTo(PipelineStep.GeneratingPlan);
@@ -225,7 +227,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
     /// Writes the epic issue body and all comments to .agent/issue-context.md.
     /// Uses IAgentIssueOperations to fetch the issue detail and comments.
     /// </summary>
-    private static async Task WriteEpicContextAsync(PipelineStepContext context, CancellationToken ct)
+    private static async Task<bool> WriteEpicContextAsync(PipelineStepContext context, CancellationToken ct)
     {
         var run = context.Run;
         var workspacePath = run.WorkspacePath!;
@@ -242,11 +244,19 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
 
         // Build issue context content
         var sb = new StringBuilder();
-        sb.AppendLine($"# Epic: {issue.Title}");
+        sb.AppendLine($"# Epic: {UnverifiedInputText.Title(issue)}");
         sb.AppendLine();
         sb.AppendLine("## Description");
         sb.AppendLine();
-        sb.AppendLine(issue.Description);
+        if (issue.IsAuthorVerified)
+        {
+            sb.AppendLine(issue.Description);
+        }
+        else
+        {
+            UnverifiedInputText.AppendDescriptionNotice(sb);
+            sb.AppendLine(AgentTextNormalizer.Normalize(issue.Description));
+        }
         sb.AppendLine();
 
         if (issue.Labels.Count > 0)
@@ -260,18 +270,8 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             sb.AppendLine();
         }
 
-        if (comments.Count > 0)
-        {
-            sb.AppendLine("## Comments");
-            sb.AppendLine();
-            foreach (var comment in comments)
-            {
-                sb.AppendLine($"### Comment by @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC)");
-                sb.AppendLine();
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
-        }
+        var hasUnverified = EpicContextComments.Append(
+            sb, comments, c => $"### Comment by @{c.Author} ({c.CreatedAt:yyyy-MM-dd HH:mm} UTC)", dividerBeforeComments: false);
 
         // Write to workspace
         var contextFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.IssueContextFilePath);
@@ -279,5 +279,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
 
         context.Logger.Information("Wrote epic context ({IssueId}, {CommentCount} comments) to {Path}",
             run.IssueIdentifier, comments.Count, AgentWorkspacePaths.IssueContextFilePath);
+        UnverifiedInputTelemetry.RecordIssueContext(Activity.Current, context.Logger, run.RunId, issue, comments);
+        return hasUnverified;
     }
 }
