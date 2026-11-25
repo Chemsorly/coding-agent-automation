@@ -65,6 +65,8 @@ public partial class RouteTable
         // An effort the new tool does not take would be refused on save; OpenCode has no effort at all (req 2.5).
         if (ToolOf(row.ProfileId) is { } tool && !AgentToolCatalog.AcceptsEffort(tool, row.Effort))
             row.Effort = AgentToolCatalog.Auto;
+        if (ToolOf(row.ProfileId) is { } lightTool && row.LightEffort.Length > 0 && !AgentToolCatalog.AcceptsEffort(lightTool, row.LightEffort))
+            row.LightEffort = "";
     }
 
     private void SetRoute(RouteRow row)
@@ -74,6 +76,8 @@ public partial class RouteTable
         row.ProfileId = inherited?.ProfileId ?? "";
         row.Model = inherited?.Model ?? AgentToolCatalog.Auto;
         row.Effort = inherited?.Effort ?? AgentToolCatalog.Auto;
+        row.LightModel = inherited?.LightModel ?? "";
+        row.LightEffort = inherited?.LightEffort ?? "";
     }
 
     private static void Inherit(RouteRow row) => row.UseRoute = false;
@@ -87,6 +91,8 @@ public partial class RouteTable
             row.ProfileId = source.ProfileId;
             row.Model = source.Model;
             row.Effort = source.Effort;
+            row.LightModel = source.LightModel;
+            row.LightEffort = source.LightEffort;
         }
     }
 
@@ -141,7 +147,13 @@ public sealed class RouteRow
 
     public string Effort { get; set; } = AgentToolCatalog.Auto;
 
-    public AgentRoute ToRoute() => new(ProfileId, Model.Trim(), Effort);
+    public string LightModel { get; set; } = "";
+
+    public string LightEffort { get; set; } = "";
+
+    public AgentRoute ToRoute() => new(ProfileId, Model.Trim(), Effort, BlankToNull(LightModel), BlankToNull(LightEffort));
+
+    private static string? BlankToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>The six rows of the global table: Default, then the task types in table order.</summary>
     public static List<RouteRow> ForRouting(AgentRouting routing)
@@ -185,5 +197,7 @@ public sealed class RouteRow
         ProfileId = route?.ProfileId ?? "",
         Model = route?.Model ?? AgentToolCatalog.Auto,
         Effort = route?.Effort ?? AgentToolCatalog.Auto,
+        LightModel = route?.LightModel ?? "",
+        LightEffort = route?.LightEffort ?? "",
     };
 }

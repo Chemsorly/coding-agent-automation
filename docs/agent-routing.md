@@ -48,6 +48,14 @@ its own route. A route is a profile, a model and an effort:
 Saving checks every row and refuses the table with one line per invalid row. A change applies to queued work at its
 next dispatch, and work waiting for a route starts once one resolves. Running work keeps its route.
 
+## Light Tier
+
+Each row can also name an optional light model and light effort. Warnings fixes, the pre-PR cleanup, PR descriptions and
+review summaries use them, because these stages need little judgement. Which levels fit depends on the model and the
+subscription, so nothing is set by default. An empty field uses the row's model or effort, and OpenCode has no light
+effort, as it has no effort. A repository row replaces the global row as a whole, light fields included. A resumed
+session never switches: these stages all start a fresh session.
+
 ## Repository Rows
 
 A repository (its pipeline job template) can set its own route per task type in the Binding card of its page. There is

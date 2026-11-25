@@ -24,6 +24,10 @@ public class RouteTableComponentTests : BunitContext
         ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Decomposition] = new(Claude.Id, "claude-opus-5-5", "max") },
     };
 
+    private const string LightModel = "claude-haiku-4-5";
+
+    private static readonly AgentRoute ClaudeWithLight = new(Claude.Id, "claude-opus-5-5", "high", LightModel, "low");
+
     private IRenderedComponent<RouteTable> RenderTable(IReadOnlyList<RouteRow> rows, AgentRouting? inherited = null, IReadOnlyList<string>? kiroModels = null) =>
         Render<RouteTable>(p => p
             .Add(s => s.Rows, rows)
@@ -152,5 +156,162 @@ public class RouteTableComponentTests : BunitContext
         RouteRow.ToRouting(RouteRow.ForRouting(Global)).Should().BeEquivalentTo(Global);
 
         RouteRow.ToRouting(RouteRow.ForRouting(new AgentRouting())).Default.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public void RouteRow_ToRoute_BlankLightFields_AreNull(string blank)
+    {
+        var route = new RouteRow { ProfileId = Claude.Id, LightModel = blank, LightEffort = blank }.ToRoute();
+
+        route.LightModel.Should().BeNull("a blank light model is unset");
+        route.LightEffort.Should().BeNull("a blank light effort is unset");
+        route.Should().Be(new AgentRoute(Claude.Id, "auto", "auto"));
+    }
+
+    [Fact]
+    public void RouteRow_ToRoute_TrimsTheLightModel_AndKeepsAnAutoLightEffort()
+    {
+        var route = new RouteRow { ProfileId = Claude.Id, LightModel = $"  {LightModel}  ", LightEffort = "auto" }.ToRoute();
+
+        route.LightModel.Should().Be(LightModel);
+        route.LightEffort.Should().Be("auto", "auto is a value of the light tier, not unset");
+    }
+
+    [Fact]
+    public void RouteRow_RoundTrip_KeepsLightFields()
+    {
+        var routing = new AgentRouting
+        {
+            Default = new AgentRoute(Kiro.Id, "auto", "high", LightModel, "medium"),
+            ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Decomposition] = ClaudeWithLight,
+                [WorkItemTaskType.Triage] = new(Claude.Id, "claude-opus-5-5", "max"),
+            },
+        };
+
+        var table = RouteRow.ToRouting(RouteRow.ForRouting(routing));
+        var repository = RouteRow.ToRepositoryRoutes(RouteRow.ForRepository(routing.ByTaskType));
+
+        table.Should().BeEquivalentTo(routing);
+        repository.Should().BeEquivalentTo(routing.ByTaskType);
+        table.Default!.Should().Be(new AgentRoute(Kiro.Id, "auto", "high", LightModel, "medium"));
+        repository[WorkItemTaskType.Triage].Should().Be(new AgentRoute(Claude.Id, "claude-opus-5-5", "max"), "an unset light tier stays null, not empty");
+    }
+
+    [Fact]
+    public void LightEffort_NotShown_ForAToolWithoutEfforts()
+    {
+        var routing = Global with
+        {
+            ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute>
+            {
+                [WorkItemTaskType.Decomposition] = ClaudeWithLight,
+                [WorkItemTaskType.Triage] = new(OpenCode.Id, "auto", "auto"),
+            },
+        };
+        var cut = RenderTable(RouteRow.ForRouting(routing));
+
+        cut.FindAll("[data-testid='route-light-effort-triage']").Should().BeEmpty("OpenCode has no effort, so no light effort");
+        cut.Find("[data-testid='route-light-model-triage']").GetAttribute("list").Should().Be("route-models-triage", "the light model reuses the row's model list");
+        cut.FindAll("[data-testid='route-light-effort-default'] option").Select(o => o.GetAttribute("value"))
+            .Should().Equal("", "auto", "low", "medium", "high", "max");
+        cut.FindAll("[data-testid='route-light-effort-decomposition'] option").Select(o => o.GetAttribute("value"))
+            .Should().Equal("", "auto", "low", "medium", "high", "xhigh", "max");
+        cut.FindAll("[data-testid='route-light-hint']").Should().ContainSingle();
+    }
+
+    public static TheoryData<string, string, string> LightEffortsOnAProfileChange() => new()
+    {
+        { "xhigh", Kiro.Id, "" },
+        { "low", Kiro.Id, "low" },
+        { "auto", Kiro.Id, "auto" },
+        { "", Kiro.Id, "" },
+        { "low", OpenCode.Id, "" },
+    };
+
+    [Theory]
+    [MemberData(nameof(LightEffortsOnAProfileChange))]
+    public void ProfileChange_ClearsALightEffortTheToolDoesNotTake(string lightEffort, string newProfileId, string expected)
+    {
+        var rows = RouteRow.ForRouting(Global);
+        rows[3].LightModel = LightModel;
+        var cut = RenderTable(rows);
+
+        cut.Find("[data-testid='route-light-effort-decomposition']").Change(lightEffort);
+        rows[3].LightEffort.Should().Be(lightEffort);
+        cut.Find("[data-testid='route-profile-decomposition']").Change(newProfileId);
+
+        rows[3].LightEffort.Should().Be(expected);
+        rows[3].LightModel.Should().Be(LightModel, "a model does not depend on the tool's efforts");
+    }
+
+    [Fact]
+    public void UseForAll_CopiesLightFields()
+    {
+        var rows = RouteRow.ForRepository(new Dictionary<WorkItemTaskType, AgentRoute>
+        {
+            [WorkItemTaskType.Review] = new(Claude.Id, "claude-opus-5-5", "high"),
+            [WorkItemTaskType.Triage] = new(Kiro.Id, "auto", "low", "claude-sonnet-4", "max"),
+        });
+        var cut = RenderTable(rows, Global);
+        cut.Find("[data-testid='route-light-model-review']").Change($"  {LightModel} ");
+        cut.Find("[data-testid='route-light-effort-review']").Change("low");
+
+        cut.Find("[data-testid='route-use-for-all-review']").Click();
+
+        RouteRow.ToRepositoryRoutes(rows).Should().HaveCount(5).And.AllSatisfy(r => r.Value.Should().Be(new AgentRoute(Claude.Id, "claude-opus-5-5", "high", LightModel, "low")));
+
+        cut.Find("[data-testid='route-light-model-review']").Change("");
+        cut.Find("[data-testid='route-light-effort-review']").Change("");
+        cut.Find("[data-testid='route-use-for-all-review']").Click();
+
+        RouteRow.ToRepositoryRoutes(rows).Should().HaveCount(5).And.AllSatisfy(r => r.Value.Should().Be(new AgentRoute(Claude.Id, "claude-opus-5-5", "high")));
+    }
+
+    [Fact]
+    public void SetRoute_CopiesTheInheritedLightFields()
+    {
+        var inherited = Global with { ByTaskType = new Dictionary<WorkItemTaskType, AgentRoute> { [WorkItemTaskType.Decomposition] = ClaudeWithLight } };
+        var rows = RouteRow.ForRepository(null);
+        var cut = RenderTable(rows, inherited);
+
+        cut.Find("[data-testid='route-set-decomposition']").Click();
+
+        rows[2].Should().BeEquivalentTo(new { UseRoute = true, ProfileId = Claude.Id, LightModel, LightEffort = "low" });
+        cut.Find("[data-testid='route-light-model-decomposition']").GetAttribute("value").Should().Be(LightModel);
+        cut.Find("[data-testid='route-light-effort-decomposition']").GetAttribute("value").Should().Be("low");
+    }
+
+    [Fact]
+    public void SetRoute_ReplacesTheLightFieldsARowHeldBefore_WhenTheInheritedRouteHasNone()
+    {
+        var rows = RouteRow.ForRepository(null);
+        var cut = RenderTable(rows, Global);
+        cut.Find("[data-testid='route-set-implementation']").Click();
+        cut.Find("[data-testid='route-light-model-implementation']").Change(LightModel);
+        cut.Find("[data-testid='route-light-effort-implementation']").Change("low");
+        rows[0].Should().BeEquivalentTo(new { LightModel, LightEffort = "low" });
+        cut.Find("[data-testid='route-inherit-button-implementation']").Click();
+
+        cut.Find("[data-testid='route-set-implementation']").Click();
+
+        rows[0].Should().BeEquivalentTo(new { UseRoute = true, ProfileId = Kiro.Id, LightModel = "", LightEffort = "" });
+        cut.Find("[data-testid='route-light-model-implementation']").GetAttribute("value").Should().BeNullOrEmpty();
+        cut.Find("[data-testid='route-light-effort-implementation']").GetAttribute("value").Should().BeNullOrEmpty();
+    }
+
+    [Fact]
+    public void SetRoute_OnTheRoutingPage_CopiesTheDefaultRowsLightFields()
+    {
+        var rows = RouteRow.ForRouting(new AgentRouting { Default = new AgentRoute(Kiro.Id, "auto", "high", LightModel, "low") });
+        var cut = RenderTable(rows);
+
+        cut.Find("[data-testid='route-set-review']").Click();
+
+        rows[2].Should().BeEquivalentTo(new { UseRoute = true, ProfileId = Kiro.Id, LightModel, LightEffort = "low" });
     }
 }

@@ -601,6 +601,7 @@
 .cockpit .route-table input[type="text"]:focus { border-color: var(--accent); }
 .cockpit .route-table td.route-actions { white-space: normal; text-align: right; }
 .cockpit .route-table .route-actions button { white-space: nowrap; margin: 2px 0 2px 6px; }
+.cockpit .route-table .route-light { margin-top: 6px; }
 
 /* A table's first column lines up with its card title and its rows run edge to edge, in either card type:
    in a .cockpit-card the outer cells take the header's 18px (the 10px cell padding left the text 8px left of
