@@ -30,14 +30,6 @@
 
         <RouteTable Rows="_rows" Profiles="_page.Profiles" KiroModels="_kiroModels" />
 
-        @if (!string.IsNullOrEmpty(_saveError))
-        {
-            <div class="settings-status status-error" data-testid="routing-save-error" style="white-space: pre-line;">@_saveError</div>
-        }
-        <div class="form-buttons">
-            <button class="btn-save" data-testid="routing-save" @onclick="SaveAsync" disabled="@_saving">Save</button>
-        </div>
-
         <h3>Kiro models</h3>
         <div class="form-group">
             <div class="input-with-action">
@@ -61,6 +53,13 @@
             <label>Fetch Models Timeout (seconds)</label>
             <input type="number" @bind="_modelFetchTimeoutSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" />
             <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s. Saved with the routing.</span>
+        </div>
+        @if (!string.IsNullOrEmpty(_saveError))
+        {
+            <div class="settings-status status-error" data-testid="routing-save-error" style="white-space: pre-line;">@_saveError</div>
+        }
+        <div class="form-buttons">
+            <button class="btn-save" data-testid="routing-save" @onclick="SaveAsync" disabled="@_saving">Save</button>
         </div>
     }
 </section>
