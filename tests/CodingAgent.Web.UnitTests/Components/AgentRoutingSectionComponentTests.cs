@@ -83,6 +83,38 @@ public class AgentRoutingSectionComponentTests : BunitContext
             .Be("Decomposition: model is required (auto lets the tool choose)\nTriage: OpenCode has no effort setting; use auto");
     }
 
+    private const string SectionLandmarks =
+        "[data-testid='route-table'], h3, [data-testid='routing-fetch-models'], [data-setting='ModelFetchTimeoutSeconds'], "
+        + "[data-testid='routing-save-error'], [data-testid='routing-save']";
+
+    // The landmarks of the section in document order; querying one selector list returns them in that order.
+    private static IReadOnlyList<string> LandmarkNames(IRenderedComponent<AgentRoutingSection> cut) =>
+        cut.FindAll(SectionLandmarks)
+            .Select(e => e.GetAttribute("data-testid") ?? e.GetAttribute("data-setting") ?? e.LocalName)
+            .ToList();
+
+    [Fact]
+    public void TheSaveButton_FollowsTheFetchTimeoutItSaves()
+    {
+        var cut = RenderSection();
+
+        LandmarkNames(cut).Should().Equal(
+            "route-table", "h3", "routing-fetch-models", "ModelFetchTimeoutSeconds", "routing-save");
+    }
+
+    [Fact]
+    public void ARefusedSave_ShowsItsErrorBelowTheFetchTimeoutAndAboveSave()
+    {
+        _settings.Setup(s => s.SaveAgentRoutingAsync(It.IsAny<AgentRouting>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Triage: OpenCode has no effort setting; use auto"));
+        var cut = RenderSection();
+
+        cut.Find("[data-testid='routing-save']").Click();
+
+        LandmarkNames(cut).Should().Equal(
+            "route-table", "h3", "routing-fetch-models", "ModelFetchTimeoutSeconds", "routing-save-error", "routing-save");
+    }
+
     [Fact]
     public void TheFetchTimeout_IsSavedWithTheRouting_WhenItChanged()
     {
