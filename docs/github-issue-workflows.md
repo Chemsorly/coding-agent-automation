@@ -8,23 +8,25 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for the internal s
 
 The pipeline uses these `agent:*` labels (created automatically on first run):
 
-| Label | Color | Meaning |
-|-------|-------|---------|
-| `agent:next` | 🟢 Green | Issue is queued for the pipeline to pick up |
-| `agent:in-progress` | 🔵 Blue | Pipeline is actively working on this issue |
-| `agent:error` | 🔴 Red | Pipeline failed (build errors, timeout, etc.) |
-| `agent:needs-refinement` | 🟡 Yellow | Confidence gate rejected — issue needs more detail |
-| `agent:wont-do` | ⚪ Gray | Agent determined no code changes are needed |
-| `agent:done` | 🔵 Blue | Pipeline completed, PR awaiting review |
-| `agent:cancelled` | 🟣 Light blue | Pipeline run was cancelled by user |
-| `agent:epic` | 🟣 Purple | Epic queued for decomposition analysis |
-| `agent:epic-review` | 🟡 Yellow | Decomposition plan posted, awaiting human approval |
-| `agent:epic-approved` | 🟢 Green | Plan approved, queued for sub-issue creation |
-| `agent:triage` | 🔵 Teal | Problem report queued for a triage run |
-| `agent:triage-review` | 🟡 Yellow | Root cause analysis posted; the issue drafts wait for review in the app |
-| `agent:generated` | 🔵 Light blue | Issue was created by the pipeline (a decomposition sub-issue or a refactoring issue); stays on the issue next to its status label |
+| Label | Color | Meaning | Terminal? |
+|-------|-------|---------|-----------|
+| `agent:next` | 🟢 Green | Issue is queued for the pipeline to pick up | No |
+| `agent:in-progress` | 🔵 Blue | Pipeline is actively working on this issue | No |
+| `agent:error` | 🔴 Red | Pipeline failed (build errors, timeout, etc.) | Yes |
+| `agent:needs-refinement` | 🟡 Yellow | Confidence gate rejected — issue needs more detail | Yes |
+| `agent:wont-do` | ⚪ Gray | Agent determined no code changes are needed | Yes |
+| `agent:done` | 🔵 Blue | Pipeline completed, PR awaiting review | Yes |
+| `agent:cancelled` | 🟣 Light blue | Pipeline run was cancelled by user | Yes |
+| `agent:epic` | 🟣 Purple | Epic queued for decomposition analysis | No |
+| `agent:epic-review` | 🟡 Yellow | Decomposition plan posted, awaiting human approval | Yes |
+| `agent:epic-approved` | 🟢 Green | Plan approved, queued for sub-issue creation | No |
+| `agent:triage` | 🔵 Teal | Problem report queued for a triage run | No |
+| `agent:triage-review` | 🟡 Yellow | Root cause analysis posted; the issue drafts wait for review in the app | Yes |
+| `agent:generated` | 🔵 Light blue | Issue was created by the pipeline (a decomposition sub-issue, a refactoring issue or an issue created from a triage draft); stays on the issue next to its status label | No |
 
 Only one status label (every `agent:*` label except `agent:generated`) should be present on an issue at a time, except during the brief swap window; `agent:generated` stays next to it. The pipeline swaps labels by first adding the new label, then removing the other status labels. This add-first ordering ensures the issue is never left without a status label if the operation is interrupted mid-swap. During the brief swap window, two status labels may coexist on the issue.
+
+**Terminal labels** (`agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, `agent:cancelled`, `agent:epic-review`, `agent:triage-review`) mark states that require human action to re-queue. Remove the terminal label and add `agent:next` to retry; for `agent:epic-review`, add `agent:epic-approved` to approve the plan or `agent:epic` to request a new one; for `agent:triage-review`, re-run or dismiss from the Triage page, or replace the label with `agent:triage` for another attempt. `agent:needs-refinement` specifically indicates the issue body needs more detail — review the analysis confidence output before re-queuing.
 
 ## Flow 1: Happy Path
 
@@ -122,7 +124,7 @@ See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-ep
 6. **User** reviews the RCA and the issue drafts on the app's Triage page, edits drafts, and creates the ones they want — or dismisses the triage, or asks for another attempt
 7. **App** creates the issues, posts a summary comment and swaps the label to `agent:done` (dismissed: a short comment and `agent:wont-do`)
 
-To ask for another attempt from the tracker, post a comment and replace `agent:triage-review` with `agent:triage`; the next attempt reads the newest 50 comments. A failed dispatch returns the issue to `agent:triage`. Operators can also start a triage without an issue on the Triage page. See [Triage](triage.md).
+To ask for another attempt from the tracker, post a comment and replace `agent:triage-review` with `agent:triage`; the next attempt reads the newest 50 comments by verified authors and the newest 50 by other authors. A failed dispatch returns the issue to `agent:triage`. Operators can also start a triage without an issue on the Triage page. See [Triage](triage.md).
 
 ## Verified authors
 
@@ -164,4 +166,4 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 - Configurable poll interval, max runs per cycle, and backoff on failures
 - When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition
 - When a project has an `EpicIssueProviderId` configured, the loop also polls that provider for epics and queues them with the project's first decomposition-enabled template, oldest first, in the same round-robin (see [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics))
-- When `TriageEnabled` is true on a template, the loop also polls its tracker for `agent:triage` issues; a project's epic tracker is polled for them too, run by the project's first triage-enabled template. Triage is dispatched before all other work types (highest dispatch priority: before Review, Decomposition, and Implementation), with no concurrency cap of its own; triage runs count toward the job template and all-agents limits (see [Triage](triage.md))
+- When `TriageEnabled` is true on a template, the loop also polls its tracker for `agent:triage` issues; a project's epic tracker is polled for them too, run by the project's first triage-enabled template. By default, triage is dispatched before all other work types (before Review, Decomposition, and Implementation; the order is the `dispatchOrder` setting, see [Pipeline Orchestration — Dispatch Priority](pipeline-orchestration.md#dispatch-priority)), with no concurrency cap of its own; triage runs count toward the job template and all-agents limits (see [Triage](triage.md))
