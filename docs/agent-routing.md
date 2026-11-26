@@ -117,10 +117,11 @@ Every profile uses one agent credential, derived from its job template's tool an
 
 A credential is **paused** when an agent reports that its quota is used up or its login was rejected (the pause lasts
 until the reset time the provider names, or until resumed), or when an operator pauses it. The run that hit the limit
-ends, its issue goes back to its queue label, and the same work is queued again as a new work item that waits for the
-credential; no draft PR is opened. While the credential is paused, work routed to it waits, chats on it are refused,
-and work on other credentials runs as before. There is no automatic fallback to another tool: to move the work, change
-the routing.
+ends, its issue goes back to its queue label (`agent:next` for implementation and review, `agent:epic` or
+`agent:epic-approved` for the two decomposition phases, `agent:triage` for a triage; a consolidation has no label), and
+the same work is queued again as a new work item that waits for the credential; no draft PR is opened. While the
+credential is paused, work routed to it waits, chats on it are refused, and work on other credentials runs as before.
+There is no automatic fallback to another tool: to move the work, change the routing.
 
 Work and Fleet show a banner per paused credential: what is paused, why, since and until when, and how much work
 waits. Global operators resume a credential or pause it until a time (with a note) from the banner, from the
@@ -211,25 +212,9 @@ Stack labels are set per repository, so a project cannot choose which of these r
 
 ## Agent Lifecycle Labels
 
-The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pipeline state. Only one status label (every `agent:*` label except `agent:generated`) should be present on an issue at a time; `agent:generated` stays next to it. These labels are managed by the pipeline — setting them manually can interfere with dispatch logic.
+The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pipeline state. These labels are managed by the pipeline — setting them manually can interfere with dispatch logic.
 
-| Label | Description | Terminal? |
-|-------|-------------|-----------|
-| `agent:next` | Issue is queued for the pipeline (dispatch trigger) | No |
-| `agent:in-progress` | Pipeline is actively working on this issue | No |
-| `agent:done` | Pipeline completed successfully (PR created or review posted) | Yes |
-| `agent:error` | Pipeline failed with an unrecoverable error | Yes |
-| `agent:needs-refinement` | Analysis confidence gate rejected the issue — needs clearer requirements before dispatch | Yes |
-| `agent:wont-do` | Issue explicitly marked out of scope for automation | Yes |
-| `agent:cancelled` | Run was cancelled by a user or system event | Yes |
-| `agent:epic` | Issue is an epic awaiting decomposition | No |
-| `agent:epic-review` | Decomposition plan is posted and awaiting human review | Yes |
-| `agent:epic-approved` | Human approved the decomposition plan (required before sub-issues are created) | No |
-| `agent:triage` | Problem report queued for a triage run (label triage) | No |
-| `agent:triage-review` | Root cause analysis posted; the issue drafts wait for review in the app | Yes |
-| `agent:generated` | Issue was created by the pipeline (a decomposition sub-issue or a refactoring issue from a consolidation run); not a status label, so label swaps keep it | No |
-
-**Terminal labels** (`agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, `agent:cancelled`, `agent:epic-review`, `agent:triage-review`) mark states that require human action to re-queue. Remove the terminal label and add `agent:next` to retry; for `agent:epic-review`, add `agent:epic-approved` to approve the plan or `agent:epic` to request a new one; for `agent:triage-review`, re-run or dismiss from the Triage page, or replace the label with `agent:triage` for another attempt. `agent:needs-refinement` specifically indicates the issue body needs more detail — review the analysis confidence output before re-queuing.
+The pipeline's `agent:*` labels, which of them are terminal and how to re-queue each are listed in [Issue Workflows — Labels](github-issue-workflows.md#labels).
 
 **`agent:epic-approved`** is a gated label: agents may not set it via `RequestLabelChange`. Only humans can approve decomposition.
 
