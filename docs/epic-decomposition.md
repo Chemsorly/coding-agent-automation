@@ -24,7 +24,7 @@ Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync → Downl
 
 > **Agent:** Both phases (the `DecompositionAnalysis` and the `Decomposition` run) run on the Decomposition route of the template they run with: its repository's Decomposition row, else the global Decomposition row, else the default route (see [Agent Routing](agent-routing.md)). Each phase is routed when it is queued, so a routing change between the phases applies to phase 2.
 
-> **Context for the agent:** Both phases download existing issues for deduplication context. In addition to open issues (up to `MaxOpenIssuesForContext`), decomposition runs also include recently-closed sibling issues (up to ~25% of the context budget, lookback 30 days). This helps the agent avoid creating sub-issues that duplicate recently completed work.
+> **Context for the agent:** Both phases download existing issues for deduplication context, up to `MaxOpenIssuesForContext` in all. Decomposition runs give about a quarter of that budget to issues closed in the last 30 days and the rest to open issues. This helps the agent avoid creating sub-issues that duplicate recently completed work.
 
 ## Epic Scope: Repo Epics and Project Epics
 
@@ -56,6 +56,8 @@ See [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decompo
 | `agent:epic` | Phase 1 dispatched | `agent:in-progress` |
 | `agent:in-progress` | Phase 1 success | `agent:epic-review` |
 | `agent:in-progress` | Phase 1/2 failure | `agent:error` |
+| `agent:in-progress` | Phase 1 ended by a paused credential | `agent:epic` (queued again) |
+| `agent:in-progress` | Phase 2 ended by a paused credential | `agent:epic-approved` (queued again) |
 | `agent:epic-review` | User approves | `agent:epic-approved` |
 | `agent:epic-review` | User requests re-analysis | `agent:epic` |
 | `agent:epic-approved` | Phase 2 dispatched | `agent:in-progress` |
