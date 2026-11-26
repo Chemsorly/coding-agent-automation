@@ -4,7 +4,7 @@
 
 After every pipeline run, the agent provides structured feedback about what went well and what didn't. This feedback is grounded in external signals (compiler errors, test failures, retry history) rather than pure introspection.
 
-See also: [Pipeline Orchestration](pipeline-orchestration.md) for where feedback collection fits in the pipeline flow (ReflectingOnRun step).
+See also: [Pipeline Orchestration](pipeline-orchestration.md) for where feedback collection fits in the pipeline flow (after the ReflectingOnRun and SyncingBrainRepoPostRun steps; it has no step of its own).
 
 ### How It Works
 
@@ -34,20 +34,13 @@ Two maintenance loops that review accumulated state and produce improvements. Ea
 
 ### Brain Consolidation (per brain)
 
-Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge repository. Several repositories usually feed one brain, so brain consolidation works on the brain, not on a template:
+Dispatches an agent to review the brain knowledge repository. Several repositories usually feed one brain, so brain consolidation works on the brain, not on a template:
 
 - **Trigger:** from the card of any template that uses the brain. The run uses that template's settings (its project's overrides) and its Consolidation route (see [Consolidation Dispatch](#consolidation-dispatch)).
 - **One run per brain at a time:** templates that share a brain share its running state and its last run on the Consolidation page, and a second trigger for the same brain is rejected as already running.
 - **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain. For GitHub App brain providers, runs get a read-only token (`contents: read`) when the brain is read-only, so a misbehaving agent cannot push to it even if it tries.
 
-It runs a six-step process:
-
-1. **Orient** — Scan all files, build inventory
-2. **Gather Signal** — Identify drift, duplicates, contradictions
-3. **Research & Verify** — Check if referenced tools/libraries/versions are still current, validate external links, update outdated information
-4. **Consolidate** — Merge duplicates, resolve contradictions, convert relative dates to absolute
-5. **Prune** — Remove stale entries, clean up empty files
-6. **Generate Project SKILL.md** — Regenerate, from scratch, a `SKILL.md` of about 1500 words for each project folder under `.brain/projects/`, as the distilled context agents get for that project
+It runs the brain review (see [Brain consolidation v2 review prompt](#brain-consolidation-v2-review-prompt)): the agent reads `.agent/brain-review-input.md`, which lists the recent inbox files and the current skill files, promotes causes that recur across runs or repositories into the skill files (`projects/<repository>/SKILL.md`, `technology/<label>/SKILL.md`, `general/SKILL.md`), and writes `.agent/brain-review-summary.json`.
 
 After the agent produces changes, an **adversarial review** pass evaluates the diff summary (`.agent/brain-consolidation-diff.md`). The discriminator checks for incorrectly removed entries, bad merges, contradictions, and inaccurate factual updates. If CRITICAL or WARNING findings are found, a refinement pass revises the `.brain/` files.
 
@@ -76,8 +69,8 @@ The finding categories are one list from detection to issue (`RefactoringCategor
 **Execution flow (phased):**
 
 1. Clone code repo (+ brain repo for architectural context if configured)
-2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days). Pipeline scratch space (`.agent/`, `.brain/`), Markdown files, lock files and deleted files are left out. Commits that implement the scan's own issues are left out too, so a scan does not rank the files it just refactored.
-3. Query the open issues (up to 100, any label or age) for deduplication context. The scan's own issues are recognized by the footer sentence every one of them carries, not by a label.
+2. Query the open issues (up to 100, any label or age) for deduplication context. The scan's own issues are recognized by the footer sentence every one of them carries, not by a label.
+3. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days). Pipeline scratch space (`.agent/`, `.brain/`), Markdown files, lock files and deleted files are left out. Commits that implement the scan's own issues (open, from step 2, and closed within the window) are left out too, so a scan does not rank the files it just refactored.
 4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`). The query uses `agent:generated`; the footer keeps decomposition sub-issues, which carry the same label, out. `agent:done` only means an agent completed the issue, so implemented items are not re-proposed rather than encouraged. For each of these issues, the latest issue-quality feedback comment (`<!-- agent:issue-feedback -->`) that the implementing agent posted is added as "Implementer Feedback", e.g. "partial scope: the outer catch was missed". Both contexts are also written to `.agent/refactoring-issue-context.md` for the review step.
 5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells. Inline TODO comments are not known debt: Agent B checks each of them. Phase 0 also prepares the tool evidence: it checks its available MCP tools for additional data sources, runs the project's own build, lint and analysis commands once (saving the output in `.agent/refactoring-tool-output/`), runs the tests once with code coverage when the project has tests (stopped after 20 minutes), and lists all of them under `availableTools`. Consolidation runs get the MCP servers of their agent profile and project, like pipeline runs; no particular tool or service is required.
 6. **Phase 1: Parallel Focused Detection** — Four sub-agents run concurrently. They use the tool output and MCP tools Phase 0 found, and do not run builds themselves, since they share the workspace. Each writes its `findings` and the areas it did not check (`notChecked`). A focused scan runs only the agent of its focus.
@@ -85,18 +78,19 @@ The finding categories are one list from detection to issue (`RefactoringCategor
    - **Agent B (Correctness & Hygiene)** — TODOs/FIXMEs, dead code, obvious bugs, stale documentation
    - **Agent C (Design Consistency)** — Naming inconsistencies, primitive obsession
    - **Agent D (Test Gaps)** — Production code no test checks, proven by the coverage report or by a search that finds no test referencing it
-7. **Phase 2: Aggregation** — Synthesizes findings from all four agents: deduplicates, filters against project conventions, applies a per-category evidence gate (a hotspot rank is never evidence), ranks bugs first and the rest by hotspot frequency × evidence strength × scope feasibility, keeps at most one proposal per primary file, and produces final ranked proposals (capped at `MaxRefactoringProposals`) in `.agent/refactoring-proposals.json`, or `[]` when every finding was dropped. The analysis log goes to `.agent/refactoring-analysis.md`.
-8. **Adversarial review** (if `RefactoringReviewEnabled`) — Evaluates proposals for non-existent file paths, unsupported or unquoted evidence, incomplete scope (instances of the pattern the proposal misses), bugs without a reproduction, overlap with existing issues, scope exceeding single-agent capacity (>30 files), and bundled concerns. If CRITICAL/WARNING found, refinement re-generates proposals.
-9. **Validation** — Deterministic checks drop a proposal that names a file in `.agent/`, `.brain/` or `.git/`, names no file that exists, names more than 30 files, has an unknown category or an empty title, or has the title of an open issue, a recently closed one, or an earlier proposal of the batch. Dropped proposals are logged and counted in the run summary.
-10. Create GitHub issues (capped at `MaxRefactoringProposals`)
+7. **Phase 2a: Scoring** — One scoring agent per Phase 1 agent of the focus runs in parallel and condenses that agent's findings into compact candidates in `.agent/refactoring-phase2a-<area>.json` (output prefixed `[2a-A] `, `[2a-B] `, `[2a-C] `; the test-gaps scorer has no prefix). If every scoring agent fails, the run fails.
+8. **Phase 2b: Aggregation** — Synthesizes the candidates: deduplicates, filters against project conventions, applies a per-category evidence gate (a hotspot rank is never evidence), ranks bugs first and the rest by hotspot frequency × evidence strength × scope feasibility, keeps at most one proposal per primary file, and produces final ranked proposals (capped at `MaxRefactoringProposals`) in `.agent/refactoring-proposals.json`, or `[]` when every finding was dropped. The analysis log goes to `.agent/refactoring-analysis.md`.
+9. **Adversarial review** (if `RefactoringReviewEnabled`) — Evaluates proposals for non-existent file paths, unsupported or unquoted evidence, incomplete scope (instances of the pattern the proposal misses), bugs without a reproduction, overlap with existing issues, scope exceeding single-agent capacity (>30 files), and bundled concerns. If CRITICAL/WARNING found, refinement re-generates proposals.
+10. **Validation** — Deterministic checks drop a proposal that names a file in `.agent/`, `.brain/` or `.git/`, names no file that exists, names more than 30 files, has an unknown category or an empty title, or has the title of an open issue, a recently closed one, or an earlier proposal of the batch. Dropped proposals are logged and counted in the run summary.
+11. Create GitHub issues (capped at `MaxRefactoringProposals`)
 
-**Partial failure handling:** If some Phase 1 agents fail but at least one succeeds, the pipeline continues with partial results. If ALL Phase 1 agents fail, the run fails. If Phase 2 exits successfully without writing a proposals file, the aggregation runs once more with the same prompt; if that also writes no file, the run fails with "The aggregation step wrote no refactoring-proposals.json"; an empty array ends it as succeeded with "No refactoring opportunities identified".
+**Partial failure handling:** If some Phase 1 agents fail but at least one succeeds, the pipeline continues with partial results. If ALL Phase 1 agents fail, the run fails. The same applies to the Phase 2a scoring agents: the run continues while at least one succeeds and fails when all fail. If Phase 2b exits successfully without writing a proposals file, the aggregation runs once more with the same prompt; if that also writes no file, the run fails with "The aggregation step wrote no refactoring-proposals.json"; an empty array ends it as succeeded with "No refactoring opportunities identified".
 
 Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversarial review step. `MaxRefactoringProposals` (default: 3, per-project overridable) caps both the prompt instruction and issue creation count. `HotspotAnalysisLookback` (default: 90 days) controls the git history window for hotspot analysis. `RefactoringOutcomeLookback` (default: 90 days) controls the window for querying past proposal outcomes.
 
 ### Consolidation Dispatch
 
-Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the lowest-priority tier (5th, after Triage, Review, Decomposition, and Implementation). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
+Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the Consolidation tier of the `dispatchOrder` setting, which is the last tier by default (see [Pipeline Orchestration — Dispatch Priority](pipeline-orchestration.md#dispatch-priority)). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
 
 - **Agent:** Both consolidation types run on the Consolidation route of the template that triggered the run (its repository's Consolidation row, else the global Consolidation row, else the default route); automatic brain consolidation uses the first template of the brain group. A trigger without a template uses the global rows only. When no route resolves or the route cannot run now (its credential is paused, for example), the run is still queued and waits; the trigger's message says why (spec 056). See [Agent Routing](agent-routing.md).
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
@@ -139,7 +133,7 @@ Consolidation runs report their steps and stream their agent output the same way
 **Brain consolidation steps** (in order):
 
 1. `CloningRepository` — brain repo cloned into the run workspace
-2. `ConsolidatingKnowledge` — agent executes the six-phase consolidation prompt (Orient, Gather Signal, Research & Verify, Consolidate, Prune, Generate Project SKILL.md)
+2. `ConsolidatingKnowledge` — the agent runs the brain review prompt: it reads `.agent/brain-review-input.md`, edits the skill files and writes `.agent/brain-review-summary.json`
 3. `ReviewingBrainChanges` — diff summary generated; adversarial review executed (if enabled)
 4. `PushingBrainChanges` — changes committed and pushed to the brain repo
 
@@ -147,21 +141,18 @@ Consolidation runs report their steps and stream their agent output the same way
 
 1. `CloningRepository` — code repo (and optionally brain repo) cloned
 2. `AnalyzingHotspots` — git log analysed for frequently-changed files
-3. `ReadingIssueContext` — open and past-outcome issues queried for deduplication context
+3. `ReadingIssueContext` — past-outcome issues queried (the open issues were read before the hotspot analysis)
 4. `ExtractingConventions` — Phase 0 agent extracts project conventions and coverage data
 5. `DetectingFindings` — Phase 1 agents run in parallel (1–4 agents depending on focus)
-6. `AggregatingProposals` — Phase 2 agent aggregates and prioritises findings
+6. `AggregatingProposals` — Phase 2a scoring agents and the Phase 2b aggregation agent rank and prioritise findings
 7. `ReviewingProposals` — adversarial review validates proposals (if enabled and proposals non-empty)
 8. `CreatingRefactoringIssues` — validated proposals are created as GitHub issues
 
-The four Phase 1 detection agents produce prefixed output: `[A] ` (Structural Debt), `[B] ` (Correctness & Hygiene), `[C] ` (Design Consistency). The test-gaps agent (Agent D, focus `All` or `Tests`) produces output without a letter prefix. When a run has no proposals after Phase 2, steps 7 and 8 are skipped.
+The four Phase 1 detection agents produce prefixed output: `[A] ` (Structural Debt), `[B] ` (Correctness & Hygiene), `[C] ` (Design Consistency). The test-gaps agent (Agent D, focus `All` or `Tests`) produces output without a letter prefix. When a run has no proposals after Phase 2b, steps 7 and 8 are skipped.
 
 ### Retention
 
-Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
-
-- **PipelineRun records:** Consolidation runs are recorded as `PipelineRuns` when they are dispatched (`PipelineRunFactory.CreateFromWorkItem`) and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps. The last successful run of a scope is read from these records, so what is pruned no longer counts.
-- **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).
+Consolidation runs and their work items are pruned by the same retention sweep as every other run (see [Configuration — Database Maintenance](configuration.md#database-maintenance)). The last successful run of a scope is read from the run records, so what is pruned no longer counts.
 
 ## Brain Knowledge Base v2 (spec 054)
 
@@ -177,7 +168,7 @@ After enough runs have contributed inbox files, a brain review (brain consolidat
 
 ### Skills injection
 
-Before each run starts, `SyncBrainPreRunStep` clones the brain and reads up to three skill files (general + technology matching stack labels + repository-specific). The assembled text is written to the agent's steering directory (`pipeline-brain.md`) via `WriteBrainSkillsStep`, so the agent sees it as part of its always-on instructions without any extra prompt construction.
+Before each run starts, `SyncBrainPreRunStep` clones the brain and reads the repository's skill file, one technology skill file per stack label and the general skill file, up to 16 KB in all. The assembled text is written to the agent's steering directory (`pipeline-brain.md`) via `WriteBrainSkillsStep`, so the agent sees it as part of its always-on instructions without any extra prompt construction.
 
 ### Brain consolidation v2 review prompt
 
@@ -185,6 +176,4 @@ The review agent reads `.agent/brain-review-input.md` (which lists up to 100 rec
 
 ### Observability
 
-- `pipeline_run_brain_updates_total{result=pushed|failed|skipped}` — incremented per non-consolidation run.
-- `pipeline.brain.skills_result`, `pipeline.brain.skills_bytes`, `pipeline.brain.stack_labels` — span tags on the `SyncBrainPreRun` span.
-- `pipeline.brain.inbox_bytes`, `pipeline.brain.evidence_attempts`, `pipeline.brain.push_result` — span tags on the `BrainSyncPostRun` span.
+Brain v2 metrics (`pipeline.run.brain_updates`, `pipeline.run.brain_skills`, `pipeline.brain.review.*`) and the brain span tags on `SyncBrainPreRun`, `Reflection` and `BrainSyncPostRun` are listed in [Observability](observability.md#metrics).
