@@ -9,8 +9,12 @@ The harness runs the deployed topology inside the test process. `E2EFixture` sta
 (`ApiE2EWebApplicationFactory`), the Scheduler (`SchedulerE2EWebApplicationFactory`) and the Blazor app
 (`E2EWebApplicationFactory`, the only monolith factory) on real Kestrel ports. `FakeJobController` stands
 in for dispatch, and `JobControllerE2EWebApplicationFactory` hosts the real Job Controller for
-reconciliation tests. External dependencies, including the Kubernetes Job API, are in-memory fakes. All
-test classes share the fixture through `E2ECollection`, and every test resets it first.
+reconciliation tests. External dependencies, including the Kubernetes Job API, are in-memory fakes. Most
+test classes share the fixture through `E2ECollection`, and every test resets it first. Multi-replica
+tests use `MultiReplicaE2ECollection`, the real settings handler tests use `RealSettingsE2ECollection`,
+and the System tier (`Infrastructure/SystemTier/`, trait `Category=System`) runs the Pipeline API
+against real Postgres and Redis containers through Testcontainers; it needs Docker and is skipped
+without it.
 
 ## Running tests
 
@@ -77,8 +81,11 @@ The `--ipc=host` flag is required for Chromium shared-memory stability.
 The workflow (`.github/workflows/e2e-tests.yml`) runs on `push` to `main` and on all pull requests.
 It splits the suite across three matrix jobs, `e2e (shard N/3)`: the sorted list of E2E test
 methods is dealt round-robin, so each shard runs about a third of the browser and the headless
-tests. A gate job named `e2e` passes only when every shard passes. To find a failed test, open the
-failed shard's log; the `e2e` job only reports that a shard failed.
+tests. A gate job named `e2e` passes only when every shard passes. A separate job, `e2e-system`,
+runs the System tier (`Category=System`) directly on the runner with Docker and
+`E2E_REQUIRE_DOCKER=true`, so a missing Docker fails instead of skipping; it fails when it discovers
+no System tests, has `timeout-minutes: 20`, and is not part of the `e2e` gate. To find a failed
+test, open the failed shard's log; the `e2e` job only reports that a shard failed.
 
 Each shard job has `timeout-minutes: 30`. GitHub reports a job that hits this limit as cancelled,
 not failed, and its log ends without a test summary. The 5-minute hang timeout fails the run first
@@ -113,6 +120,8 @@ or `ReloadAsync` directly. The only exceptions are `Page.GotoAsync("about:blank"
 | `E2EFixture.cs` | xUnit collection fixture: starts the API, Scheduler, Blazor and Job Controller hosts once per run; starts the shared browser on first use |
 | `E2ECollection.cs` | Shares one E2EFixture across all test classes |
 | `MultiReplicaE2EFixture.cs` | Two API hosts sharing a fake Redis store |
+| `RealSettingsE2EFixture.cs` | E2E hosts without the settings shim, so settings routes reach the real API handlers |
+| `SystemTier/` | System tier: Testcontainers Postgres and Redis (`SystemContainers`), `SystemApiFactory`, `SystemE2ETestBase`, `RequiresDockerFact` |
 | `SchedulerE2EWebApplicationFactory.cs` | Scheduler host on a real Kestrel port, started for every test run; leader election removed so `PipelineLoopService` runs |
 | `RealAgentWorkerHarness.cs` | Real agent worker built in-process against the E2E API host |
 | `FakeAgentClient.cs` | In-process fake agent for tests that don't need a real agent pod |
