@@ -115,7 +115,7 @@ Implementation runs review their changes before the pull request is opened. PR r
 | `codeReview.inlineComments.maxInlineComments` | 15 | 1–50 | ✓ | Max inline comments per review; the rest appear only in the summary |
 | `codeReview.inlineComments.orderBySeverity` | true | | ✓ | Choose inline comments by severity (Critical → Warning → Suggestion) when there are more than the limit |
 | `codeReview.inlineComments.maxRetries` | 1 | 0–5 | ✓ | Re-asks when a reviewer's output lacks file:line references; each is one more LLM call per reviewer |
-| `acceptanceCriteriaEnabled` | true | | ✓ | Acceptance criteria check next to the reviewers, reporting criterion by criterion |
+| `acceptanceCriteriaEnabled` | true | | ✓ | Acceptance criteria check, next to the reviewers when they run in parallel and after them otherwise, reporting criterion by criterion |
 | `acceptanceCriteriaPrompt` | *(built in)* | | | Prompt for the acceptance criteria check |
 
 ### Consolidation
@@ -243,7 +243,7 @@ The retry loop classifies agent failures into categories to distinguish provider
 |----------------|-------------|------------------------|----------|
 | `ProviderRateLimit` | 429 | **No** | `RetryCount` is not incremented. The loop waits `TransientRetryDelay` (default: 30 seconds), then retries from the same position without spending a fix attempt. After 10 consecutive transient results the loop stops and the run ends with a draft PR; a normal fix attempt resets the count. |
 | `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
-| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends **without** a draft PR; the credential is paused until resumed (see [Credentials and Pauses](agent-routing.md#credentials-and-pauses)). |
+| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends **without** a draft PR; the credential is paused until resumed (see [Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses)). |
 | `ProviderQuotaExhausted` | Claude Code `billing_error` or a usage limit, Kiro's monthly limit, OpenCode's quota error | **No** | Loop aborts immediately and the run ends without a draft PR. The credential is paused and the work is queued again (see [Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses)). Top up the credit, wait for the reset, or route the work to another profile. |
 | `ProviderMisconfigured` | The agent CLI refused its own configuration before doing any work (Kiro, for example an unknown agent name) | **No** | Loop aborts immediately; the run ends with a draft PR as an infrastructure failure. Fix the agent profile's tool settings. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
@@ -256,7 +256,7 @@ Before any phase sees a `ProviderRateLimit` or `ProviderOverload` result, the ag
 
 ## Housekeeping
 
-Housekeeping manages the agent's pull requests for pipeline job templates with `HousekeepingEnabled: true`. On each poll cycle it evaluates `agent:done` PRs: it triggers server-side branch updates for PRs that are behind base (fire-and-forget, within the concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. Human PRs with auto-merge enabled also get branch updates, after the pipeline's PRs and within the same concurrency limit, on GitHub only; they are never re-queued for rework (see [Pipeline Orchestration](pipeline-orchestration.md)). It can also delete stale agent branches at an interval. The global settings are `housekeepingConcurrencyLimit`, `housekeepingBranchCleanupIntervalMinutes` and `housekeepingTriggerCooldownMinutes` (see [General](#general)).
+Housekeeping manages the agent's pull requests for pipeline job templates with `HousekeepingEnabled: true`. On each poll cycle it evaluates `agent:done` PRs: it triggers server-side branch updates for PRs that are behind base (fire-and-forget, within the concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. Human PRs with auto-merge enabled also get branch updates, after the pipeline's PRs and within the same concurrency limit, on GitHub only; they are never re-queued for rework (see [Pipeline Orchestration — Housekeeping](pipeline-orchestration.md#housekeeping)). It can also delete stale agent branches at an interval. The global settings are `housekeepingConcurrencyLimit`, `housekeepingBranchCleanupIntervalMinutes` and `housekeepingTriggerCooldownMinutes` (see [General](#general)).
 
 Per-template controls (on `PipelineJobTemplate`):
 
@@ -384,7 +384,7 @@ The Scheduler triggers a retention sweep every hour (`POST /api/scheduler/mainte
 
 Both limits apply on each sweep: the counts cap the rows per project, the days cap their age.
 
-The same sweep deletes triages whose last change is older than `triageRetentionDays` (default 30, see [Triage](#triage)); created issues and tracker comments stay.
+The same sweep deletes triages whose last change is older than `triageRetentionDays` (default 30, see [Triage](#triage)), unless an attempt is queued or running; created issues and tracker comments stay.
 
 ### OpenTelemetry
 

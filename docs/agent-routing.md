@@ -117,7 +117,7 @@ Every profile uses one agent credential, derived from its job template's tool an
 
 A credential is **paused** when an agent reports that its quota is used up or its login was rejected (the pause lasts
 until the reset time the provider names, or until resumed), or when an operator pauses it. The run that hit the limit
-ends, its issue goes back to its queue label (`agent:next` for implementation and review, `agent:epic` or
+ends, its issue goes back to its queue label (`agent:next` for implementation, on the pull request for a review; `agent:epic` or
 `agent:epic-approved` for the two decomposition phases, `agent:triage` for a triage; a consolidation has no label), and
 the same work is queued again as a new work item that waits for the credential; no draft PR is opened. While the
 credential is paused, work routed to it waits, chats on it are refused, and work on other credentials runs as before.

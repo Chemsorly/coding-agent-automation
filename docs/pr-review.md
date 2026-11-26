@@ -69,7 +69,7 @@ Defaults and ranges: [Configuration — Code Review](configuration.md#code-revie
 
 ## Template Configuration
 
-`ReviewEnabled` (default `true`) turns PR review on for a template; with `ImplementationEnabled: false` the template is review-only. All workflow switches are listed in [Configuration — Pipeline Job Templates](configuration.md#pipeline-job-templates).
+`ReviewEnabled` defaults to `true`. All workflow switches are listed in [Configuration — Pipeline Job Templates](configuration.md#pipeline-job-templates).
 
 Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](pipeline-orchestration.md) for the full technical reference.
 

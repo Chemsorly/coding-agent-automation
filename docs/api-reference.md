@@ -408,7 +408,8 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
     }
   ],
   "agentRouting": "{\"default\":{\"profileId\":\"b2c3d4e5-f6a7-8901-bcde-f12345678901\",\"model\":\"auto\",\"effort\":\"auto\"},\"byTaskType\":{}}",
-  "agentCapacity": "{\"maxConcurrentAgents\":4,\"maxConcurrentByJobTemplate\":{\"dotnet,kiro\":3}}"
+  "agentCapacity": "{\"maxConcurrentAgents\":4,\"maxConcurrentByJobTemplate\":{\"dotnet,kiro\":3}}",
+  "usageThresholds": "{\"fiveHourPercent\":75,\"sevenDayPercent\":90}"
 }
 ```
 
@@ -703,7 +704,7 @@ The Consolidation page's API. Several templates and projects can share one brain
 | `GET /api/ui/consolidation` | `{ templates, brainProviderByTemplate }`. `templates` lists the enabled templates of enabled projects, by project name, as `{ id, name, supportsBrainConsolidation, supportsRefactoringDetection, brainReadOnly }`. `brainProviderByTemplate` maps every template that has a brain to its brain provider. |
 | `GET /api/ui/consolidation/templates/{templateId}/refactoring-scan` | `{ maxProposals, maxProposalsIsProjectOverride, hotspotLookbackDays, reviewEnabled, reviewEnabledIsProjectOverride }`: the values a refactoring scan of the template runs with, which are the global settings with the template's project overrides. |
 | `GET /api/ui/consolidation/auto-counters` | `{ brainCounters, refactoringCounters }`, each keyed by template ID as `{ count, threshold, blocked }`. Only the run types whose automatic threshold is above zero are counted; `blocked` says why the next automatic run is suppressed. |
-| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch, refactoringFocus }`. `type` is `BrainConsolidation` or `RefactoringDetection`. `autoDispatch` labels a refactoring scan's issues `agent:next`. `refactoringFocus` (`All`, `Structure`, `Correctness`, `Design` or `Tests`, default `All`) picks which detection agent a refactoring scan runs. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
+| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch, refactoringFocus }`. `type` is `BrainConsolidation` or `RefactoringDetection`. `autoDispatch` labels a refactoring scan's issues `agent:next`. `refactoringFocus` (`All`, `Structure`, `Correctness`, `Design` or `Tests`, default `All`) picks which detection agents a refactoring scan runs (`All` runs all four). Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
 
 ### Pipeline loop
 

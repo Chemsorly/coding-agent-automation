@@ -176,4 +176,4 @@ The review agent reads `.agent/brain-review-input.md` (which lists up to 100 rec
 
 ### Observability
 
-Brain v2 metrics (`pipeline.run.brain_updates`, `pipeline.run.brain_skills`, `pipeline.brain.review.*`) and the brain span tags on `SyncBrainPreRun`, `Reflection` and `BrainSyncPostRun` are listed in [Observability](observability.md#metrics).
+Brain v2 metrics (`pipeline.run.brain_updates`, `pipeline.run.brain_skills`, `pipeline.brain.review.*`) are listed in [Observability — Metrics](observability.md#metrics), and the brain span tags on `SyncBrainPreRun`, `Reflection` and `BrainSyncPostRun` in [Observability — Pipeline Spans](observability.md#pipeline-spans).
