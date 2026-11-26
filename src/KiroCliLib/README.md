@@ -40,6 +40,8 @@ public interface IKiroCliOrchestrator : IDisposable
 
     bool LastRunStartedFreshSession { get; }
     bool LastRunRejectedConfiguration { get; }
+    string? LastRunQuotaExhausted { get; }
+    bool LastRunRateLimited { get; }
     IReadOnlyDictionary<string, KiroToolCallCount> LastRunToolCalls { get; }
 }
 ```
@@ -55,6 +57,8 @@ public interface IKiroCliOrchestrator : IDisposable
 | `LastOutputTime` | Timestamp of the last output line (for stall detection) |
 | `LastRunStartedFreshSession` | True when the last `ExecutePromptAsync` could not load its `resumeSessionId` and ran the prompt in a fresh session instead |
 | `LastRunRejectedConfiguration` | True when the last `ExecutePromptAsync` failed because kiro-cli rejected its own configuration (e.g. an unknown `--agent` value) |
+| `LastRunQuotaExhausted` | The kiro-cli `error:` line that said the monthly usage or overage limit is reached, when the last `ExecutePromptAsync` failed; null otherwise |
+| `LastRunRateLimited` | True when the last `ExecutePromptAsync` failed and kiro-cli said it was throttled |
 | `LastRunToolCalls` | MCP and web tool calls of the last `ExecutePromptAsync`, keyed `server/tool` (`web/search` for web search); empty before the first run |
 | `IDisposable` | Implements `IDisposable` for cleanup of managed resources |
 
@@ -167,6 +171,7 @@ KiroCliLib/
 │   ├── OutputParser.cs         — Parses CLI output for state/test detection
 │   ├── AnsiStripper.cs         — Strips ANSI escape codes from output
 │   ├── KiroToolLineCounter.cs  — Counts MCP and web tool calls from kiro-cli stderr output
+│   ├── KiroErrorText.cs        — Classifies kiro-cli error: lines (monthly quota exhausted, throttled)
 │   ├── GracefulShutdownHelper.cs — Async shutdown with timeout + logging
 │   └── ExitCodes.cs            — Well-known exit code constants (shared with pipeline)
 └── Models/
