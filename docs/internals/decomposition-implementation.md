@@ -20,13 +20,7 @@ When polling for decomposition candidates:
 
 ## Loop Integration
 
-Priority order follows the `dispatchOrder` setting. The default is Triage first, then PRs, then Decomposition, then Issues (Implementation):
-```
-Priority 1 (highest): Triage queue → dispatched first each cycle
-Priority 2:           PR queue
-Priority 3:           Decomposition queue (repo epics + project epics share this tier)
-Priority 4:           Issue queue (Implementation)
-```
+Decomposition is one queue of the poll-cycle priority (see [Pipeline Orchestration — Poll-Cycle Scheduler Priority](../pipeline-orchestration.md#poll-cycle-scheduler-priority)); repo epics and project epics share it.
 
 - Total dispatches per cycle ≤ `ClosedLoopMaxRunsPerCycle`
 - `MinIssueSlots` floor reservation: if Issues were not dispatched in the priority loop, up to `MinIssueSlots` issue slots are reserved in a floor pass, ensuring implementation work is never fully starved
@@ -117,7 +111,7 @@ Agent writes sub-issue files to `.agent/sub-issues/` as JSON.
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
-| `title` | `string` | Yes | Non-empty, max 256 characters |
+| `title` | `string` | Yes | Non-empty. The prompt allows 256 characters; the title is cut to 200 characters when the issue is created |
 | `body` | `string` | Yes | Non-empty, markdown. Must contain: Summary, Affected Components, Requirements, Acceptance Criteria |
 | `dependencies` | `string[]` | Yes | Title references to other sub-issues (resolved to `#N` during creation) |
 | `labels` | `string[]` | Yes | Additional labels beyond auto-applied `agent:next` and `agent:generated` |
