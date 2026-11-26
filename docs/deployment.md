@@ -239,7 +239,7 @@ Four optional limits cap how many agents run at once:
 
 ### Agent network policy
 
-The chart renders one NetworkPolicy, `<release>-agent`, for every pod labelled `caa/agent-pod: "true"`. It is on by default and uses only the vanilla `networking.k8s.io/v1` API. It is default deny, with this allow-list:
+The chart renders one NetworkPolicy, `<release>-coding-agent-automation-agent`, for every pod labelled `caa/agent-pod: "true"`. It is on by default and uses only the vanilla `networking.k8s.io/v1` API. It is default deny, with this allow-list:
 
 | Direction | Allowed |
 |---|---|
@@ -318,11 +318,11 @@ Two independent leases are used — one per relevant process (the Pipeline API a
 
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
-| `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
+| `PipelineLoopService` | Polls the trackers and queues eligible issues, PRs, epics and triages as Pending work items (`POST /api/work-items`) | Pauses (leader gate blocks loop entry) |
 | `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
 | `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
 | `WorkItemCountsService` | Emits work-item count metrics and the agent capacity gauges to `CodingAgent.WorkDistribution` | Waits |
-| `WorkItemDispatchLoop` | Dispatches Pending work items through `POST /api/work-items/{id}/dispatch` (Triage, then Review, then Decomposition, then Implementation, then Consolidation) | Waits |
+| `WorkItemDispatchLoop` | Dispatches Pending work items through `POST /api/work-items/{id}/dispatch`, in the order of the `dispatchOrder` setting (see [Pipeline Orchestration — Dispatch Priority](pipeline-orchestration.md#dispatch-priority)) | Waits |
 | `RetentionSweepSchedulerService` | Triggers the hourly retention sweep in the Pipeline API | Waits |
 
 #### Configuration
