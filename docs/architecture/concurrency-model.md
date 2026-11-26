@@ -133,10 +133,10 @@ across process boundaries.
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()`, `UpdateAgentFieldAsync()` |
 | `AgentOrphanRecoveryService` | `AgentGateway/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
-| `ChatService` | `Api/Chat/ChatService.cs` | Sets `ActiveChatSessionId` on every chat prompt (`SendPromptAsync`, `POST /api/ui/chat/{agentId}/prompt`) |
 
-`RunLifecycleManager` changes `ActiveJobId` only through `IAgentRegistryService.UpdateAgentFieldAsync`,
-which takes `SyncRoot` inside `AgentRegistryService`.
+`RunLifecycleManager` (for `ActiveJobId`) and `ChatService` (for `ActiveChatSessionId` on every chat prompt,
+`SendPromptAsync`, `POST /api/ui/chat/{agentId}/prompt`) change agent fields only through
+`IAgentRegistryService.UpdateAgentFieldAsync`, which takes `SyncRoot` inside `AgentRegistryService`.
 
 ### Key invariant
 
@@ -213,7 +213,7 @@ Provider config ids are unique across provider kinds, so the two never collide.
 New-run dispatch runs in the Scheduler (`PipelineLoopService` → `DispatchScheduler`). Before
 it creates a WorkItem it skips issues in the cycle's `ActiveIssueIdentifiers` snapshot, which
 `KubernetesWorkDistributor.GetActiveIssueIdentifiersAsync()` reads from
-`GET /api/work-items/active-identifiers` (non-terminal WorkItems in Postgres).
+`GET /api/work-items/active-identifiers` (WorkItems in Postgres that are not terminal or ended within the dedup cooldown).
 `IsIssueBeingProcessed()` is also called, but in the Scheduler it always returns false
 (`SchedulerRunQueryService`); in the API process, `DistributedRunService.IsIssueBeingProcessed()`
 queries Postgres for an active WorkItem or a recently-completed one within the dedup cooldown (to close the TOCTOU window between a run completing and the next dispatch cycle). The snapshot can be up to one cycle old, so a
@@ -336,7 +336,7 @@ isolation rule.
 `AgentRegistryService` and `OrchestratorRunService` are process-local singletons without
 Redis. With Redis configured, both switch to distributed implementations automatically:
 `AgentRegistryService` → `DistributedAgentRegistryService`;
-`OrchestratorRunService` uses Redis-backed state.
+`OrchestratorRunService` → `DistributedRunService`.
 
 
 ---
