@@ -308,7 +308,7 @@ Users with only `operator` or `readonly` on the project see "Project not found":
 
 The API checks every save, so a request sent around the page changes no more than the page allows. When a project admin saves their project, the API reloads the stored project and keeps its `Enabled`, `EpicIssueProviderId`, `BrainReadOnly` and `BrainConsolidationReviewEnabled`. When a project admin saves a repository's Behaviour card, the API takes only the card's fields and keeps every other field of the stored template, such as the connections, the Binding card, the triage switch and the repository routes. A project admin can't create a project or a repository, or save another project's (`404`).
 
-The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a 🧩 indicator.
+The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. The template name and the "Edit" link in each row navigate to the template's **repository page** (`/pipelines/{templateId}`). Projects with `EpicIssueProviderId` set show a puzzle icon (tooltip "Cross-repo epic decomposition configured").
 
 ### Repository Page
 
