@@ -44,7 +44,7 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
 
 Use the HTTP API to export configuration from the old instance and import it into the new one.
 
-> ⚠️ **`POST /api/config/import` is destructive.** It clears ALL existing configuration (providers, profiles, quality gate configs, reviewer configs, projects, job templates and agent routing) before inserting the uploaded bundle. Run history, work items, and consolidation data are preserved. The operation is transactional — it fully commits or fully rolls back.
+> ⚠️ **`POST /api/config/import` is destructive:** it replaces the whole configuration with the bundle's in one transaction; run history, work items and consolidation data are kept. What it clears and validates is listed in [HTTP API Reference — POST /api/config/import](api-reference.md#post-apiconfigimport).
 
 > **Authentication:** Both endpoints require the `Authorization: Bearer <OPERATOR_API_KEY>` header with the operator-tier key. Agent pod keys (derived keys) are rejected with HTTP 403. Use the master key from `secrets.agentApiKey` in your Helm values for bootstrap operations. See [Authentication](#authentication) below.
 
@@ -80,7 +80,7 @@ On success, the response body is:
 }
 ```
 
-On validation failure (invalid JSON, empty bundle, no file, invalid settings or agent routing), HTTP 400 is returned with an error message and nothing is imported.
+On validation failure, HTTP 400 is returned with an error message and nothing is imported; the conditions are listed in [HTTP API Reference — POST /api/config/import](api-reference.md#post-apiconfigimport).
 
 A bundle exported before agent routing (with agent provider configs and label-matched profiles) is converted during the import, as the upgrade converts the stored configuration: see the agent routing upgrade note in [Deployment](deployment.md).
 
@@ -94,22 +94,4 @@ See [HTTP API Reference](api-reference.md) for full endpoint details.
 
 ## Bundle Format
 
-The export bundle is a flat JSON object with arrays for each entity type:
-
-```json
-{
-  "pipelineConfig": "{...}",
-  "providerConfigs": [ ... ],
-  "agentProfiles": [ ... ],
-  "qualityGateConfigs": [ ... ],
-  "reviewerConfigs": [ ... ],
-  "projects": [ ... ],
-  "jobTemplates": [ ... ],
-  "agentRouting": "{...}",
-  "agentCapacity": "{...}"
-}
-```
-
-The `pipelineConfig`, per-entity `configuration`, project `settings`, `agentRouting` and `agentCapacity` fields contain serialized JSON strings (double-encoded). This is the format the system uses internally and is preserved in the export. `agentCapacity` holds the UI agent limits of Settings → Agents → Capacity; a bundle without it imports with no UI limits.
-
-For a full example response see [HTTP API Reference — GET /api/config/export](api-reference.md#get-apiconfigexport).
+The bundle's fields, which of them hold serialized JSON strings, and a full example are in [HTTP API Reference — GET /api/config/export](api-reference.md#get-apiconfigexport).
