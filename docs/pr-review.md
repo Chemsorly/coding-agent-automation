@@ -58,13 +58,7 @@ Inline comments are enabled by default. Configure via the web UI under Settings 
 }
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `Enabled` | bool | `true` | Master switch. When false, body-only reviews are posted |
-| `SeverityThreshold` | enum | `Warning` | Minimum severity for inline posting. Options: `Suggestion`, `Warning`, `Critical` |
-| `MaxInlineComments` | int | `15` | Maximum inline comments per review (range: 1–50). Highest-severity findings are prioritized |
-| `OrderBySeverity` | bool | `true` | Sort findings by severity (Critical first) when selecting which to post inline |
-| `MaxRetries` | int | `1` | Times to re-ask the agent for structured output if it doesn't include file:line references (range: 0–5) |
+Defaults and ranges: [Configuration — Code Review](configuration.md#code-review) (`codeReview.inlineComments.*`). When `Enabled` is false, body-only reviews are posted; `SeverityThreshold` accepts `Suggestion`, `Warning` or `Critical`.
 
 ### Behavior
 
@@ -75,21 +69,13 @@ Inline comments are enabled by default. Configure via the web UI under Settings 
 
 ## Template Configuration
 
-Each pipeline job template has independent toggles:
-
-| Property | Default | Effect |
-|----------|---------|--------|
-| `ImplementationEnabled` | `true` | Template processes issues for implementation |
-| `ReviewEnabled` | `true` | Template processes PRs for code review |
-| `DecompositionEnabled` | `false` | Template processes epics for decomposition |
-| `HousekeepingEnabled` | `false` | Template manages agent:done PRs for branch updates and conflict rework. Stale branch cleanup also needs `HousekeepingBranchCleanupEnabled` |
-| `HousekeepingBranchCleanupEnabled` | `false` | Requires `HousekeepingEnabled`. Deletes remote agent branches that have no open PR and whose linked issue is not being worked on |
+`ReviewEnabled` defaults to `true`. All workflow switches are listed in [Configuration — Pipeline Job Templates](configuration.md#pipeline-job-templates).
 
 Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](pipeline-orchestration.md) for the full technical reference.
 
 ## Acceptance Criteria Compliance
 
-The pipeline runs an acceptance criteria compliance check in each code review iteration, after the code reviewers of that iteration have finished, in implementation runs and in PR review runs. A dedicated agent evaluates whether the implementation satisfies the acceptance criteria from the original issue.
+The pipeline runs an acceptance criteria compliance check in each code review iteration, in implementation runs and in PR review runs. Where the reviewers run in parallel, it runs next to them; otherwise it runs after the code reviewers of that iteration have finished. A dedicated agent evaluates whether the implementation satisfies the acceptance criteria from the original issue.
 
 ### How It Works
 

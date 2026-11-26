@@ -101,7 +101,7 @@ curl -H "Authorization: Bearer $AGENT_API_KEY" \
 }
 ```
 
-The agent provider config in `providerConfigs` is built from the work item's route: its ID is the agent profile's, its provider type is the tool of the profile's job template, and its settings are the profile's tool settings plus the route's `model` and `effort`.
+The agent provider config in `providerConfigs` is built from the work item's route: its ID is the agent profile's, its provider type is the tool of the profile's job template, and its settings are the profile's tool settings plus the route's `model` and `effort` and, when set, its light tier (`lightModel`, `lightEffort`).
 
 ### POST /api/work-items
 
@@ -170,6 +170,7 @@ Report a status transition for a work item. Agents call this to indicate progres
 | `errorMessage` | string | ❌ | Human-readable error description (set on failure) |
 | `failureReason` | string | ❌ | Machine-readable failure classification (see valid values below) |
 | `branchName` | string | ❌ | Feature branch the run works on. Stored on the work item so the Scheduler's housekeeping guard can see which branches have an active run |
+| `podLogTail` | string[] | ❌ | The last lines of the agent pod's log, sent by the Job Controller when it fails a Job. The API sanitizes them and stores them on the run for diagnosis |
 
 **Valid `status` values:**
 
@@ -220,7 +221,7 @@ curl -X POST \
 
 ### POST /api/work-items/{id}/priority
 
-Set the dispatch priority weight for a pending work item. Operators call this to reorder items within the same priority tier before they are claimed by the Job Controller.
+Set the dispatch priority weight for a pending work item. Operators call this to reorder items within the same task type tier before the Scheduler's dispatch loop starts them.
 
 **Authentication:** OperatorApiKey
 
@@ -230,7 +231,7 @@ Set the dispatch priority weight for a pending work item. Operators call this to
 { "priorityWeight": 100 }
 ```
 
-`priorityWeight` is required and must be in the range `[0, 1000]`. A work item starts at `100` when it was dispatched manually and at `0` otherwise. Higher values dispatch first within the same `RunType` tier.
+`priorityWeight` is required and must be in the range `[0, 1000]`. A work item starts at `100` when it was dispatched manually and at `0` otherwise. Higher values dispatch first within the same task type tier (the task type's position in the `dispatchOrder` setting).
 
 **Responses:**
 
@@ -278,7 +279,7 @@ Returns the status and optional final label of the most recently created work it
 
 ### GET /api/work-items/active
 
-List work items that are `Dispatched` or `Running` and were dispatched more than `olderThanSeconds` seconds ago. Items whose `DispatchedAt` is null are matched on `CreatedAt` instead. `Pending` and terminal items are never returned. Used by the Job Controller's reconciliation loop (timeout enforcement, the Dispatched sweep and orphan cleanup) and by the web Work page, which also passes `projectId`.
+List work items that are `Dispatched` or `Running` and were dispatched more than `olderThanSeconds` seconds ago. Items whose `DispatchedAt` is null are matched on `CreatedAt` instead. `Pending` and terminal items are never returned. Used by the Job Controller's reconciliation loop (timeout enforcement, the Dispatched sweep and orphan cleanup). The web Work page reads the same list through `GET /api/ui/work-items/active`, which also takes `projectId`.
 
 **Authentication:** OperatorApiKey
 
@@ -407,13 +408,16 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
     }
   ],
   "agentRouting": "{\"default\":{\"profileId\":\"b2c3d4e5-f6a7-8901-bcde-f12345678901\",\"model\":\"auto\",\"effort\":\"auto\"},\"byTaskType\":{}}",
-  "agentCapacity": "{\"maxConcurrentAgents\":4,\"maxConcurrentByJobTemplate\":{\"dotnet,kiro\":3}}"
+  "agentCapacity": "{\"maxConcurrentAgents\":4,\"maxConcurrentByJobTemplate\":{\"dotnet,kiro\":3}}",
+  "usageThresholds": "{\"fiveHourPercent\":75,\"sevenDayPercent\":90}"
 }
 ```
 
-The `pipelineConfig`, `configuration`, `settings`, `agentRouting` and `agentCapacity` fields contain serialized JSON strings (double-encoded). This preserves the exact format used internally.
+The `pipelineConfig`, `configuration`, `settings`, `agentRouting`, `agentCapacity` and `usageThresholds` fields contain serialized JSON strings (double-encoded). This preserves the exact format used internally.
 
 `agentCapacity` holds the UI agent limits (Settings → Agents → Capacity; see [Configuration — Agent Capacity](configuration.md#agent-capacity)). Invalid limits are rejected before anything is cleared, with `Invalid agent capacity:` and the reasons. A limit for a job template this cluster does not define is kept and ignored. A bundle without `agentCapacity` (from an older release) imports with no UI limits.
+
+`usageThresholds` holds the usage thresholds of the Claude subscription; a bundle without it (from an older release) leaves the defaults.
 
 `agentRouting` is the global routing table; a repository's own rows are `agentRoutes` in its job template's configuration. A bundle from a release before agent routing has no `agentRouting` and carries agent provider configs and label-matched profiles: the import converts them in the same transaction, as the upgrade does (see the agent routing upgrade note in [Deployment](deployment.md)). A bundle whose routing or whose templates' rows name a profile it does not contain, an unknown task type, an invalid model, or an effort the profile's tool does not accept is rejected before anything is cleared. A job template this cluster does not define is not refused, so a bundle from another cluster imports; the Agent Profiles page flags those profiles.
 
@@ -431,7 +435,7 @@ Upload a configuration bundle to replace all existing pipeline configuration.
 | **Content-Type** | `multipart/form-data` |
 | **Form field** | `file` — The JSON bundle file |
 
-**⚠️ This endpoint clears all existing configuration** (providers, profiles, quality gates, reviewers, projects, templates, agent routing) before importing. Run history, work items, and consolidation data are preserved.
+**⚠️ This endpoint clears all existing configuration** (providers, profiles, quality gates, reviewers, projects, templates, agent routing, agent capacity limits and usage thresholds) before importing. Run history, work items, and consolidation data are preserved.
 
 **Example request:**
 
@@ -469,6 +473,8 @@ curl -X POST \
 | Null/empty bundle | `"Empty or invalid bundle"` |
 | Settings out of range or unreadable | `"Invalid settings: {details}"` (the whole bundle is rejected; nothing is imported) |
 | Agent routing unreadable or invalid | `"Invalid agent routing: {details}"` (the whole bundle is rejected; nothing is imported) |
+| Agent capacity invalid | `"Invalid agent capacity: {details}"` (nothing is imported) |
+| Usage thresholds unreadable or invalid | `"Invalid usage thresholds: {details}"` (nothing is imported) |
 
 ---
 
@@ -540,10 +546,12 @@ The response is a JSON array of run summary objects. Each object includes run me
 | `loop:issue` | Issue-implementation run dispatched by the polling loop |
 | `loop:review` | PR review run dispatched by the polling loop |
 | `loop:decomposition` | Epic decomposition run dispatched by the polling loop |
+| `loop:triage` | Triage of an `agent:triage` issue dispatched by the polling loop |
 | `manual` | Run dispatched manually from the UI |
 | `consolidation:manual` | Consolidation run triggered via the Consolidation page |
 | `consolidation:auto` | Consolidation run triggered automatically |
 | `rehydrated` | Run re-created from a restarted orchestrator (original source unknown) |
+| `recovery` | Run re-created by the orphan recovery of an agent that reconnected after an API restart (original source unknown) |
 
 **`harnessVersion` field:**
 
@@ -593,7 +601,7 @@ These return slim views of the configuration for pages outside Settings. They ne
 | `GET /api/ui/projects` | The projects the user can read, as `{ id, name, enabled }`, by name. A global reader gets all of them; a project-scoped user gets only its own. |
 | `GET /api/ui/projects/{projectId}/templates` | The project's job templates as `{ id, name, enabled }`. `404` when the user cannot read the project or it does not exist. |
 | `GET /api/ui/pipeline-settings` | `{ maxRetries, triageRetentionDays }`: global values, without project overrides. |
-| `GET /api/ui/pipelines` | The Pipelines page: `{ projects, templates, issueProviders, repoProviders, pipelineProviders, qualityGateConfigs, reviewerConfigs, agentProfiles, routes, maxRetries }`. Only the readable projects' templates (a template without a project only for global readers); projects carry only their id, name, enabled flag and template ids; providers and agent profiles come with secrets masked. A project-scoped user gets only the providers their templates use, and empty quality gate and reviewer lists. `agentProfiles` is filled for a global `admin` only. `routes` maps each template ID to its resolved route per task type, as `{ taskType, profileName, tool, model, effort, source, jobTemplateKey, problem }`; `source` is `Repository`, `GlobalTaskRow` or `GlobalDefault`. A route that does not resolve has only `problem`, the refusal text a work item would get. |
+| `GET /api/ui/pipelines` | The Pipelines page: `{ projects, templates, issueProviders, repoProviders, pipelineProviders, qualityGateConfigs, reviewerConfigs, agentProfiles, routes, maxRetries }`. Only the readable projects' templates (a template without a project only for global readers); projects carry only their id, name, enabled flag and template ids; providers and agent profiles come with secrets masked. A project-scoped user gets only the providers their templates use, and empty quality gate and reviewer lists. `agentProfiles` is filled for a global `admin` only. `routes` maps each template ID to its resolved route per task type, as `{ taskType, profileName, tool, model, effort, source, jobTemplateKey, problem, credentialPausedText }`; `credentialPausedText` is the pause text when the route's credential is paused; `source` is `Repository`, `GlobalTaskRow` or `GlobalDefault`. A route that does not resolve has only `problem`, the refusal text a work item would get. |
 
 ### Runs and work items (any role)
 
@@ -609,6 +617,8 @@ The run detail is checked against the run's own project. A run the user cannot r
 | `GET /api/ui/runs/{runId}` | `{ run, agent }`: the run, and the agent it ran with as `{ profileName, model, effort }`. A run recorded before agent routing has only its `model`. |
 | `GET /api/ui/work-items/pending?maxResults=&projectId=` | The queue, in dispatch order. |
 | `GET /api/ui/work-items/active?olderThanSeconds=&projectId=` | Dispatched and running work items. |
+
+For a project-scoped user, a brain consolidation run's review outcome keeps only its counts: the lines, checks, flaky tests and pushed commit are left out. Global readers see the full outcome.
 
 The actions on one work item need the `operator` role on the work item's stored project. A user who can only read that project gets `403`; a user who cannot see it gets `404`. A run's ID is its work item's ID, so cancelling a run uses the same endpoint.
 
@@ -693,7 +703,8 @@ The Consolidation page's API. Several templates and projects can share one brain
 |---|---|
 | `GET /api/ui/consolidation` | `{ templates, brainProviderByTemplate }`. `templates` lists the enabled templates of enabled projects, by project name, as `{ id, name, supportsBrainConsolidation, supportsRefactoringDetection, brainReadOnly }`. `brainProviderByTemplate` maps every template that has a brain to its brain provider. |
 | `GET /api/ui/consolidation/templates/{templateId}/refactoring-scan` | `{ maxProposals, maxProposalsIsProjectOverride, hotspotLookbackDays, reviewEnabled, reviewEnabledIsProjectOverride }`: the values a refactoring scan of the template runs with, which are the global settings with the template's project overrides. |
-| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch }`. `type` is `BrainConsolidation` or `RefactoringDetection`. `autoDispatch` labels a refactoring scan's issues `agent:next`. Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
+| `GET /api/ui/consolidation/auto-counters` | `{ brainCounters, refactoringCounters }`, each keyed by template ID as `{ count, threshold, blocked }`. Only the run types whose automatic threshold is above zero are counted; `blocked` says why the next automatic run is suppressed. |
+| `POST /api/ui/consolidation/runs` | Queues a run from `{ type, templateId, autoDispatch, refactoringFocus }`. `type` is `BrainConsolidation` or `RefactoringDetection`. `autoDispatch` labels a refactoring scan's issues `agent:next`. `refactoringFocus` (`All`, `Structure`, `Correctness`, `Design` or `Tests`, default `All`) picks which detection agents a refactoring scan runs (`All` runs all four). Returns `200` with the message to show, as a JSON string. A run of the same scope that is already queued or running, a configuration error or an unknown template is refused with `409` and the reason. |
 
 ### Pipeline loop
 
@@ -714,14 +725,14 @@ The SignalR hub of the signed-in UI: live output of runs and replies of chats. I
 
 | Method | Allowed when | Then receives |
 |---|---|---|
-| `SubscribeToRun(runId)` / `UnsubscribeFromRun(runId)` | The user can read the project of the run's work item. | The output so far and, while the run is active, a `RunStateSnapshot`; then `OnOutputLines`, `OnStepTransition`, `OnChatEntry`, `OnQualityGateResult`, `OnBrainSyncResult` and `OnRunCompleted`. |
+| `SubscribeToRun(runId)` / `UnsubscribeFromRun(runId)` | The user can read the project of the run's work item. | The output so far and, while the run is active, a `RunStateSnapshot` (`OnRunStateSnapshot`); then `OnOutputLines`, `OnStepTransition`, `OnChatEntry`, `OnQualityGateResult` and `OnRunCompleted`. |
 | `SubscribeToChat(agentId)` / `UnsubscribeFromChat(agentId)` | The user launched the chat (or is a global `admin`) and can still operate on its project, as for the chat endpoints. | `OnChatResponse` and `OnChatCompleted` for every prompt of the chat; each carries the prompt's `sessionId`. |
 
 A refused subscription fails with a `HubException` that reads the same whether the run or chat does not exist or belongs to someone else. `/hubs/agent` is for agent pods only: a connection without an `agentId` is closed, and user tokens are refused.
 
 ### Settings (admin)
 
-`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role, except for four routes the project page and the repository page's Behaviour card use: `GET /pipeline`, `GET /projects/{id}`, `PUT /projects` and `PUT /projects/{projectId}/templates`. These need `admin` on the project. For a project admin, `PUT /projects` keeps the stored enabled flag, epic tracker and brain switches, and `PUT /projects/{projectId}/templates` takes only the Behaviour fields of a template already in that project; a new project or template, or another project's, is `404` (see [Projects](projects.md#project-page)). The settings API covers the pipeline configuration, agent profiles, routing and capacity, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps the configuration reads, `PUT /pipeline`, and export and import. Validation of the pipeline configuration and import is the same on both. Agent profiles are read only here: `/api/config/**` has no profile read, and its `GET /provider-configs?kind=Agent` is refused with `400`.
+`/api/ui/settings/**` is the Settings page's API and requires the global `admin` role, except for four routes the project page and the repository page's Behaviour card use: `GET /pipeline`, `GET /projects/{id}`, `PUT /projects` and `PUT /projects/{projectId}/templates`. These need `admin` on the project. For a project admin, `PUT /projects` keeps the stored enabled flag, epic tracker and brain switches, and `PUT /projects/{projectId}/templates` takes only the Behaviour fields of a template already in that project; a new project or template, or another project's, is `404` (see [Projects](projects.md#project-page)). The settings API covers the pipeline configuration, agent profiles, routing and capacity, quality gate configs, reviewer configs, projects, provider configs, templates (`PUT /projects/{projectId}/templates`, `DELETE /projects/{projectId}/templates/{templateId}`, `POST /templates/move`), config import and export, and the first-run banner (`GET /first-run`, `POST /first-run/dismiss`). These writes are not on the service surface: `/api/config/**` keeps only the configuration reads and export and import. Import validation is the same on both. Agent profiles are read only here: `/api/config/**` has no profile read, and its `GET /provider-configs?kind=Agent` is refused with `400`.
 
 Agent profiles, routing and capacity:
 
@@ -730,9 +741,9 @@ Agent profiles, routing and capacity:
 | `GET /agent-profiles` | `{ profiles, jobTemplates }`: the profiles with MCP server secrets masked, and the job templates of the Helm values as `{ key, tool }`. |
 | `PUT /agent-profiles` | Saves a profile. It needs a display name no other profile has, a job template the Helm values define with a tool, and tool settings; a body without tool settings comes from a page of an older release and is refused with `This page is out of date; reload`. A Claude Code profile needs `authMode` `subscription` or `apiKey` (`Auth mode must be subscription or apiKey.`). A profile has no enabled flag (spec 056; an `enabled` field in the body is ignored). Refusals are `400` with the reason; a refusal because of routes names each row. |
 | `DELETE /agent-profiles/{id}` | Deletes a profile. A profile that routes name is refused with `400`, naming each row. |
-| `GET /agent-routing` | `{ routing, profiles, jobTemplates }`: the global table as `{ default, byTaskType }`, each route `{ profileId, model, effort }`; the profiles a route can name as `{ id, name, tool, jobTemplateKey, pausedText }` (`pausedText`: the pause of the profile's credential, if any); and the job templates. Repository rows are on the templates (`agentRoutes`). |
-| `PUT /agent-routing` | Replaces the global table. Every row is checked: the default row is required once a profile exists, the profile must exist on a job template with a tool, the model must be set (`auto` lets the tool choose) and the effort one the tool accepts. An invalid table is refused with `400` and one line per invalid row. A body that names a task type twice is refused with `400`. |
-| `GET /agent-capacity` | `{ all, templates, unknownTemplateRuns, unknownTemplateChats, countsAvailable }`: one row for all agents (`templateKey` null) and one per deployed job template, each `{ templateKey, tool, runningRuns, runningChats, helmLimit, uiLimit, effectiveLimit, effectiveSource }`. A limit of `0` means none; `effectiveSource` is `helm`, `ui` or null. When the agent Jobs cannot be listed, `countsAvailable` is `false` and the counts are `0`. See [Configuration — Agent Capacity](configuration.md#agent-capacity). |
+| `GET /agent-routing` | `{ routing, profiles, jobTemplates }`: the global table as `{ default, byTaskType }`, each route `{ profileId, model, effort, lightModel?, lightEffort? }` (the optional light tier; blank means the route's own model or effort); the profiles a route can name as `{ id, name, tool, jobTemplateKey, pausedText }` (`pausedText`: the pause of the profile's credential, if any); and the job templates. Repository rows are on the templates (`agentRoutes`). |
+| `PUT /agent-routing` | Replaces the global table. Every row is checked: the default row is required once a profile exists, the profile must exist on a job template with a tool, the model must be set (`auto` lets the tool choose) and the effort one the tool accepts. A light model or light effort, when set, is checked like the route's own. An invalid table is refused with `400` and one line per invalid row. A body that names a task type twice is refused with `400`. |
+| `GET /agent-capacity` | `{ all, templates, unknownTemplateRuns, unknownTemplateChats, countsAvailable }`: one row for all agents (`templateKey` null) and one per deployed job template, each `{ templateKey, tool, runningRuns, runningChats, helmLimit, uiLimit, effectiveLimit, effectiveSource, credentialPausedText }`, the last set when the template's credential is paused. A limit of `0` means none; `effectiveSource` is `helm`, `ui` or null. When the agent Jobs cannot be listed, `countsAvailable` is `false` and the counts are `0`. See [Configuration — Agent Capacity](configuration.md#agent-capacity). |
 | `PUT /agent-capacity` | Replaces the UI limits from `{ maxConcurrentAgents, maxConcurrentByJobTemplate }`, each 0–100 (0 = no limit). Returns `204`. A value out of range, an invalid or repeated template key, or more than 100 entries is refused with `400` and one line per problem. Limits for templates that are not deployed and `0` values are dropped. Each changed value is logged with the user. |
 
 A template save checks its `agentRoutes` the same way. A save without `agentRoutes` keeps the stored rows; an empty object removes them. A project admin's template save keeps the stored rows whatever it sends.
@@ -824,6 +835,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
 | POST | `/api/work-items/{id}/priority` | OperatorApiKey | Set dispatch priority weight (Pending items only) |
 | GET | `/api/work-items/active` | OperatorApiKey | List Dispatched and Running work items older than a threshold |
+| GET | `/api/work-items/latest-outcome` | OperatorApiKey | Status and final label of an issue's latest work item (orphaned-label recovery) |
 | GET, POST, PUT | `/api/ui/triages/…` | User token; read or operator on the triage's project | [Triage endpoints](#triage-endpoints): list, read, preview, start, re-run, edit drafts, create issues, dismiss |
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
@@ -847,9 +859,10 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/ui/agent-credentials/{credential}/pause`, `/resume` | User token, global operator | Pause or resume an agent credential |
 | PUT | `/api/ui/agent-credentials/usage-thresholds` | User token, global admin | Usage thresholds of the Claude subscription |
 | GET | `/api/agents/capacity` | OperatorApiKey | Running agents and the limits that apply, in total and per job template; the Scheduler's agent gauges read it |
+| GET | `/api/agents/credentials` | OperatorApiKey | Each agent credential in use and whether it is paused; the Scheduler's credential gauge reads it |
 | GET, POST | `/api/ui/chat/options`, `/api/ui/chat` | User token, operator of the chosen project (global operator without one) | Launchable chat profiles; launch a chat pod |
 | POST | `/api/ui/chat/{agentId}/prompt`, `/keepalive`, `/terminate` | User token, the chat's owner or an admin | Prompt, keep alive or end a chat |
-| GET | `/api/ui/consolidation`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, suggestions and refactoring scan settings |
+| GET | `/api/ui/consolidation`, `/api/ui/consolidation/auto-counters`, `/api/ui/consolidation/templates/{templateId}/refactoring-scan` | User token, global read | The Consolidation page's cards, automatic-start counters and refactoring scan settings |
 | POST | `/api/ui/consolidation/runs` | User token, global operator | Queue a brain consolidation or refactoring scan run |
 | GET | `/api/ui/loop/status` | User token | Pipeline loop status (template entries filtered for scoped users) |
 | POST | `/api/ui/loop/start`, `/stop`, `/resume` | User token, global operator | Ask the Scheduler leader to start, stop or resume the loop |

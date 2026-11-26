@@ -24,7 +24,7 @@ Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync → Downl
 
 > **Agent:** Both phases (the `DecompositionAnalysis` and the `Decomposition` run) run on the Decomposition route of the template they run with: its repository's Decomposition row, else the global Decomposition row, else the default route (see [Agent Routing](agent-routing.md)). Each phase is routed when it is queued, so a routing change between the phases applies to phase 2.
 
-> **Context for the agent:** Both phases download existing issues for deduplication context. In addition to open issues (up to `MaxOpenIssuesForContext`), decomposition runs also include recently-closed sibling issues (up to ~25% of the context budget, lookback 30 days). This helps the agent avoid creating sub-issues that duplicate recently completed work.
+> **Context for the agent:** Both phases download existing issues for deduplication context, up to `MaxOpenIssuesForContext` in all. Decomposition runs give about a quarter of that budget to issues closed in the last 30 days and the rest to open issues. This helps the agent avoid creating sub-issues that duplicate recently completed work.
 
 ## Epic Scope: Repo Epics and Project Epics
 
@@ -56,6 +56,8 @@ See [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decompo
 | `agent:epic` | Phase 1 dispatched | `agent:in-progress` |
 | `agent:in-progress` | Phase 1 success | `agent:epic-review` |
 | `agent:in-progress` | Phase 1/2 failure | `agent:error` |
+| `agent:in-progress` | Phase 1 ended by a paused credential | `agent:epic` (queued again) |
+| `agent:in-progress` | Phase 2 ended by a paused credential | `agent:epic-approved` (queued again) |
 | `agent:epic-review` | User approves | `agent:epic-approved` |
 | `agent:epic-review` | User requests re-analysis | `agent:epic` |
 | `agent:epic-approved` | Phase 2 dispatched | `agent:in-progress` |
@@ -81,7 +83,7 @@ An epic written by someone outside the repository can be decomposed, since a mai
 | `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
 | `MaxDecompositionSubIssueFiles` | `int` | `12` | Maximum files a single sub-issue may create or modify (range: 1–30). Keeps each sub-issue within single-agent capacity |
 | `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
-| `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |
+| `MaxOpenIssuesForContext` | `int` | `50` | Issues downloaded for deduplication context (decomposition runs give about a quarter to recently closed issues) |
 
 Decomposition has no timeout of its own: each agent call, including the adversarial review, runs with `AgentTimeout`, like every other agent call.
 

@@ -7,7 +7,7 @@ The Job Controller, the Scheduler and agent pods use the agent API keys describe
 The Pipeline API has two surfaces:
 
 - **Service surface** (`/api/**` except `/api/ui/**`, and `/hubs/agent`): API keys only.
-- **UI surface** (`/api/ui/**` and `/hubs/ui`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls; the UI hub's connect token lasts the session, is marked `use=hub` and is accepted only on `/hubs/ui`, and the hub closes the connection when it expires). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints a token for each request it forwards (one per hub connection), and only for users with a role. Tokens never reach the browser, and the web host never calls the UI surface with the master API key.
+- **UI surface** (`/api/ui/**` and `/hubs/ui`): a short-lived **user token** only. The web host signs it for the signed-in user (HS256, `iss=caa-web`, `aud=caa-api`, at most 5 minutes for HTTP calls; the UI hub's connect token lasts the session, is marked `use=hub` and is accepted only on `/hubs/ui`, and the hub closes the connection when it expires). It carries the user's global role and project roles, and the API enforces them itself. The signing key is the `signing-key` of the `<release>-coding-agent-automation-web-user-token` Secret ([Deployment](deployment.md#user-token-secret)), mounted into the web and API pods only. Both hosts refuse to start without it. The web host mints a token for each request it forwards (one per hub connection), and only for users with a role. Tokens never reach the browser, and the web host never calls the UI surface with the master API key.
 
 An API endpoint that declares no policy is denied. A credential of one surface is never accepted on the other.
 
@@ -22,7 +22,7 @@ The UI runs as Blazor WebAssembly in the browser. The web host is its backend-fo
 - forwards `/api/ui/**` and `/hubs/ui` to the Pipeline API, and nothing else, with a user token in place of the cookie;
 - answers `/healthz` and `/readyz`.
 
-It renders no pages, keeps no page state and has no API of its own. The web pod has no service-account token, database credentials, Redis access, master or agent API key, or provider credentials. It holds only the `web-user-token` Secret, the OIDC client secret, the local admin password and, when set, the OTLP exporter headers (`otel-headers` of the chart Secret). When the web host is down, only the UI is affected: the Scheduler, the Job Controller, the API and the agents keep running.
+It renders no pages, keeps no page state and has no API of its own. The web pod has no service-account token, database credentials, Redis access, master or agent API key, or provider credentials. It holds only the user token Secret (`<release>-coding-agent-automation-web-user-token`, or `userToken.existingSecret`; see [Deployment](deployment.md#user-token-secret)), the OIDC client secret, the local admin password and, when set, the OTLP exporter headers (`otel-headers` of the chart Secret). When the web host is down, only the UI is affected: the Scheduler, the Job Controller, the API and the agents keep running.
 
 **Forwarding.** The browser's only credential is the session cookie (`SameSite=Lax`). On a forwarded request the web host removes the cookie, any `Authorization` or `X-Api-Key` header and the CSRF header, and adds the user token. It removes `Set-Cookie` from the API's answers and marks them `Cache-Control: no-store` unless the API set a cache policy. It answers `502` when the API cannot be reached and `504` after 5 minutes without activity.
 
@@ -69,7 +69,7 @@ A **binding** gives a role to an OIDC group or user, either **globally** or for 
 | Agent Chat with a project selected | `operator` on that project |
 | Agent Chat without a project | global `operator` |
 | View Fleet, Consolidation, About statistics, health indicators and loop details | global `readonly` |
-| Start, stop or resume the pipeline loop; trigger or cancel consolidation | global `operator` |
+| Start, stop or resume the pipeline loop; trigger or cancel consolidation; pause or resume an agent credential | global `operator` |
 | Edit a project's settings, steering, secrets, MCP servers or project review | `admin` on that project |
 | Edit a repository's behaviour | `admin` on its project |
 | Start or cancel a refactoring scan from a repository page | `operator` on its project |

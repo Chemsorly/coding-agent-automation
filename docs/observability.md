@@ -27,7 +27,10 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.run.duration` | Histogram | s | `run_type`, `outcome` | Dispatched → terminal |
 | `pipeline.run.step.duration` | Histogram | s | `run_type`, `step` | Duration of each step visit, recorded on every step transition. VerifyingBaseline covers only the agent health check. The time a run waits for the baseline counts towards the last analysis step, usually PostingAnalysis; the Step AwaitBaseline span shows it. |
 | `pipeline.run.sub_issues` | Counter | `{issue}` | `result` (`created`, `failed`) | Sub-issues per decomposition run, once per run |
-| `pipeline.run.brain_updates` | Counter | `{run}` | `result` (`pushed`, `none`) | Brain update result per non-consolidation run |
+| `pipeline.run.brain_updates` | Counter | `{run}` | `result` (`pushed`, `failed`, `none`) | Brain update result per non-consolidation run with a brain provider |
+| `pipeline.run.brain_skills` | Counter | `{run}` | `result` (`injected`, `empty`, `truncated`, `skipped_invalid`, `no_brain`, `unknown`), `run_type` | Brain skills injection result per non-consolidation run with a brain provider |
+| `pipeline.brain.review.lines` | Counter | `{line}` | `action`, `scope` (`repository`, `technology`, `general`, `other`) | Skill lines a brain review promoted, appended, retired or marked missed again |
+| `pipeline.brain.review.refusals` | Counter | `{run}` | `reason` (a `BrainReviewRefusalReasons` value, otherwise `other`) | Brain reviews refused by validation |
 | `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider`, `model` | LLM tokens per phase, at terminal time |
 | `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider`, `model` | LLM cost per phase, at terminal time |
 | `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per phase |
@@ -144,14 +147,14 @@ A refused git credentials callback is a log line, since agents record no metrics
 | 4 | `payload.AnalysisRecommendation == NotReady` | `needs_refinement` | `none` |
 | 4a | `failureReason == ProviderUnavailable` | `requeued` | `provider_unavailable` |
 | 5 | `payload.PullRequestUrl` set and `!IsDraftPr` | `pr_created` | `none` |
-| 6 | `payload.IsDraftPr == true` | `draft_pr` | `none` |
+| 6 | `payload.PullRequestUrl` set and `IsDraftPr` | `draft_pr` | `none` |
 | 7 | `failureReason == Timeout` | `timeout` | `timeout` |
 | 8 | `status == Succeeded` | `succeeded` | `none` |
 | 9 | fallthrough | `failed` | snake_case `FailureReason` or `none` |
 
 `needs_refinement` and `wont_do` both arrive with `FailureReason.GateRejected` (set by `AgentPhaseExecutor`); checking `AnalysisRecommendation` first forces `failure_reason=none` for them.
 
-Hub-completed runs (where the agent's SignalR connection reports terminal status before the HTTP callback) emit only `succeeded`, `failed` (with a `failure_reason` tag), `timeout`, or `cancelled`; PR-specific outcomes (`pr_created`, `draft_pr`, `wont_do`, `needs_refinement`, `conflict_restart`) are available only via the HTTP completion path.
+Hub-completed runs (where the agent's SignalR connection reports terminal status before the HTTP callback) emit only `succeeded`, `failed` (with a `failure_reason` tag), `timeout`, `cancelled` or `requeued`; PR-specific outcomes (`pr_created`, `draft_pr`, `wont_do`, `needs_refinement`, `conflict_restart`) are available only via the HTTP completion path.
 
 `requeued` (spec 056) is recorded on every completion path when an agent reports that its credential's quota is used up or its login was rejected: the run ends, the credential is paused and the same work is queued again as a new work item. It wins over a pull request an external CI step opened. The ended item counts once as `requeued`; the new item counts its own outcome when it ends.
 
@@ -343,7 +346,7 @@ The span of `POST /api/work-items/{id}/dispatch` and the span of `GET /api/work-
 | `pipeline.agent_profile` | The profile's display name |
 | `pipeline.model` | The route's model; `auto` lets the tool choose |
 | `pipeline.effort` | The route's effort; `auto` is the tool's default |
-| `pipeline.route_source` | `repository`, `global task row`, `global default`. Runs of an earlier release keep `claim` or `dispatch` |
+| `pipeline.route_source` | `repository`, `global task row`, `global default`. Runs of an earlier release show `routed at claim (earlier release)` or `routed at dispatch (earlier release)` |
 | `pipeline.route_refusal` | Set on a refused claim instead, to the `reason` of `pipeline.routing.refusals`. The span status is Error with the refusal text |
 | `pipeline.agent_credential` | The credential the route resolved to |
 | `pipeline.hold_reason`, `pipeline.hold_text` | Set when the dispatch left the item waiting |
@@ -465,7 +468,7 @@ The Scheduler emits spans only when actual work occurs — idle ticks produce no
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result` | `WorkItemDispatchLoop.DispatchItemAsync` (called from `PollAndDispatchAsync`) — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, `Transient`, `GlobalLimitReached` (the all-agents limit is reached; the loop ends its cycle), plus `Cancelled` (shutdown) and `Exception` (unexpected client error) |
+| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result`, `reason` (the API's answer reason, when it gave one, for example a hold reason) | `WorkItemDispatchLoop.DispatchItemAsync` (called from `PollAndDispatchAsync`) — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, `Transient`, `GlobalLimitReached` (the all-agents limit is reached; the loop ends its cycle), plus `Cancelled` (shutdown) and `Exception` (unexpected client error) |
 | `Loop.Enqueue` | `issue_identifier`, `template_name` | `DispatchScheduler.DispatchIssueRoundAsync` — one span per issue the closed loop enqueues |
 | `Housekeeping.BranchUpdate` | `pr_number`, `repo_provider_id` | `HousekeepingService.UpdateAsync` — one span per PR branch update triggered |
 | `Housekeeping.ConflictRework` | `issue_id`, `pr_number` | `IssueReworkService.TrySwapIssueToNextAsync` — one span per issue re-queued for rework due to merge conflict |
@@ -504,7 +507,7 @@ The API has no span of its own around dispatch. When a work item is held by an a
 
 The API logs one Information line per held dispatch, `{CallerName}: {Scope} concurrency limit reached for selector {Selector} ({Current}/{Max}, {LimitSource}) — deferred`, and one per refused chat, ending `— chat refused`. `Scope` and `LimitSource` are lowercase, as on the spans, so `| Scope="global"` and `| LimitSource="ui"` filter them in Loki. A failed Job list logs the Warning `AgentStartGate: could not list the agent Jobs — no agent started`, and each saved change of a UI limit logs `Agent capacity limit {Key} changed from {Old} to {New} by {User}` (`Key` is `all` for the all-agents limit).
 
-The API creates no span for the run itself; the run's trace is the agent's `WorkItemAgent.Execute` → `ExecutePipeline` tree, parented to the API request that created the WorkItem. The request spans of `POST /api/work-items` and `GET /api/work-items/{id}/assignment` carry the route attributes (`pipeline.agent_profile`, `pipeline.model`, `pipeline.effort`, `pipeline.route_source`, or `pipeline.route_refusal`): see [Routing](#routing).
+The API creates no span for the run itself; the run's trace is the agent's `WorkItemAgent.Execute` → `ExecutePipeline` tree, parented to the API request that created the WorkItem. The request spans of `POST /api/work-items/{id}/dispatch` and `GET /api/work-items/{id}/assignment` carry the route attributes (`pipeline.agent_profile`, `pipeline.model`, `pipeline.effort`, `pipeline.route_source`, or `pipeline.route_refusal`): see [Routing](#routing).
 
 ### Pipeline Spans
 
@@ -518,12 +521,13 @@ All emitted by the agent pod.
 | `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace (child of `Step CloneRepository`) |
 | `VerifyBaseline` | `pipeline.run_id`, `pipeline.issue` | Agent health check + workspace baseline verification (child of `Step VerifyBaseline`). Error status set on fatal health-check failure only. Stays open after its parent step ended, until the baseline, which runs next to the analysis, has finished. |
 | `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
-| `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
+| `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped`, `pipeline.brain.skills_result`, `pipeline.brain.skills_bytes`, `pipeline.brain.stack_labels`, `pipeline.brain.commit` (when known) | Brain repository sync (pre-run) |
 | `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
 | `CloneProjectRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones |
 | `CloneProjectReviewRepositories` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Additional project repo clones for review runs |
 | `AnalyzeIssue` | `pipeline.run_id`, `pipeline.issue`, `pipeline.analysis.continue`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Issue analysis (confidence gate) |
 | `GenerateCode` | `pipeline.run_id`, `pipeline.issue`, `pipeline.is_rework` | Code generation / rework |
+| `CheckDroppedIdentifiers` | `pipeline.run_id`, `pipeline.issue` | Check that identifiers the branch had added in force-resolved conflict files were re-applied during code generation (rework after a force-resolved rebase) |
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |
 | `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
@@ -542,8 +546,11 @@ All emitted by the agent pod.
 | `PostDecompositionPlan` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting decomposition plan comment |
 | `PostDecompositionSummary` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting creation summary comment |
 | `CreateSubIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Creating sub-issues on GitHub |
-| `Reflection` | `pipeline.run_id` | Post-PR reflection prompt |
-| `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run |
+| `WriteTriageContext` | `pipeline.run_id`, `pipeline.comments.total`, `pipeline.comments.unverified`, `pipeline.issue.author_verified` | Writing the triage context to the workspace |
+| `TriageInvestigation` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Triage investigation (root cause analysis) |
+| `ReportTriageResult` | `pipeline.run_id`, `pipeline.issue` | Reporting the triage result to the API |
+| `Reflection` | `pipeline.run_id`, `pipeline.brain.candidates_kept`, `pipeline.brain.candidates_dropped` | Post-PR reflection prompt |
+| `BrainSyncPostRun` | `pipeline.run_id`, `pipeline.brain.inbox_bytes`, `pipeline.brain.evidence_attempts`, `pipeline.brain.push_result` (`pushed`, `failed`) | Writing the run's brain inbox file |
 | `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection |
 | `PrePrCleanup` | `pipeline.run_id` | Workspace deletion + reporter disposal (child of ExecutePipeline, emitted by `PipelineCleanup.RunAsync`) |
 | `WorkItemAgent.Execute` | `work_item_id`, `agent_id` | Top-level span for K8s work-item agent lifecycle (connect, execute, report). Parent is the API request that created the WorkItem (via TRACEPARENT env var). |
@@ -561,7 +568,11 @@ All emitted by the agent pod.
 | `RefactoringDetection.Phase1.Correctness` | `pipeline.run_id` | Correctness detection agent (one of four parallel detection agents) |
 | `RefactoringDetection.Phase1.DesignConsistency` | `pipeline.run_id` | Design consistency detection agent (one of four parallel detection agents) |
 | `RefactoringDetection.Phase1.TestGaps` | `pipeline.run_id` | Test gap detection agent (one of four parallel detection agents) |
-| `RefactoringDetection.Phase2.Aggregation` | `pipeline.run_id` | Aggregation and prioritization of the detected proposals |
+| `RefactoringDetection.Phase2a.Structural` | `pipeline.run_id` | Per-file scoring of one detector's findings (one of four parallel scoring agents) |
+| `RefactoringDetection.Phase2a.Correctness` | `pipeline.run_id` | Per-file scoring of one detector's findings (one of four parallel scoring agents) |
+| `RefactoringDetection.Phase2a.Design` | `pipeline.run_id` | Per-file scoring of one detector's findings (one of four parallel scoring agents) |
+| `RefactoringDetection.Phase2a.TestGaps` | `pipeline.run_id` | Per-file scoring of one detector's findings (one of four parallel scoring agents) |
+| `RefactoringDetection.Phase2b.Aggregation` | `pipeline.run_id` | Aggregation and prioritization of the scored proposals |
 | `RefactoringDetection.AdversarialReview` | `pipeline.run_id` | Adversarial review of refactoring proposals |
 | `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count`, `pipeline.rejected_proposal_count` | Creating GitHub issues for proposals |
 
@@ -571,7 +582,7 @@ All emitted by the agent pod.
 |-----|--------|-------------|
 | `pipeline.run_id` | UUID | Unique identifier for the pipeline run |
 | `pipeline.issue` | string | Issue or PR identifier (e.g., `42`) |
-| `pipeline.run_type` | `Implementation`, `Review`, `DecompositionAnalysis`, `Decomposition` | Run type (**PascalCase** — differs from metric tags) |
+| `pipeline.run_type` | `Implementation`, `Review`, `DecompositionAnalysis`, `Decomposition`, `Triage` | Run type (**PascalCase** — differs from metric tags) |
 | `pipeline.final_step` | step name or `Cancelled` | Last step reached before completion |
 | `pipeline.agent_id` | Job name | Agent identity (`AGENT_ID`, the K8s Job name; the container hostname only when `AGENT_ID` is unset), on `ExecutePipeline` |
 | `pipeline.failure_reason` | `FailureReason` member name (e.g. `QualityGateExhausted`) | Set when the run ends without completing and a category is known (on `ExecutePipeline`) |
@@ -580,6 +591,14 @@ All emitted by the agent pod.
 | `pipeline.repository` | string | Repository name (on `CloneRepository` span) |
 | `pipeline.branch_name` | string | Branch name created or checked out (on `CreateBranch` span) |
 | `pipeline.brain_sync.skipped` | `true`/`false` | Whether brain sync was skipped due to missing provider (on `SyncBrainPreRun` span) |
+| `pipeline.brain.skills_result` | `injected`, `empty`, `truncated`, `skipped_invalid`, `no_brain`, `unknown` | Brain skills injection result (on `SyncBrainPreRun` span) |
+| `pipeline.brain.skills_bytes` | integer | Size of the injected brain skills (on `SyncBrainPreRun` span) |
+| `pipeline.brain.stack_labels` | integer | Number of the repository's stack labels (on `SyncBrainPreRun` span) |
+| `pipeline.brain.commit` | string | Brain commit the skills were read from, when known (on `SyncBrainPreRun` span) |
+| `pipeline.brain.candidates_kept`, `pipeline.brain.candidates_dropped` | integer | Reflection's brain candidates that passed or failed validation (on `Reflection` span) |
+| `pipeline.brain.inbox_bytes` | integer | Size of the brain inbox file written (on `BrainSyncPostRun` span) |
+| `pipeline.brain.evidence_attempts` | integer | Attempts recorded as brain evidence (on `BrainSyncPostRun` span) |
+| `pipeline.brain.push_result` | `pushed`, `failed` | Whether the brain inbox push succeeded (on `BrainSyncPostRun` span) |
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
@@ -613,7 +632,7 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 ### Service Names
 
-Every host reads `OTEL_SERVICE_NAME` and falls back to a fixed name. `service.version` comes from `SERVICE_VERSION` (set in the Dockerfiles to the git commit SHA); when it is unset the web host uses the assembly version and the other hosts and the agent use `local`. Traces and metrics get `deployment.environment` only from `OTEL_RESOURCE_ATTRIBUTES` (`otel.resourceAttributes` in the Helm values). The log sink also falls back to the host environment name, then `ASPNETCORE_ENVIRONMENT` / `DOTNET_ENVIRONMENT`, then `Production`.
+Every host reads `OTEL_SERVICE_NAME` and falls back to a fixed name. `service.version` comes from `SERVICE_VERSION` (set in the Dockerfiles to the git commit SHA); when it is unset every host and the agent use `local`. Traces and metrics get `deployment.environment` only from `OTEL_RESOURCE_ATTRIBUTES` (`otel.resourceAttributes` in the Helm values). The log sink also falls back to the host environment name, then `ASPNETCORE_ENVIRONMENT` / `DOTNET_ENVIRONMENT`, then `Production`.
 
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
@@ -740,7 +759,11 @@ ExecuteConsolidation
 ├── RefactoringDetection.Phase1.Correctness
 ├── RefactoringDetection.Phase1.DesignConsistency
 ├── RefactoringDetection.Phase1.TestGaps
-├── RefactoringDetection.Phase2.Aggregation
+├── RefactoringDetection.Phase2a.Structural
+├── RefactoringDetection.Phase2a.Correctness
+├── RefactoringDetection.Phase2a.Design
+├── RefactoringDetection.Phase2a.TestGaps
+├── RefactoringDetection.Phase2b.Aggregation
 ├── RefactoringDetection.AdversarialReview
 └── RefactoringDetection.CreateIssues
 ```

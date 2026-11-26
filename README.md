@@ -20,16 +20,17 @@ Detailed documentation lives in the [`docs/`](docs/) folder:
 1. [Pipeline Orchestration](docs/pipeline-orchestration.md) — Core state machine, step descriptions, retry logic, error handling
 2. [PR Review](docs/pr-review.md) — PR review pipeline, inline comments, configuration
 3. [Epic Decomposition](docs/epic-decomposition.md) — Two-phase workflow, label state machine, approval process
-4. [Issue Workflows](docs/github-issue-workflows.md) — Label system, user flows, closed-loop mode
-5. [Agent Routing](docs/agent-routing.md) — Agent profiles, routing per task type, stack labels for quality gates and reviewers
-6. [Configuration](docs/configuration.md) — Pipeline settings, job templates, provider setup, MCP servers
-7. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
-8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
-9. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
-10. [Deployment](docs/deployment.md) — Helm chart, Kubernetes setup, scaling agents, local development
+4. [Triage](docs/triage.md) — Problem reports turned into a root cause analysis and proposed issue drafts
+5. [Issue Workflows](docs/github-issue-workflows.md) — Label system, user flows, closed-loop mode
+6. [Agent Routing](docs/agent-routing.md) — Agent profiles, routing per task type, stack labels for quality gates and reviewers
+7. [Configuration](docs/configuration.md) — Pipeline settings, job templates, provider setup, MCP servers
+8. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
+9. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
+10. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
+11. [Deployment](docs/deployment.md) — Helm chart, Kubernetes setup, scaling agents, local development
     - [Authentication](docs/authentication.md) — Sign-in (OIDC, local admin) and role bindings
-11. [Bootstrap](docs/bootstrap.md) — Migrating config from an existing instance, fresh-install setup
-12. [HTTP API Reference](docs/api-reference.md) — REST endpoints, authentication, request/response examples
+12. [Bootstrap](docs/bootstrap.md) — Migrating config from an existing instance, fresh-install setup
+13. [HTTP API Reference](docs/api-reference.md) — REST endpoints, authentication, request/response examples
 
 ## Agent Execution Flow
 
@@ -76,7 +77,6 @@ flowchart TD
         E3[🤖 Generate PR Description]
 
         E1 --> E3
-        E2 --> E3
     end
 ```
 
@@ -142,7 +142,7 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 - **Closed-loop automation** — Polls for labeled issues and PRs, processing them autonomously
 - **External CI integration** — Optionally waits for CI pipelines to pass before creating the final PR
 - **Brain repository** — Shared knowledge repo that agents read/write across runs
-- **Agent feedback & consolidation** — Structured feedback, brain pruning, refactoring detection, harness suggestions
+- **Agent feedback & consolidation** — Structured feedback, brain pruning, refactoring detection
 - **Real-time web UI** — Live output streaming, pipeline step sidebar, agent monitoring, interactive chat
 - **Pipeline projects** — Multi-repository grouping with shared configuration and project-level context
 - **MCP server & steering injection** — Agents receive tool configs and context conventions per workspace
@@ -164,6 +164,7 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 ```bash
 # 1. Install the chart
 helm install coding-agent ./helm/coding-agent-automation \
+  --namespace coding-agent --create-namespace \
   --set secrets.agentApiKey="$(openssl rand -hex 32)" \
   --set database.host=<postgres-host> \
   --set database.auth.existingSecret=<k8s-secret-name> \
@@ -172,7 +173,7 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set scheduler.image.tag=coding-agent-scheduler-<version>
 ```
 
-Open the web UI in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service) and sign in as `admin` with the password from the `<release>-coding-agent-automation-admin` Secret. See [Authentication](docs/authentication.md) to connect Keycloak or Entra ID and bind roles.
+Open the web UI in your browser (port-forward the web service, or set `web.ingress.enabled=true` and check `kubectl get ingress -n coding-agent`) and sign in as `admin` with the password from the `<release>-coding-agent-automation-admin` Secret. See [Authentication](docs/authentication.md) to connect Keycloak or Entra ID and bind roles.
 
 ### First-Time Setup
 
@@ -182,7 +183,7 @@ Open the web UI in your browser (check `kubectl get ingress -n coding-agent` or 
    ```
    Follow the device code flow in your browser. See [Deployment — Credential Pool Initialization](docs/deployment.md#credential-pool-initialization) for the full procedure. OpenCode agents authenticate via environment variables and don't require this step.
 
-2. **Configure providers** — Go to Settings → Providers in the web UI and set up Issue, Repository, Agent, and (optionally) Pipeline/CI providers.
+2. **Configure providers** — Go to Settings → Providers in the web UI and set up Issue, Repository, and (optionally) Pipeline/CI providers. Agent tools are set up as Agent Profiles in the next step.
 
 3. **Configure agent routing** — Set up Agent Profiles and the default route (Settings → Agents), then Quality Gate Configs and Reviewer Configs for your stacks (Settings → Quality).
 
