@@ -141,8 +141,10 @@ issue write access.
 | `agent:triage-review` | The RCA is posted; the drafts wait for review in the app |
 
 `agent:triage` → `agent:in-progress` → `agent:triage-review` → `agent:done` (issues created) or `agent:wont-do`
-(dismissed), or back to `agent:triage` for another attempt. A failed run sets `agent:error`; a failed dispatch
-returns the issue to `agent:triage`, never to `agent:next`.
+(dismissed), or back to `agent:triage` for another attempt. A failed run sets `agent:error`. A failed dispatch, or a
+run that ended because its agent credential was paused (quota used up or login rejected; see
+[Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses)), returns the issue to
+`agent:triage`, never to `agent:next`.
 
 ## The Triage Page and History
 
@@ -169,8 +171,9 @@ Viewing a triage needs `readonly` on its project; starting, editing, creating, r
 | Setting | Where | Default |
 |---|---|---|
 | `TriageEnabled` | Template (Pipelines › template features) | off — gates only the `agent:triage` polling |
-| `triageReviewEnabled` | Settings › Global defaults › Triage, overridable per project | on |
-| `triageRetentionDays` | Settings › Global defaults › Triage (1–365) | 30 |
+
+The review switch (`triageReviewEnabled`, on by default, per project) and the retention (`triageRetentionDays`) are in
+[Configuration — Triage](configuration.md#triage).
 
 ## Limits
 
