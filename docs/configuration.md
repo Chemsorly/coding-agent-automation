@@ -12,7 +12,7 @@ Each setting has one home:
 |-------|---------------|------------------|
 | Global settings | Every setting in the [reference](#settings-reference) below: the pipeline's policy defaults, and the loop, retention and delivery settings | Settings → Global Defaults (the model-fetch timeout is under Settings → Agents → Routing) |
 | Project | Overrides of the settings marked **Project** in the reference, plus secrets, steering and MCP servers | Settings → Projects → (project) |
-| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's stack labels, agent routing rows, secrets, setup steps, steering and commit blacklist | Pipelines page |
+| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, triage, housekeeping), `BrainReadOnly`, the housekeeping limit, and the repository's stack labels, agent routing rows, secrets, setup steps, steering and commit blacklist | Pipelines page |
 | Repository provider | The connection: type, owner and repository, base branch, credentials | Settings → Providers → Repository |
 | Agents | Agent profiles (job template, tool settings, MCP servers), the global routing table (profile, model and effort per task type), the UI agent limits (see [Agent Capacity](#agent-capacity)) and the pause of each agent credential (see [Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses)) | Settings → Agents (the limits under Capacity, the pauses under Credentials; global operators also pause and resume from Fleet) |
 | Quality catalogs | Quality gate configs and reviewer configs, each chosen by the repository's stack labels | Settings → Quality |
@@ -243,8 +243,9 @@ The retry loop classifies agent failures into categories to distinguish provider
 |----------------|-------------|------------------------|----------|
 | `ProviderRateLimit` | 429 | **No** | `RetryCount` is not incremented. The loop waits `TransientRetryDelay` (default: 30 seconds), then retries from the same position without spending a fix attempt. After 10 consecutive transient results the loop stops and the run ends with a draft PR; a normal fix attempt resets the count. |
 | `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
-| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends **without** a draft PR: it is queued again and its credential paused until resumed (spec 056). |
-| `ProviderQuotaExhausted` | Claude Code `billing_error` or a usage limit, Kiro's monthly limit, OpenCode's quota error | **No** | Loop aborts immediately. The run ends without a draft PR, its issue goes back to its queue label, the same work is queued again as a new work item, and the credential is paused until the reset time the provider names (or until resumed). Top up the credit, wait for the reset, or route the work to another profile. |
+| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends **without** a draft PR; the credential is paused until resumed (see [Credentials and Pauses](agent-routing.md#credentials-and-pauses)). |
+| `ProviderQuotaExhausted` | Claude Code `billing_error` or a usage limit, Kiro's monthly limit, OpenCode's quota error | **No** | Loop aborts immediately and the run ends without a draft PR. The credential is paused and the work is queued again (see [Agent Routing — Credentials and Pauses](agent-routing.md#credentials-and-pauses)). Top up the credit, wait for the reset, or route the work to another profile. |
+| `ProviderMisconfigured` | The agent CLI refused its own configuration before doing any work (Kiro, for example an unknown agent name) | **No** | Loop aborts immediately; the run ends with a draft PR as an infrastructure failure. Fix the agent profile's tool settings. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
 
 The tools recognize a used-up quota or a rejected login from their own error output: Claude Code from its `result` event (`billing_error`, usage limit, `authentication_failed`), OpenCode from its error event, Kiro only from an `error:` line of a call that failed, so tool output that quotes such a message pauses nothing. A Claude Code profile whose credential is missing from the agent Secret records a rejected login before any agent call. The provider's line, masked, is shown as the pause detail.
@@ -255,7 +256,7 @@ Before any phase sees a `ProviderRateLimit` or `ProviderOverload` result, the ag
 
 ## Housekeeping
 
-Housekeeping manages the agent's pull requests for pipeline job templates with `HousekeepingEnabled: true`. On each poll cycle it evaluates `agent:done` PRs: it triggers server-side branch updates for PRs that are behind base (fire-and-forget, within the concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. It can also delete stale agent branches at an interval. The global settings are `housekeepingConcurrencyLimit`, `housekeepingBranchCleanupIntervalMinutes` and `housekeepingTriggerCooldownMinutes` (see [General](#general)).
+Housekeeping manages the agent's pull requests for pipeline job templates with `HousekeepingEnabled: true`. On each poll cycle it evaluates `agent:done` PRs: it triggers server-side branch updates for PRs that are behind base (fire-and-forget, within the concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. Human PRs with auto-merge enabled also get branch updates, after the pipeline's PRs and within the same concurrency limit, on GitHub only; they are never re-queued for rework (see [Pipeline Orchestration](pipeline-orchestration.md)). It can also delete stale agent branches at an interval. The global settings are `housekeepingConcurrencyLimit`, `housekeepingBranchCleanupIntervalMinutes` and `housekeepingTriggerCooldownMinutes` (see [General](#general)).
 
 Per-template controls (on `PipelineJobTemplate`):
 
@@ -340,6 +341,8 @@ For full request/response examples, authentication details, and query parameters
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** The UI clients call its `/api/ui` surface and the pages connect to its UI hub, `{PipelineApi__BaseUrl}/hubs/ui`, as the signed-in user. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
+| `WebUI__BasePath` | The `<base href>` of the host page (default: `./`). Set by the Helm chart from `web.env.basePath`; see [Deployment](deployment.md#key-valuesyaml-settings). |
+| `WebUI__HttpsRedirect` | `true` redirects clients that reached the ingress over plain HTTP to HTTPS. The Helm chart sets it to `true` only when the Ingress is enabled, has a `tls` section and `web.ingress.httpsRedirect` is true. |
 
 ### Web UI Authentication
 
@@ -380,6 +383,8 @@ The Scheduler triggers a retention sweep every hour (`POST /api/scheduler/mainte
 | `WorkDistribution:Reconciliation:PipelineRunRetentionDays` | `30` | environment variable | Days to keep completed `PipelineRuns`, which includes consolidation run history |
 
 Both limits apply on each sweep: the counts cap the rows per project, the days cap their age.
+
+The same sweep deletes triages whose last change is older than `triageRetentionDays` (default 30, see [Triage](#triage)); created issues and tracker comments stay.
 
 ### OpenTelemetry
 
