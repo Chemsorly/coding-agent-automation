@@ -303,7 +303,7 @@ jobs:
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
         with:
-          cosign-release: v3.1.5
+          cosign-release: v3.1.6
 
       # Sign the per-arch image by the digest buildah pushed, so the signature cannot attach to
       # a tag that moved in between. The manifest list is signed separately in docker-push.
@@ -390,7 +390,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
         with:
-          cosign-release: v3.1.5
+          cosign-release: v3.1.6
 
       # The manifest list is pushed to the immutable SHA tag first and signed there. The mutable
       # -latest and -<version> tags are moved only after the signature exists, so a cancelled or
