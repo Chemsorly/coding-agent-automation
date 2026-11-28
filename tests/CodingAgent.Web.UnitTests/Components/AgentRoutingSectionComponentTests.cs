@@ -84,8 +84,9 @@ public class AgentRoutingSectionComponentTests : BunitContext
     }
 
     private const string SectionLandmarks =
-        "[data-testid='route-table'], h3, [data-testid='routing-fetch-models'], [data-setting='ModelFetchTimeoutSeconds'], "
-        + "[data-testid='routing-save-error'], [data-testid='routing-save']";
+        "[data-testid='route-light-hint'], [data-testid='route-table'], [data-testid='routing-save-error'], [data-testid='routing-save'], "
+        + "[data-testid='kiro-models-section'], [data-testid='routing-fetch-models'], [data-setting='ModelFetchTimeoutSeconds'], "
+        + "[data-testid='kiro-models-save']";
 
     // The landmarks of the section in document order; querying one selector list returns them in that order.
     private static IReadOnlyList<string> LandmarkNames(IRenderedComponent<AgentRoutingSection> cut) =>
@@ -94,16 +95,19 @@ public class AgentRoutingSectionComponentTests : BunitContext
             .ToList();
 
     [Fact]
-    public void TheSaveButton_FollowsTheFetchTimeoutItSaves()
+    public void TheLightHint_LeadsTheTable_AndKiroModelsIsACardOfItsOwnBelowTheRoutingSave()
     {
         var cut = RenderSection();
 
         LandmarkNames(cut).Should().Equal(
-            "route-table", "h3", "routing-fetch-models", "ModelFetchTimeoutSeconds", "routing-save");
+            "route-light-hint", "route-table", "routing-save",
+            "kiro-models-section", "routing-fetch-models", "ModelFetchTimeoutSeconds", "kiro-models-save");
+        cut.Find("[data-testid='kiro-models-section']").ParentElement!.GetAttribute("data-testid")
+            .Should().NotBe("agent-routing-section", "Kiro models is its own card, not part of the routing card");
     }
 
     [Fact]
-    public void ARefusedSave_ShowsItsErrorBelowTheFetchTimeoutAndAboveSave()
+    public void ARefusedSave_ShowsItsErrorBetweenTheTableAndSave()
     {
         _settings.Setup(s => s.SaveAgentRoutingAsync(It.IsAny<AgentRouting>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Triage: OpenCode has no effort setting; use auto"));
@@ -111,19 +115,21 @@ public class AgentRoutingSectionComponentTests : BunitContext
 
         cut.Find("[data-testid='routing-save']").Click();
 
-        LandmarkNames(cut).Should().Equal(
-            "route-table", "h3", "routing-fetch-models", "ModelFetchTimeoutSeconds", "routing-save-error", "routing-save");
+        LandmarkNames(cut).Take(4).Should().Equal("route-light-hint", "route-table", "routing-save-error", "routing-save");
     }
 
     [Fact]
-    public void TheFetchTimeout_IsSavedWithTheRouting_WhenItChanged()
+    public void TheFetchTimeout_IsSavedByTheKiroModelsSave_NotByTheRoutingSave()
     {
         var cut = RenderSection();
         cut.Find("[data-setting='ModelFetchTimeoutSeconds'] input").Change(300);
 
         cut.Find("[data-testid='routing-save']").Click();
+        _config.ModelFetchTimeoutSeconds.Should().Be(120, "the routing Save saves the routing only");
 
+        cut.Find("[data-testid='kiro-models-save']").Click();
         _config.ModelFetchTimeoutSeconds.Should().Be(300);
+        cut.Find("[data-testid='kiro-models-save']").HasAttribute("disabled").Should().BeTrue("nothing is left to save");
     }
 
     [Fact]

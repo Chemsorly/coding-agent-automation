@@ -194,6 +194,26 @@ public sealed class CredentialPauseComponentTests : BunitContext
     }
 
     [Fact]
+    public void ResumeAndPauseUntil_SitAsOneRowSizedPair_InTheCardAndTheBanner()
+    {
+        AsOperator();
+        Returns(Kiro());
+
+        var card = Render<AgentCredentialsCard>();
+        var banner = Render<CredentialPauseBanner>();
+
+        AssertPair(card.Find("[data-testid=credential-card-resume-kiro]"), card.Find("[data-testid=credential-card-pause-kiro]"));
+        AssertPair(banner.Find("[data-testid=credential-resume-kiro]"), banner.Find("[data-testid=credential-pause-until-kiro]"));
+
+        static void AssertPair(AngleSharp.Dom.IElement resume, AngleSharp.Dom.IElement pauseUntil)
+        {
+            resume.ParentElement!.ClassList.Should().Contain("credential-actions");
+            pauseUntil.ParentElement.Should().BeSameAs(resume.ParentElement);
+            pauseUntil.ClassList.Should().Contain("btn-edit", "changing the end time is not a destructive action");
+        }
+    }
+
+    [Fact]
     public void Card_ShowsTheApiRefusal()
     {
         AsOperator();

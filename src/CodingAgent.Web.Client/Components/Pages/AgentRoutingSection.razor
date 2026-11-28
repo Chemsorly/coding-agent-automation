@@ -30,7 +30,20 @@
 
         <RouteTable Rows="_rows" Profiles="_page.Profiles" KiroModels="_kiroModels" />
 
-        <h3>Kiro models</h3>
+        @if (!string.IsNullOrEmpty(_saveError))
+        {
+            <div class="settings-status status-error" data-testid="routing-save-error" style="white-space: pre-line;">@_saveError</div>
+        }
+        <div class="form-buttons">
+            <button class="btn-save" data-testid="routing-save" @onclick="SaveAsync" disabled="@_saving">Save</button>
+        </div>
+    }
+</section>
+
+@if (_page is not null)
+{
+    <section class="settings-section" data-testid="kiro-models-section">
+        <h2>Kiro models</h2>
         <div class="form-group">
             <div class="input-with-action">
                 @if (_loadingModels)
@@ -52,17 +65,14 @@
         <div class="form-group" data-setting="@nameof(PipelineConfiguration.ModelFetchTimeoutSeconds)">
             <label>Fetch Models Timeout (seconds)</label>
             <input type="number" @bind="_modelFetchTimeoutSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" />
-            <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s. Saved with the routing.</span>
+            <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s.</span>
         </div>
-        @if (!string.IsNullOrEmpty(_saveError))
-        {
-            <div class="settings-status status-error" data-testid="routing-save-error" style="white-space: pre-line;">@_saveError</div>
-        }
         <div class="form-buttons">
-            <button class="btn-save" data-testid="routing-save" @onclick="SaveAsync" disabled="@_saving">Save</button>
+            <button class="btn-save" data-testid="kiro-models-save" @onclick="SaveTimeoutAsync"
+                    disabled="@(_saving || _modelFetchTimeoutSeconds == _storedModelFetchTimeoutSeconds)">Save</button>
         </div>
-    }
-</section>
+    </section>
+}
 
 @code {
     [Parameter, EditorRequired] public IUiSettingsClient SettingsClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
@@ -109,12 +119,6 @@
         try
         {
             await SettingsClient.SaveAgentRoutingAsync(RouteRow.ToRouting(_rows), _cts.Token);
-            if (_modelFetchTimeoutSeconds != _storedModelFetchTimeoutSeconds)
-            {
-                var timeout = _modelFetchTimeoutSeconds;
-                await SettingsClient.UpdatePipelineConfigAsync(current => current with { ModelFetchTimeoutSeconds = timeout }, _cts.Token);
-                _storedModelFetchTimeoutSeconds = timeout;
-            }
             await OnShowStatus.InvokeAsync(("Routing saved. It applies to work created from now on.", false));
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
@@ -122,6 +126,27 @@
         {
             // The API refuses an invalid table with one line per invalid row.
             _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task SaveTimeoutAsync()
+    {
+        _saving = true;
+        try
+        {
+            var timeout = _modelFetchTimeoutSeconds;
+            await SettingsClient.UpdatePipelineConfigAsync(current => current with { ModelFetchTimeoutSeconds = timeout }, _cts.Token);
+            _storedModelFetchTimeoutSeconds = timeout;
+            await OnShowStatus.InvokeAsync(("Fetch Models timeout saved.", false));
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save the Fetch Models timeout: {ex.Message}", true));
         }
         finally
         {
